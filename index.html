@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15110d">
+<meta name="color-scheme" content="dark">
+<title>PianoCheck</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<!-- Íconos (sprite inline: sin red, sin fuentes de íconos) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2a2018"/><rect x="5" y="6" width="6" height="20" rx="1.6" fill="#f4ead6"/><rect x="13" y="9" width="6" height="17" rx="1.6" fill="#e9b44c"/><rect x="21" y="6" width="6" height="20" rx="1.6" fill="#f4ead6"/><rect x="9" y="6" width="4" height="11" rx="1" fill="#15110d"/><rect x="17" y="6" width="4" height="11" rx="1" fill="#15110d"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M10 3.5l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z"/><circle cx="12" cy="13.5" r="3.5"/></symbol>
+    <symbol id="i-images" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M21 16l-5-5-9 8"/></symbol>
+    <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></symbol>
+    <symbol id="i-xml" viewBox="0 0 24 24"><path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5M10.5 12.5l-2 2 2 2M14 12.5l2 2-2 2"/></symbol>
+    <symbol id="i-midi" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M9 12v6M15 12v6M7 6v6M12 6v6M17 6v6"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+    <symbol id="i-restart" viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-2.6-5.9M20 4v5h-5"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4M6 5h12l-2.5 4L18 13H6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4"/></symbol>
+    <symbol id="i-bt" viewBox="0 0 24 24"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0012 0M12 17v4"/></symbol>
+    <symbol id="i-metro" viewBox="0 0 24 24"><path d="M8 21l2-17h4l2 17zM12 16l4-9"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z"/></symbol>
+    <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 01-10 0zM7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3M12 14v4M8 20h8"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+
+  <!-- 1. Biblioteca -->
+  <section id="screen-library" class="screen" aria-label="Biblioteca">
+    <header class="bar">
+      <h1 class="brand"><svg class="logo" width="32" height="32" aria-hidden="true"><use href="#i-logo"/></svg>PianoCheck</h1>
+      <button class="btn icon ghost" id="btn-open-settings" aria-label="Ajustes"><svg class="ic"><use href="#i-sliders"/></svg></button>
+    </header>
+    <main class="content wide">
+      <section id="empty-state" class="hero" hidden>
+        <h2 class="hero-title">Tu piano te escucha y te corrige</h2>
+        <p class="hero-sub">Tocá una partitura nota por nota. Si te equivocás, te lo marca al instante.</p>
+        <ol class="steps">
+          <li><span class="step-ic"><svg class="ic"><use href="#i-images"/></svg></span><div><b>Cargá una partitura</b><span>Pedí una canción, sacale una foto o importá un archivo.</span></div></li>
+          <li><span class="step-ic"><svg class="ic"><use href="#i-plug"/></svg></span><div><b>Conectá tu piano</b><span>Por USB, Bluetooth o con el micrófono.</span></div></li>
+          <li><span class="step-ic"><svg class="ic"><use href="#i-play"/></svg></span><div><b>Tocá</b><span>Avanzás a tu ritmo y ves cada acierto.</span></div></li>
+        </ol>
+        <div class="row wrap hero-cta">
+          <button class="btn primary big" id="empty-demo"><svg class="ic"><use href="#i-play"/></svg>Probar con la demo</button>
+          <button class="btn big" id="empty-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
+        </div>
+      </section>
+
+      <section id="library-section">
+        <div class="lib-head">
+          <h2>Mi biblioteca</h2>
+          <button class="btn primary" id="btn-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
+        </div>
+        <ul id="library-list" class="cards"></ul>
+      </section>
+      <section id="demo-section">
+        <h2>Para probar</h2>
+        <ul id="demo-list" class="cards"></ul>
+      </section>
+    </main>
+  </section>
+
+  <!-- 2. Revisión -->
+  <section id="screen-review" class="screen" hidden aria-label="Revisión">
+    <header class="bar">
+      <button class="btn icon ghost" id="review-back" aria-label="Volver"><svg class="ic"><use href="#i-back"/></svg></button>
+      <input id="review-title" class="title-input" type="text" aria-label="Título" placeholder="Título">
+      <label class="bpm-field"><svg class="ic sm"><use href="#i-metro"/></svg><input id="review-bpm" type="number" min="30" max="240" inputmode="numeric" aria-label="Tempo (negras por minuto)"></label>
+    </header>
+    <div id="review-note" class="notice" role="note" hidden><svg class="ic"><use href="#i-info"/></svg><span id="review-note-t"></span></div>
+    <div id="review-struct" class="struct" hidden></div>
+    <div id="review-score" class="score-wrap"></div>
+    <div class="panel" id="review-panel">
+      <div id="review-sel" class="sel-info">Tocá una nota de la partitura para corregirla.</div>
+      <div class="row wrap">
+        <button class="btn" id="ed-up" disabled>&#9839; +1</button>
+        <button class="btn" id="ed-down" disabled>&#9837; &minus;1</button>
+        <button class="btn" id="ed-oct-up" disabled>8va &uarr;</button>
+        <button class="btn" id="ed-oct-down" disabled>8va &darr;</button>
+        <button class="btn danger" id="ed-del" disabled>Borrar nota</button>
+        <button class="btn" id="ed-undo" disabled>Deshacer</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="review-save">Guardar</button>
+        <button class="btn primary grow" id="review-save-practice"><svg class="ic"><use href="#i-play"/></svg>Guardar y practicar</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Práctica -->
+  <section id="screen-practice" class="screen" hidden aria-label="Práctica">
+    <header class="bar compact">
+      <button class="btn icon ghost" id="practice-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
+      <div class="bar-title" id="practice-title">Práctica</div>
+      <div class="seg" role="group" aria-label="Manos" id="hands-seg">
+        <button data-hands="both" class="on" aria-label="Ambas manos">Ambas</button>
+        <button data-hands="rh" aria-label="Mano derecha">Der.</button>
+        <button data-hands="lh" aria-label="Mano izquierda">Izq.</button>
+      </div>
+      <button class="btn guide-btn" id="guide-toggle" aria-pressed="true" title="Guía: ilumina en el teclado las notas que siguen"><svg class="ic sm"><use href="#i-bulb"/></svg><span class="lbl">Guía</span></button>
+      <button class="btn icon ghost" id="practice-restart" aria-label="Reiniciar" title="Reiniciar"><svg class="ic"><use href="#i-restart"/></svg></button>
+      <button class="btn" id="practice-stop" aria-label="Terminar sesión"><svg class="ic"><use href="#i-flag"/></svg><span class="lbl">Terminar</span></button>
+    </header>
+    <div class="struct-wrap">
+      <div id="practice-struct" class="struct" hidden></div>
+      <div id="phrase-note" class="phrase-note" role="status" aria-live="polite" hidden></div>
+    </div>
+    <div class="score-area">
+      <div id="practice-score" class="score-wrap"></div>
+    </div>
+    <div class="panel" id="practice-panel">
+      <div id="practice-msg" class="msg" role="status" aria-live="polite"><svg class="ic mi" aria-hidden="true"><use href="#i-play"/></svg><span id="practice-msg-t">Tocá la primera nota.</span></div>
+      <div class="row stats">
+        <div class="streak" id="practice-streak" role="img" aria-label="Errores seguidos: 0 de 5"><span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="streak-n" aria-hidden="true">0/5</span></div>
+        <div class="progress-txt" id="practice-progress-txt">0 / 0</div>
+        <button class="btn" id="panel-toggle" aria-expanded="false" aria-controls="practice-extra"><span id="panel-toggle-t">Más</span><svg class="ic sm chev"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="progress" aria-hidden="true"><div id="practice-progress"></div></div>
+
+      <div id="connect-hint" class="hint-card" hidden>
+        <svg class="ic"><use href="#i-plug"/></svg>
+        <div><b>Conectá tu piano para empezar</b><span>Elegí USB, Bluetooth o micrófono. Sin piano, activá «Tocar en el teclado de pantalla» en Ajustes.</span></div>
+        <button class="btn" id="connect-hint-ok">Entendido</button>
+      </div>
+
+      <div class="row wrap tools" id="practice-tools">
+        <div class="chips" role="group" aria-label="Conexión">
+          <button class="chip" id="midi-usb"><span id="midi-dot" class="midi-dot" aria-hidden="true"></span><svg class="ic sm"><use href="#i-plug"/></svg>Piano USB</button>
+          <button class="chip" id="midi-ble"><svg class="ic sm"><use href="#i-bt"/></svg>Bluetooth</button>
+          <button class="chip" id="mic-toggle" aria-pressed="false" title="Escuchar el piano con el micrófono"><svg class="ic sm"><use href="#i-mic"/></svg>Micrófono</button>
+        </div>
+        <span id="midi-status" class="midi-status idle">Piano sin conectar</span>
+        <span class="mic-info" id="mic-line" hidden>
+          <span id="mic-dot" class="midi-dot" aria-hidden="true"></span>
+          <span class="meter" aria-hidden="true"><i id="mic-meter"></i></span>
+          <span id="mic-status" class="midi-status mic-status" role="status">Micrófono apagado</span>
+        </span>
+        <div id="mic-note" class="mic-note" hidden>Con micrófono, usá auriculares para el metrónomo o silencialo.</div>
+        <div class="group look-group extra" id="look-group" role="group" aria-label="Aspecto de la partitura">
+          <div class="seg" role="group" aria-label="Aspecto de la partitura" id="look-theme">
+            <button data-theme="hoja">Hoja</button><button data-theme="sepia">Sepia</button><button data-theme="oscuro">Oscuro</button>
+          </div>
+          <div class="seg size" role="group" aria-label="Tamaño de la partitura" id="look-size">
+            <button data-size="chico" aria-label="Tamaño chico">A</button><button data-size="mediano" aria-label="Tamaño mediano">A</button><button data-size="grande" aria-label="Tamaño grande">A</button>
+          </div>
+        </div>
+        <div class="group metro-group extra" id="practice-extra" aria-label="Metrónomo">
+          <span id="beat-dot" class="beat-dot" aria-hidden="true"></span>
+          <span id="beat-pips" class="pips" aria-hidden="true"></span>
+          <button class="btn icon" id="bpm-down" aria-label="Bajar tempo">&minus;</button>
+          <output id="bpm-val" class="bpm-val" aria-label="Tempo">80</output>
+          <button class="btn icon" id="bpm-up" aria-label="Subir tempo">+</button>
+          <button class="btn" id="metro-toggle" aria-pressed="false"><svg class="ic sm"><use href="#i-metro"/></svg>Metrónomo</button>
+        </div>
+      </div>
+      <div id="piano" class="pk-host"></div>
+    </div>
+  </section>
+
+  <!-- 4. Resultado -->
+  <section id="screen-result" class="screen" hidden aria-label="Resultado">
+    <header class="bar">
+      <div class="bar-title">Resultado</div>
+    </header>
+    <main class="content center">
+      <div class="ring" id="result-ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" id="result-ring-fg" cx="60" cy="60" r="52"/></svg>
+        <div id="result-pct" class="big-pct">0%</div>
+      </div>
+      <div id="result-badge" class="badge" hidden><svg class="ic sm"><use href="#i-trophy"/></svg>¡Nuevo récord!</div>
+      <div id="result-head" class="result-head"></div>
+      <p id="result-sub" class="result-sub"></p>
+      <p id="result-compare" class="result-compare" hidden></p>
+      <dl class="result-stats">
+        <div><dt>Pasos limpios</dt><dd id="res-clean">0</dd></div>
+        <div><dt>Pasos con error</dt><dd id="res-dirty">0</dd></div>
+        <div><dt>Notas erradas</dt><dd id="res-wrong">0</dd></div>
+        <div><dt>Avance</dt><dd id="res-prog">0/0</dd></div>
+      </dl>
+      <div class="row center">
+        <button class="btn primary big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg>Reintentar</button>
+        <button class="btn big" id="result-lib">Biblioteca</button>
+      </div>
+    </main>
+  </section>
+
+  <!-- 5. Ajustes -->
+  <section id="screen-settings" class="screen" hidden aria-label="Ajustes">
+    <header class="bar">
+      <button class="btn icon ghost" id="settings-back" aria-label="Volver"><svg class="ic"><use href="#i-back"/></svg></button>
+      <div class="bar-title">Ajustes</div>
+    </header>
+    <main class="content">
+      <section class="group-card">
+        <h2>Inteligencia artificial</h2>
+        <p class="hint">Pedir canciones y leer fotos o PDF necesita un servicio de IA. Para usarlo hace falta una <b>API key</b>: una clave personal que te da el proveedor, como una contraseña. Se consigue creando una cuenta en el sitio del proveedor: <b>Claude Console</b> (Anthropic) o <b>Google AI Studio</b> (Gemini).</p>
+        <label class="field">Proveedor
+          <select id="set-provider">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="gemini">Google (Gemini)</option>
+          </select>
+        </label>
+        <label class="field">API key
+          <div class="row">
+            <input id="set-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegá tu API key">
+            <button class="btn" id="set-key-show" type="button">Ver</button>
+          </div>
+        </label>
+        <label class="field">Modelo (opcional)
+          <input id="set-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="(por defecto)">
+        </label>
+        <p class="hint">Tu API key queda sólo en este dispositivo y se envía únicamente al proveedor que elegiste.</p>
+      </section>
+      <section class="group-card">
+        <h2>Micrófono</h2>
+        <label class="field">Sensibilidad: <output id="set-mic-sens-val">50</output>
+          <input id="set-mic-sens" type="range" min="0" max="100" step="5" value="50" aria-label="Sensibilidad del micrófono">
+        </label>
+        <p class="hint">Con más sensibilidad se detectan notas suaves, pero también más ruido. Si marca notas que no tocaste, bajala. Si no te escucha, subila.</p>
+      </section>
+      <section class="group-card">
+        <h2>Pantalla</h2>
+        <label class="switch"><input id="set-kb" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Tocar en el teclado de pantalla</b><span>El piano de abajo en Práctica siempre se ve; con esto además responde al toque, para practicar sin piano conectado.</span></span></label>
+        <label class="switch"><input id="set-phrases" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Marcar frases repetidas</b><span>Dibuja sobre la partitura las frases que se repiten (A, A′, B…) y avisa al llegar a una que ya tocaste.</span></span></label>
+        <span class="field-t" id="lbl-view">Vista de la partitura</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-view" id="set-view">
+          <button data-view="continua">Continua (recomendada)</button><button data-view="pagina">Por página</button>
+        </div>
+        <p class="hint">Continua: toda la pieza en una fila que se desplaza sola y deja la marca en el centro. Por página: sistemas apilados con scroll.</p>
+        <span class="field-t" id="lbl-theme">Aspecto de la partitura</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-theme" id="set-theme">
+          <button data-theme="hoja">Hoja</button><button data-theme="sepia">Sepia</button><button data-theme="oscuro">Oscuro</button>
+        </div>
+        <span class="field-t" id="lbl-size">Tamaño de la partitura</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-size" id="set-size">
+          <button data-size="chico">Chico</button><button data-size="mediano">Mediano</button><button data-size="grande">Grande</button>
+        </div>
+      </section>
+      <section class="group-card" id="share-card">
+        <h2>Pasar ajustes a otro dispositivo</h2>
+        <p class="hint">Cargá tu API key una sola vez y llevala a tu otro celular o tablet sin volver a tipearla. Se pasan sólo el proveedor, la API key y el modelo.</p>
+        <p class="share-warn" role="note"><svg class="ic sm"><use href="#i-info"/></svg>Este código contiene tu API key. No lo compartas con nadie.</p>
+        <div class="row wrap share-btns">
+          <button class="btn" id="share-show" type="button">Mostrar código</button>
+          <button class="btn" id="share-link" type="button">Compartir enlace</button>
+          <button class="btn" id="share-scan" type="button">Escanear código</button>
+        </div>
+        <div id="share-qr-box" class="share-box" hidden>
+          <div id="share-qr" class="qr" role="img" aria-label="Código QR con tus ajustes de IA"></div>
+          <p class="hint">Abrí la cámara del otro dispositivo (o «Escanear código» en esta app) y apuntala acá. Se oculta solo al salir de Ajustes.</p>
+          <button class="btn" id="share-hide" type="button">Ocultar código</button>
+        </div>
+        <div id="share-scan-box" class="share-box" hidden>
+          <video id="share-video" class="scan-video" playsinline muted></video>
+          <p id="share-scan-msg" class="hint" role="status"></p>
+          <button class="btn" id="share-scan-close" type="button">Cerrar cámara</button>
+        </div>
+      </section>
+      <div class="row"><button class="btn primary big grow" id="settings-save">Guardar</button></div>
+      <p class="hint" id="version-note"></p>
+    </main>
+  </section>
+
+  <!-- Hoja: nueva partitura -->
+  <div id="sheet-new" class="overlay sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="dialog sheet-box">
+      <div class="sheet-head">
+        <h3 id="sheet-title">Nueva partitura</h3>
+        <button class="btn icon ghost" id="sheet-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <section class="opt featured" aria-labelledby="compose-h">
+        <div class="opt-head"><span class="opt-ic"><svg class="ic"><use href="#i-sparkle"/></svg></span><div><b id="compose-h">Pedir una canción</b><span>Escribí qué querés tocar y la IA arma la partitura.</span></div></div>
+        <label class="sr" for="compose-query">Qué canción querés tocar</label>
+        <input id="compose-query" type="text" autocomplete="off" maxlength="120" placeholder="Ej.: Para Elisa, Himno a la Alegría, Feliz cumpleaños">
+        <div class="seg wide" role="group" aria-label="Nivel" id="compose-level">
+          <button data-level="principiante" class="on">Principiante</button>
+          <button data-level="intermedio">Intermedio</button>
+          <button data-level="pro">Pro</button>
+        </div>
+        <p class="level-desc" id="compose-level-desc"></p>
+        <div class="seg wide" role="group" aria-label="Manos" id="compose-hands">
+          <button data-hands="melodia">Sólo melodía</button>
+          <button data-hands="dos-manos" class="on">Dos manos</button>
+        </div>
+        <button class="btn primary big" id="compose-go"><svg class="ic"><use href="#i-sparkle"/></svg>Armar partitura</button>
+      </section>
+      <div class="opt-grid">
+        <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span>Fotografiá una hoja de tu partitura.</span></span></button>
+        <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
+        <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span>Leemos las páginas de un PDF.</span></span></button>
+        <button class="opt btn-opt" id="imp-xml"><span class="opt-ic"><svg class="ic"><use href="#i-xml"/></svg></span><span class="opt-t"><b>MusicXML</b><span>Archivo de MuseScore y similares. Sin internet.</span></span></button>
+        <button class="opt btn-opt" id="imp-midi"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>MIDI</b><span>Archivo .mid. Sin internet.</span></span></button>
+      </div>
+      <p class="hint">Pedir canción, foto, imágenes y PDF usan IA y necesitan tu API key en Ajustes.</p>
+      <input type="file" id="file-photo" accept="image/*" capture="environment" hidden>
+      <input type="file" id="file-images" accept="image/*" multiple hidden>
+      <input type="file" id="file-pdf" accept="application/pdf,.pdf" hidden>
+      <input type="file" id="file-xml" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml,application/xml,text/xml" hidden>
+      <input type="file" id="file-midi" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+    </div>
+  </div>
+
+  <div id="busy" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="busy-title">
+    <div class="dialog">
+      <h3 id="busy-title">Leyendo partitura</h3>
+      <div class="spinner" id="busy-spinner" aria-hidden="true"></div>
+      <div id="busy-log" class="busy-log" aria-live="polite"></div>
+      <div id="busy-err" class="busy-err" role="alert" hidden></div>
+      <div class="row center">
+        <button class="btn" id="busy-settings" hidden>Ir a Ajustes</button>
+        <button class="btn" id="busy-close">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm" class="overlay" hidden role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+    <div class="dialog">
+      <h3 id="confirm-title">¿Seguro?</h3>
+      <p id="confirm-text" class="busy-log"></p>
+      <div class="row center">
+        <button class="btn" id="confirm-no">Cancelar</button>
+        <button class="btn danger solid" id="confirm-yes">Eliminar</button>
+      </div>
+    </div>
+  </div>
+  <div id="toast" class="toast" hidden role="status"></div>
+</div>
+
+<script src="vendor/vexflow/vexflow-bravura.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
