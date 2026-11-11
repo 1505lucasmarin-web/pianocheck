@@ -5,6 +5,7 @@ export function createSession(steps, opts = {}) {
   const list = Array.isArray(steps) ? steps : [];
   const total = list.length;
   const stepResults = new Array(total).fill(null);
+  const stepErrors = new Array(total).fill(0);   // notas erradas por paso
   let index = 0;
   let pressed = [];
   let cleanSteps = 0;
@@ -45,6 +46,7 @@ export function createSession(steps, opts = {}) {
       }
       // Nota equivocada
       wrongNotes++;
+      stepErrors[index]++;
       streak++;
       dirty = true;
       stepResults[index] = 'dirty';
@@ -66,6 +68,20 @@ export function createSession(steps, opts = {}) {
       };
     },
     get stepResults() { return stepResults.slice(); },
+    get stepErrors() { return stepErrors.slice(); },
+    /** Reinicia el contador de errores seguidos (la ayuda del bucle ya se mostró). */
+    resetStreak() { streak = 0; },
+    /** Vuelve a un paso anterior (p. ej. al inicio del compás): descuenta lo que se había contado desde ahí. */
+    jumpTo(i) {
+      if (status !== 'playing') return false;
+      const to = Math.max(0, Math.min(index, Math.floor(i)));
+      for (let k = to; k <= index && k < total; k++) {
+        if (k < index) { if (stepResults[k] === 'clean') cleanSteps--; else if (stepResults[k] === 'dirty') dirtySteps--; }
+        stepResults[k] = null;
+      }
+      index = to; pressed = []; dirty = false; streak = 0;
+      return true;
+    },
   };
   return session;
 }

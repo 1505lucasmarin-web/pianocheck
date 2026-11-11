@@ -1,6 +1,6 @@
 // Dibujo de la partitura con VexFlow (global `VexFlow`, vendor/vexflow/vexflow-bravura.js).
 // API: createRenderer(container, {mode}) → { draw, setCursor, follow, markStep, onNoteTap, clearMarks, setSelected,
-//   setPhrases, scrollToMeasure, setLook, redraw, destroy }
+//   setPhrases, setRange, scrollToMeasure, setLook, redraw, destroy }
 // Dos vistas: "page" (sistemas apilados, con scroll vertical) y "cont" (toda la pieza en una sola fila que se desplaza).
 // Los colores salen de variables CSS por tema (data-sheet="hoja|sepia|oscuro" en el contenedor): cambiar de tema no redibuja.
 import { phraseCaption, baseLetter } from "./phrases.js";
@@ -54,6 +54,7 @@ export function createRenderer(container, opts = {}) {
 
   let score = null, steps = [], systems = [], noteIndex = new Map(), stepEls = [];
   let phrases = [];
+  let range = null;        // pasaje resaltado/acotado { from, to } (base 0) o null
   let marks = [], cursor = -1, tapCb = null, selected = null;
   let lastWidth = 0, lastHeight = 0, resizeTimer = 0, cursorRect = null, selMark = null;
   const flagEls = new Map();
@@ -378,6 +379,7 @@ export function createRenderer(container, opts = {}) {
     if (cs) computeStepPos();
     marks.forEach((mk, i) => mk && applyMark(i, mk));
     drawPhrases();
+    drawRange();
     if (cursor >= 0) applyCursor(cursor, false);
     if (selected) setSelected(selected);
   }
@@ -434,12 +436,66 @@ export function createRenderer(container, opts = {}) {
     drawPhrases();
   }
 
+  /* ---------------------------- pasaje (bucle) ---------------------------- */
+  /** Resalta el rango y atenúa lo de afuera. */
+  function drawRange() {
+    systems.forEach((s) => s && s.svg.querySelectorAll(".loop-mark").forEach((e) => e.remove()));
+    container.classList.toggle("has-range", !!range);
+    if (!range) return;
+    systems.forEach((s) => {
+      if (!s) return;
+      let vb;
+      try { vb = s.svg.viewBox.baseVal; } catch (e) { vb = null; }
+      const vy = vb && vb.height ? vb.y : 0, vh = vb && vb.height ? vb.height : (s.H || 300);
+      const u = s.u || 1 / (s.scale || 1);
+      const g = document.createElementNS(SVGNS, "g"); g.setAttribute("class", "loop-mark");
+      const back = document.createElementNS(SVGNS, "g"); back.setAttribute("class", "loop-mark");
+      const rect = (parent, cls, x, w) => { const r = document.createElementNS(SVGNS, "rect"); r.setAttribute("class", cls); r.setAttribute("x", x); r.setAttribute("width", Math.max(0, w)); r.setAttribute("y", vy); r.setAttribute("height", vh); parent.appendChild(r); };
+      let any = false;
+      for (let mi = s.from; mi <= s.to; mi++) {
+        const m = s.mx[mi]; if (!m) continue;
+        const inside = mi >= range.from && mi <= range.to;
+        if (inside) { rect(back, "loop-band", m.x, m.w); any = true; } else rect(g, "loop-dim", m.x, m.w);
+      }
+      const a = s.mx[range.from], b = s.mx[range.to];
+      if (a && range.from >= s.from && range.from <= s.to) { const l = document.createElementNS(SVGNS, "rect"); l.setAttribute("class", "loop-edge"); l.setAttribute("x", a.x); l.setAttribute("width", 3 * u); l.setAttribute("y", TOP_Y - 2); l.setAttribute("height", BOT_Y + 80 - TOP_Y + 4); g.appendChild(l); }
+      if (b && range.to >= s.from && range.to <= s.to) { const l = document.createElementNS(SVGNS, "rect"); l.setAttribute("class", "loop-edge"); l.setAttribute("x", b.x + b.w - 3 * u); l.setAttribute("width", 3 * u); l.setAttribute("y", TOP_Y - 2); l.setAttribute("height", BOT_Y + 80 - TOP_Y + 4); g.appendChild(l); }
+      if (any) s.svg.insertBefore(back, s.svg.firstChild);
+      s.svg.appendChild(g);
+    });
+  }
+  /** Pasaje { from, to } (base 0) o null. Con vista continua acota el desplazamiento al rango. */
+  function setRange(r) {
+    const next = r ? { from: Math.min(r.from, r.to), to: Math.max(r.from, r.to) } : null;
+    if (JSON.stringify(next) === JSON.stringify(range)) return;
+    range = next;
+    drawRange();
+    if (!cs) {
+      if (range && systems.length) scrollToMeasure(range.from);
+      return;
+    }
+    look = null;
+    if (cursor >= 0 && range && cs.stepPos[cursor]) applyOffset(targetOffset(cursor), true);
+    else if (range) lookAt(cs.gx[range.from] * cs.scale - (cs.Dw * cs.scale + 18), true);
+    else applyOffset(cursor >= 0 ? targetOffset(cursor) : 0, true);
+  }
+
   /* ---------------------------- desplazamiento continuo ---------------------------- */
   const maxOffset = () => (cs ? Math.max(0, cs.total * cs.scale - cs.viewW) : 0);
+  /** Límites del desplazamiento. Con un pasaje activo la vista queda acotada a ese rango (si entra en pantalla, queda fija). */
+  function bounds() {
+    const mo = maxOffset();
+    if (!range || !cs || cs.gx[range.from] == null || cs.gx[range.to] == null) return [0, mo];
+    const left = cs.gx[range.from] * cs.scale - (cs.Dw * cs.scale + 18);
+    const right = (cs.gx[range.to] + cs.gw[range.to]) * cs.scale + 14 - cs.viewW;
+    const lo = clamp(Math.round(left), 0, mo);
+    return [lo, Math.max(lo, clamp(Math.round(right), 0, mo))];
+  }
   function targetOffset(i) {
     const p = cs.stepPos[i];
     if (!p) return curOffset;
-    return clamp(Math.round(p.c * cs.scale - cs.viewW / 2), 0, maxOffset());
+    const [lo, hi] = bounds();
+    return clamp(Math.round(p.c * cs.scale - cs.viewW / 2), lo, hi);
   }
   /** Aplica offset de la partitura y posición de la marca. animate=false → sin transición. */
   function applyOffset(off, animate) {
@@ -469,7 +525,8 @@ export function createRenderer(container, opts = {}) {
   }
   function lookAt(off, animate) {
     if (!cs) return;
-    look = clamp(Math.round(off), 0, maxOffset());
+    const [lo, hi] = bounds();
+    look = clamp(Math.round(off), lo, hi);
     applyOffset(look, animate);
   }
 
@@ -502,7 +559,8 @@ export function createRenderer(container, opts = {}) {
     const step = (now) => {
       const dt = Math.min(32, now - last); last = now;
       pos += v * dt; v *= Math.pow(0.992, dt);
-      const c = clamp(pos, 0, maxOffset());
+      const [lo, hi] = bounds();
+      const c = clamp(pos, lo, hi);
       lookAt(c, false);
       if (Math.abs(v) > 0.03 && c === pos && look != null) inertia = requestAnimationFrame(step);
     };
@@ -666,7 +724,7 @@ export function createRenderer(container, opts = {}) {
   ro.observe(container);
 
   return {
-    draw, setCursor, follow, markStep, clearMarks, setSelected, setPhrases, scrollToMeasure, setLook,
+    draw, setCursor, follow, markStep, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook,
     onNoteTap(cb) { tapCb = cb; },
     redraw,
     destroy() { ro.disconnect(); root.remove(); },

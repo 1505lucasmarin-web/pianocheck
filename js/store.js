@@ -66,7 +66,8 @@ export async function deleteScore(id) {
 
 /* ---- historial de intentos por partitura ---- */
 
-/** Guarda un intento: { scoreId, accuracy, status, total, index, clean, dirty, wrong, hands }. */
+/** Guarda un intento: { scoreId, accuracy, status, total, index, clean, dirty, wrong, hands, range:{from,to}|null, loop, bpm, laps, measuresDone, measuresTotal }.
+ *  Los intentos viejos no traen range/loop/bpm: se leen como pieza entera, sin bucle. */
 export async function addAttempt(att) {
   if (!att || !att.scoreId) throw new Error('Intento inválido.');
   const rec = { ...att, at: att.at || Date.now(), id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) };
@@ -85,11 +86,16 @@ export async function deleteAttempts(scoreId) {
   await run('attempts', 'readwrite', (s) => { list.forEach((a) => s.delete(a.id)); });
 }
 
-/** Pura: { count, best, last } (porcentajes) a partir de una lista de intentos. */
+/**
+ * Pura: { count, best, last } (porcentajes) de la PIEZA ENTERA a partir de una lista de intentos.
+ * Los intentos de un pasaje o de bucle (range / loop) no entran: no son comparables con la pieza completa.
+ * `best` sólo considera intentos completos (sin status = datos viejos, se toman como completos).
+ */
 export function summarizeAttempts(list) {
-  const a = (list || []).filter((x) => x && Number.isFinite(x.accuracy)).sort((p, q) => p.at - q.at);
+  const a = (list || []).filter((x) => x && Number.isFinite(x.accuracy) && !x.range && !x.loop).sort((p, q) => p.at - q.at);
   if (!a.length) return { count: 0, best: null, last: null };
-  return { count: a.length, best: Math.max(...a.map((x) => x.accuracy)), last: a[a.length - 1].accuracy };
+  const full = a.filter((x) => !x.status || x.status === 'finished');
+  return { count: a.length, best: full.length ? Math.max(...full.map((x) => x.accuracy)) : null, last: a[a.length - 1].accuracy };
 }
 
 /** Mapa scoreId → resumen para toda la biblioteca. */

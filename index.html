@@ -39,6 +39,13 @@
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></symbol>
     <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0012 3z"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3l3 3-3 3M20 6H9a5 5 0 00-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 005-5"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+    <symbol id="i-ear" viewBox="0 0 24 24"><path d="M4 10v4h3.5l5 4V6l-5 4zM16 9a4.2 4.2 0 010 6M18.6 6.5a7.6 7.6 0 010 11"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V11M11 10V5a1.5 1.5 0 013 0v6M14 10.5V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4-2L4.5 14.5a1.5 1.5 0 012.2-2L8 14"/></symbol>
+    <symbol id="i-skip" viewBox="0 0 24 24"><path d="M6 6l9 6-9 6zM18 6v12"/></symbol>
     <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 01-10 0zM7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3M12 14v4M8 20h8"/></symbol>
   </defs>
 </svg>
@@ -52,6 +59,10 @@
       <button class="btn icon ghost" id="btn-open-settings" aria-label="Ajustes"><svg class="ic"><use href="#i-sliders"/></svg></button>
     </header>
     <main class="content wide">
+      <section id="continue-card" class="continue" hidden aria-labelledby="continue-h">
+        <div class="continue-t"><span class="continue-k" id="continue-h">Continuar práctica</span><b id="continue-title"></b><span id="continue-sub" class="continue-sub"></span></div>
+        <button class="btn primary big" id="continue-go"><svg class="ic"><use href="#i-play"/></svg>Continuar</button>
+      </section>
       <section id="empty-state" class="hero" hidden>
         <h2 class="hero-title">Tu piano te escucha y te corrige</h2>
         <p class="hero-sub">Tocá una partitura nota por nota. Si te equivocás, te lo marca al instante.</p>
@@ -64,6 +75,7 @@
           <button class="btn primary big" id="empty-demo"><svg class="ic"><use href="#i-play"/></svg>Probar con la demo</button>
           <button class="btn big" id="empty-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
         </div>
+        <button class="btn link-btn" id="empty-demo-kb"><svg class="ic sm"><use href="#i-midi"/></svg>Probar con el teclado de pantalla</button>
       </section>
 
       <section id="library-section">
@@ -109,45 +121,79 @@
 
   <!-- 3. Práctica -->
   <section id="screen-practice" class="screen" hidden aria-label="Práctica">
-    <header class="bar compact">
-      <button class="btn icon ghost" id="practice-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
-      <div class="bar-title" id="practice-title">Práctica</div>
-      <div class="seg" role="group" aria-label="Manos" id="hands-seg">
-        <button data-hands="both" class="on" aria-label="Ambas manos">Ambas</button>
-        <button data-hands="rh" aria-label="Mano derecha">Der.</button>
-        <button data-hands="lh" aria-label="Mano izquierda">Izq.</button>
+    <header class="pr-head" id="pr-head">
+      <button class="btn icon ghost pr-back" id="practice-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
+      <div class="pr-title">
+        <h2 class="pr-name" id="practice-title">Práctica</h2>
+        <button class="pr-sub" id="hands-link" aria-haspopup="dialog" aria-label="Manos y sesión. Tocá para cambiar la mano, reiniciar o terminar"><span id="hands-t">Ambas manos</span><span aria-hidden="true"> · </span><span id="measure-now">Compás 1 de 1</span><svg class="ic sm chev down" aria-hidden="true"><use href="#i-chev"/></svg></button>
       </div>
-      <button class="btn guide-btn" id="guide-toggle" aria-pressed="true" title="Guía: ilumina en el teclado las notas que siguen"><svg class="ic sm"><use href="#i-bulb"/></svg><span class="lbl">Guía</span></button>
-      <button class="btn icon ghost" id="practice-restart" aria-label="Reiniciar" title="Reiniciar"><svg class="ic"><use href="#i-restart"/></svg></button>
-      <button class="btn" id="practice-stop" aria-label="Terminar sesión"><svg class="ic"><use href="#i-flag"/></svg><span class="lbl">Terminar</span></button>
+      <button class="input-pill" id="input-pill" aria-haspopup="dialog" aria-label="Entrada: sin conectar. Tocá para conectar"><span id="pill-dot" class="pill-dot" aria-hidden="true"></span><span id="pill-t">Conectar piano</span></button>
+      <div class="pr-actions">
+        <button class="btn icon ghost wide-only" id="practice-restart" aria-label="Reiniciar" title="Reiniciar"><svg class="ic"><use href="#i-restart"/></svg></button>
+        <button class="btn wide-only" id="practice-stop" aria-label="Terminar sesión"><svg class="ic"><use href="#i-flag"/></svg><span class="lbl">Terminar</span></button>
+      </div>
+      <div class="pr-ctrls" id="pr-ctrls" role="group" aria-label="Controles de práctica">
+        <button class="ctl" id="btn-tempo" aria-haspopup="dialog"><span id="tempo-t">♩ 80 BPM</span></button>
+        <button class="ctl" id="btn-loop" aria-haspopup="dialog" aria-pressed="false"><span id="loop-t">Bucle</span></button>
+        <button class="ctl" id="guide-toggle" aria-pressed="true" title="Guía: ilumina en el teclado las notas que siguen">Guía</button>
+        <button class="ctl icon" id="btn-look" aria-haspopup="dialog" aria-label="Lectura: aspecto, tamaño y vista de la partitura"><span class="aa" aria-hidden="true">Aa</span></button>
+      </div>
     </header>
+    <div id="connect-hint" class="hint-card" hidden>
+      <svg class="ic"><use href="#i-plug"/></svg>
+      <div><b>Conectá tu piano para empezar</b><span>Tocá «Conectar piano» arriba: USB, Bluetooth o micrófono. Sin piano, usá el teclado de pantalla.</span></div>
+      <button class="btn" id="connect-hint-ok">Entendido</button>
+    </div>
     <div class="struct-wrap">
       <div id="practice-struct" class="struct" hidden></div>
       <div id="phrase-note" class="phrase-note" role="status" aria-live="polite" hidden></div>
     </div>
+    <div id="lap-line" class="lap-line" hidden role="status"></div>
     <div class="score-area">
       <div id="practice-score" class="score-wrap"></div>
     </div>
     <div class="panel" id="practice-panel">
-      <div id="practice-msg" class="msg" role="status" aria-live="polite"><svg class="ic mi" aria-hidden="true"><use href="#i-play"/></svg><span id="practice-msg-t">Tocá la primera nota.</span></div>
-      <div class="row stats">
+      <div id="stuck-help" class="stuck" role="group" aria-label="Ayuda: se complicó este pasaje" hidden>
+        <b class="stuck-t">Se complicó este pasaje. ¿Qué probamos?</b>
+        <div class="stuck-grid">
+          <button class="btn" id="st-listen"><svg class="ic sm"><use href="#i-ear"/></svg>Escuchar el pasaje</button>
+          <button class="btn" id="st-hand"><svg class="ic sm"><use href="#i-hand"/></svg><span id="st-hand-t">Probar con una mano</span></button>
+          <button class="btn" id="st-measure"><svg class="ic sm"><use href="#i-restart"/></svg>Volver al inicio del compás</button>
+          <button class="btn primary" id="st-go"><svg class="ic sm"><use href="#i-skip"/></svg>Seguir</button>
+        </div>
+      </div>
+      <div class="next-row">
+        <div class="next-info" id="next-info" role="status" aria-live="polite">
+          <span class="next-label" id="next-label">Próxima nota</span>
+          <span class="next-name" id="next-name">—</span>
+          <span class="next-sub" id="next-sub"></span>
+        </div>
+        <button class="btn pause-btn" id="practice-pause" aria-pressed="false"><svg class="ic sm"><use href="#i-pause"/></svg><span id="pause-t">Pausar</span></button>
+      </div>
+      <div class="stats-row">
         <div class="streak" id="practice-streak" role="img" aria-label="Errores seguidos: 0 de 5"><span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="streak-n" aria-hidden="true">0/5</span></div>
         <div class="progress-txt" id="practice-progress-txt">0 / 0</div>
-        <button class="btn" id="panel-toggle" aria-expanded="false" aria-controls="practice-extra"><span id="panel-toggle-t">Más</span><svg class="ic sm chev"><use href="#i-chev"/></svg></button>
       </div>
       <div class="progress" aria-hidden="true"><div id="practice-progress"></div></div>
-
-      <div id="connect-hint" class="hint-card" hidden>
-        <svg class="ic"><use href="#i-plug"/></svg>
-        <div><b>Conectá tu piano para empezar</b><span>Elegí USB, Bluetooth o micrófono. Sin piano, activá «Tocar en el teclado de pantalla» en Ajustes.</span></div>
-        <button class="btn" id="connect-hint-ok">Entendido</button>
+      <div class="kb-box">
+        <button class="kb-fold" id="kb-fold" aria-expanded="false" aria-controls="piano" hidden><svg class="ic sm chev"><use href="#i-chev"/></svg><span id="kb-fold-t">Mostrar teclado</span></button>
+        <div id="piano" class="pk-host"></div>
       </div>
+    </div>
+  </section>
 
-      <div class="row wrap tools" id="practice-tools">
+  <!-- Hojas de Práctica: Conexión, Tempo, Bucle, Lectura, Manos, Sesión (una sola a la vez) -->
+  <div id="psheet" class="psheet" hidden role="dialog" aria-modal="false" aria-labelledby="ps-title">
+    <div class="ps-box" id="ps-box" tabindex="-1">
+      <div class="ps-head"><h3 id="ps-title">Hoja</h3><button class="btn icon ghost" id="ps-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button></div>
+
+      <div class="ps-sec" data-sec="input" hidden>
+        <p class="hint" id="input-lead">Elegí cómo te escucha la app.</p>
         <div class="chips" role="group" aria-label="Conexión">
           <button class="chip" id="midi-usb"><span id="midi-dot" class="midi-dot" aria-hidden="true"></span><svg class="ic sm"><use href="#i-plug"/></svg>Piano USB</button>
           <button class="chip" id="midi-ble"><svg class="ic sm"><use href="#i-bt"/></svg>Bluetooth</button>
           <button class="chip" id="mic-toggle" aria-pressed="false" title="Escuchar el piano con el micrófono"><svg class="ic sm"><use href="#i-mic"/></svg>Micrófono</button>
+          <button class="chip" id="kb-toggle" aria-pressed="false" title="Tocar en el teclado de pantalla"><svg class="ic sm"><use href="#i-midi"/></svg>Teclado de pantalla</button>
         </div>
         <span id="midi-status" class="midi-status idle">Piano sin conectar</span>
         <span class="mic-info" id="mic-line" hidden>
@@ -156,49 +202,104 @@
           <span id="mic-status" class="midi-status mic-status" role="status">Micrófono apagado</span>
         </span>
         <div id="mic-note" class="mic-note" hidden>Con micrófono, usá auriculares para el metrónomo o silencialo.</div>
-        <div class="group look-group extra" id="look-group" role="group" aria-label="Aspecto de la partitura">
-          <div class="seg" role="group" aria-label="Aspecto de la partitura" id="look-theme">
-            <button data-theme="hoja">Hoja</button><button data-theme="sepia">Sepia</button><button data-theme="oscuro">Oscuro</button>
-          </div>
-          <div class="seg size" role="group" aria-label="Tamaño de la partitura" id="look-size">
-            <button data-size="chico" aria-label="Tamaño chico">A</button><button data-size="mediano" aria-label="Tamaño mediano">A</button><button data-size="grande" aria-label="Tamaño grande">A</button>
+      </div>
+
+      <div class="ps-sec" data-sec="tempo" hidden>
+        <div class="tempo-row">
+          <button class="btn icon" id="bpm-down" aria-label="Bajar tempo">&minus;</button>
+          <div class="tempo-val"><output id="bpm-val" class="bpm-val" aria-label="Tempo">80</output><span>negras por minuto</span></div>
+          <button class="btn icon" id="bpm-up" aria-label="Subir tempo">+</button>
+        </div>
+        <label class="switch"><input id="metro-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Metrónomo</b><span class="metro-viz"><span id="beat-dot" class="beat-dot" aria-hidden="true"></span><span id="beat-pips" class="pips" aria-hidden="true"></span></span></span></label>
+        <label class="switch"><input id="countin-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Cuenta de entrada</b><span>Un compás de clics antes de empezar (y al reiniciar o continuar).</span></span></label>
+      </div>
+
+      <div class="ps-sec" data-sec="loop" hidden>
+        <div class="range-ed">
+          <div class="stepper" role="group" aria-label="Desde el compás"><span class="stepper-l">Desde el compás</span><button class="btn icon" id="lp-from-dn" aria-label="Desde: compás anterior">&minus;</button><output id="lp-from" aria-live="polite">1</output><button class="btn icon" id="lp-from-up" aria-label="Desde: compás siguiente">+</button></div>
+          <div class="stepper" role="group" aria-label="Hasta el compás"><span class="stepper-l">Hasta el compás</span><button class="btn icon" id="lp-to-dn" aria-label="Hasta: compás anterior">&minus;</button><output id="lp-to" aria-live="polite">2</output><button class="btn icon" id="lp-to-up" aria-label="Hasta: compás siguiente">+</button></div>
+        </div>
+        <div class="range-sumrow"><span class="range-sum" id="lp-sum"></span><button class="btn sm" id="lp-pair">Compás actual y el siguiente</button></div>
+        <div class="listen-row" role="group" aria-label="Escuchar el pasaje">
+          <button class="btn" id="lp-listen"><svg class="ic sm"><use href="#i-ear"/></svg><span id="lp-listen-t">Escuchar</span></button>
+          <button class="chip" id="lp-slow" aria-pressed="false" title="Escuchar al 60% del tempo">Lento 60%</button>
+          <div class="seg" role="group" aria-label="Mano al escuchar" id="lp-hands">
+            <button data-hands="both" class="on" aria-label="Ambas manos">Ambas</button><button data-hands="rh" aria-label="Mano derecha">Der.</button><button data-hands="lh" aria-label="Mano izquierda">Izq.</button>
           </div>
         </div>
-        <div class="group metro-group extra" id="practice-extra" aria-label="Metrónomo">
-          <span id="beat-dot" class="beat-dot" aria-hidden="true"></span>
-          <span id="beat-pips" class="pips" aria-hidden="true"></span>
-          <button class="btn icon" id="bpm-down" aria-label="Bajar tempo">&minus;</button>
-          <output id="bpm-val" class="bpm-val" aria-label="Tempo">80</output>
-          <button class="btn icon" id="bpm-up" aria-label="Subir tempo">+</button>
-          <button class="btn" id="metro-toggle" aria-pressed="false"><svg class="ic sm"><use href="#i-metro"/></svg>Metrónomo</button>
+        <div class="loop-actions">
+          <button class="btn danger" id="lp-off" hidden>Quitar bucle</button>
+          <button class="btn primary big" id="lp-apply"><svg class="ic"><use href="#i-loop"/></svg><span id="lp-apply-t">Practicar este pasaje</span></button>
         </div>
       </div>
-      <div id="piano" class="pk-host"></div>
+
+      <div class="ps-sec" data-sec="look" hidden>
+        <span class="field-t">Aspecto de la partitura</span>
+        <div class="seg opts" role="group" aria-label="Aspecto de la partitura" id="look-theme">
+          <button data-theme="hoja">Hoja</button><button data-theme="sepia">Sepia</button><button data-theme="oscuro">Oscuro</button>
+        </div>
+        <span class="field-t">Tamaño</span>
+        <div class="seg opts size" role="group" aria-label="Tamaño de la partitura" id="look-size">
+          <button data-size="chico" aria-label="Tamaño chico">A</button><button data-size="mediano" aria-label="Tamaño mediano">A</button><button data-size="grande" aria-label="Tamaño grande">A</button>
+        </div>
+        <span class="field-t">Vista</span>
+        <div class="seg opts" role="group" aria-label="Vista de la partitura" id="look-view">
+          <button data-view="continua">Continua</button><button data-view="pagina">Por página</button>
+        </div>
+        <div id="look-struct-box" class="look-struct" hidden>
+          <span class="field-t">Estructura de la pieza</span>
+          <div id="practice-struct-sheet" class="struct in-sheet"></div>
+        </div>
+      </div>
+
+      <div class="ps-sec" data-sec="hands" hidden>
+        <span class="field-t">Manos</span>
+        <div class="seg opts" role="group" aria-label="Manos" id="hands-seg">
+          <button data-hands="both" class="on">Ambas manos</button><button data-hands="rh">Derecha</button><button data-hands="lh">Izquierda</button>
+        </div>
+        <p class="hint">Al cambiar de mano se reinicia el pasaje.</p>
+        <div class="menu-list">
+          <button class="btn big" id="menu-whole" hidden><svg class="ic"><use href="#i-back"/></svg>Empezar desde el compás 1</button>
+          <button class="btn big" id="menu-restart"><svg class="ic"><use href="#i-restart"/></svg>Reiniciar</button>
+          <button class="btn big" id="menu-stop"><svg class="ic"><use href="#i-flag"/></svg>Terminar y ver resultado</button>
+        </div>
+      </div>
     </div>
-  </section>
+  </div>
 
   <!-- 4. Resultado -->
   <section id="screen-result" class="screen" hidden aria-label="Resultado">
     <header class="bar">
       <div class="bar-title">Resultado</div>
     </header>
-    <main class="content center">
-      <div class="ring" id="result-ring">
-        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="ring-bg" cx="60" cy="60" r="52"/><circle class="ring-fg" id="result-ring-fg" cx="60" cy="60" r="52"/></svg>
-        <div id="result-pct" class="big-pct">0%</div>
-      </div>
-      <div id="result-badge" class="badge" hidden><svg class="ic sm"><use href="#i-trophy"/></svg>¡Nuevo récord!</div>
-      <div id="result-head" class="result-head"></div>
+    <main class="content result-main">
+      <div id="result-badge" class="badge" hidden><svg class="ic sm"><use href="#i-trophy"/></svg><span id="result-badge-t">¡Nuevo récord!</span></div>
+      <h2 id="result-head" class="result-head"></h2>
       <p id="result-sub" class="result-sub"></p>
+      <section id="result-action" class="result-action" hidden aria-labelledby="result-action-t">
+        <p id="result-action-t" class="ra-title"></p>
+        <button class="btn primary big" id="result-action-btn"></button>
+      </section>
+      <div class="result-metrics">
+        <div class="metric"><span class="m-lbl">Precisión</span><b id="res-acc">0%</b><span class="m-sub" id="res-acc-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-acc-bar"></i></span></div>
+        <div class="metric"><span class="m-lbl">Avance</span><b id="res-cov">0 de 0 compases</b><span class="m-sub" id="res-prog-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-cov-bar"></i></span></div>
+      </div>
+      <p id="result-scope" class="result-scope" hidden></p>
+      <section class="mstrip-wrap" aria-labelledby="strip-t">
+        <span class="m-lbl" id="strip-t">Compás por compás</span>
+        <div id="measure-strip" class="mstrip" role="group" aria-label="Resumen por compás"></div>
+        <div id="strip-offer" class="strip-offer" hidden><span id="strip-offer-t"></span><button class="btn sm primary" id="strip-offer-go"></button></div>
+        <p class="strip-legend" aria-hidden="true"><span class="lg clean">✓ Limpio</span><span class="lg dirty">✕ Con error</span><span class="lg none">· No tocado</span></p>
+      </section>
       <p id="result-compare" class="result-compare" hidden></p>
       <dl class="result-stats">
         <div><dt>Pasos limpios</dt><dd id="res-clean">0</dd></div>
         <div><dt>Pasos con error</dt><dd id="res-dirty">0</dd></div>
         <div><dt>Notas erradas</dt><dd id="res-wrong">0</dd></div>
-        <div><dt>Avance</dt><dd id="res-prog">0/0</dd></div>
+        <div id="res-laps-box"><dt>Vueltas</dt><dd id="res-laps">0</dd></div>
       </dl>
       <div class="row center">
-        <button class="btn primary big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg>Reintentar</button>
+        <button class="btn big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg><span id="result-retry-t">Reintentar</span></button>
         <button class="btn big" id="result-lib">Biblioteca</button>
       </div>
     </main>
@@ -240,7 +341,7 @@
       </section>
       <section class="group-card">
         <h2>Pantalla</h2>
-        <label class="switch"><input id="set-kb" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Tocar en el teclado de pantalla</b><span>El piano de abajo en Práctica siempre se ve; con esto además responde al toque, para practicar sin piano conectado.</span></span></label>
+        <label class="switch"><input id="set-kb" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Tocar en el teclado de pantalla</b><span>Con esto el piano de Práctica responde al toque, para practicar sin piano conectado. También se activa desde «Conectar piano».</span></span></label>
         <label class="switch"><input id="set-phrases" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Marcar frases repetidas</b><span>Dibuja sobre la partitura las frases que se repiten (A, A′, B…) y avisa al llegar a una que ya tocaste.</span></span></label>
         <span class="field-t" id="lbl-view">Vista de la partitura</span>
         <div class="seg opts" role="group" aria-labelledby="lbl-view" id="set-view">
