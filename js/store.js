@@ -119,3 +119,60 @@ export async function saveSettings(obj) {
   await run('settings', 'readwrite', (s) => s.put(next, 'app'));
   return next;
 }
+
+/* ---- progreso de Teoría (clave "theory" del store de ajustes: no cambia el esquema de la base) ---- */
+
+/** Porcentaje mínimo para dar por completada una tonalidad en una lección. */
+export const THEORY_PASS = 80;
+
+/** Normaliza lo guardado: { lessons: { [lessonId]: { best:{[ejercicio]:{correct,total,pct,key,at}}, keys:string[], runs:number } } }. */
+export function normalizeTheory(raw) {
+  const out = { lessons: {} };
+  const src = raw && typeof raw === 'object' && raw.lessons && typeof raw.lessons === 'object' ? raw.lessons : {};
+  for (const id of Object.keys(src)) {
+    const l = src[id] || {};
+    out.lessons[id] = {
+      best: l.best && typeof l.best === 'object' ? { ...l.best } : {},
+      keys: Array.isArray(l.keys) ? l.keys.filter((k) => typeof k === 'string') : [],
+      runs: Number.isFinite(l.runs) ? l.runs : 0,
+    };
+  }
+  return out;
+}
+
+/**
+ * Pura: suma un resultado. Guarda el mejor puntaje por ejercicio y marca la tonalidad como completada si pct >= THEORY_PASS.
+ * @returns nuevo objeto de progreso (no muta el recibido)
+ */
+export function recordTheory(progress, lessonId, exercise, keyId, correct, total, now = Date.now()) {
+  const cur = normalizeTheory(progress);
+  const l = cur.lessons[lessonId] || { best: {}, keys: [], runs: 0 };
+  const t = Math.max(0, Math.floor(total) || 0);
+  const c = Math.max(0, Math.min(t, Math.floor(correct) || 0));
+  const pct = t ? Math.round((c / t) * 100) : 0;
+  const prev = l.best[exercise];
+  if (!prev || pct > prev.pct) l.best[exercise] = { correct: c, total: t, pct, key: keyId || null, at: now };
+  if (keyId && pct >= THEORY_PASS && !l.keys.includes(keyId)) l.keys.push(keyId);
+  l.runs += 1;
+  cur.lessons[lessonId] = l;
+  return cur;
+}
+
+/** Pura: { best (mejor % entre ejercicios o null), keys (tonalidades completadas), byExercise, runs } de una lección. */
+export function theorySummary(progress, lessonId) {
+  const l = normalizeTheory(progress).lessons[lessonId];
+  if (!l) return { best: null, keys: [], byExercise: {}, runs: 0 };
+  const pcts = Object.values(l.best).map((b) => b.pct).filter(Number.isFinite);
+  return { best: pcts.length ? Math.max(...pcts) : null, keys: l.keys.slice(), byExercise: l.best, runs: l.runs };
+}
+
+export async function getTheoryProgress() {
+  return normalizeTheory(await run('settings', 'readonly', (s) => s.get('theory')));
+}
+
+/** Registra un resultado en IndexedDB y devuelve el progreso actualizado. */
+export async function saveTheoryResult(lessonId, exercise, keyId, correct, total) {
+  const next = recordTheory(await getTheoryProgress(), lessonId, exercise, keyId, correct, total);
+  await run('settings', 'readwrite', (s) => s.put(next, 'theory'));
+  return next;
+}

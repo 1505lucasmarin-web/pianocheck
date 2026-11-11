@@ -1,5 +1,5 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v6";
+const VERSION = "pianocheck-v7";
 const SHELL = [
   "./",
   "index.html",
@@ -11,6 +11,8 @@ const SHELL = [
   "js/engine.js",
   "js/importers.js",
   "js/keyboard.js",
+  "js/lessons.js",
+  "js/links.js",
   "js/metronome.js",
   "js/mic.js",
   "js/mic-worklet.js",
@@ -24,6 +26,8 @@ const SHELL = [
   "js/share.js",
   "js/render.js",
   "js/store.js",
+  "js/teoria.js",
+  "js/theory.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/maskable-512.png",
@@ -33,7 +37,9 @@ const SHELL = [
   "vendor/pdf.worker.min.mjs",
   "vendor/vexflow/vexflow-bravura.js"
 ];
+// Nunca se cachean: IA, oEmbed y APIs de búsqueda de canciones (identificar un enlace). Cualquier pedido a otro origen pasa de largo.
 const AI_HOSTS = ["api.anthropic.com", "generativelanguage.googleapis.com"];
+const LOOKUP_HOSTS = ["www.youtube.com", "youtube.com", "open.spotify.com", "soundcloud.com", "api.deezer.com", "itunes.apple.com"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
@@ -59,7 +65,7 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (AI_HOSTS.includes(url.hostname) || url.origin !== self.location.origin) return; // nunca cachear APIs de IA ni terceros
+  if (AI_HOSTS.includes(url.hostname) || LOOKUP_HOSTS.includes(url.hostname) || url.origin !== self.location.origin) return; // nunca cachear APIs de IA, oEmbed/lookup ni terceros
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
     const hit = await cache.match(req, { ignoreSearch: true });

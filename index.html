@@ -46,6 +46,10 @@
     <symbol id="i-ear" viewBox="0 0 24 24"><path d="M4 10v4h3.5l5 4V6l-5 4zM16 9a4.2 4.2 0 010 6M18.6 6.5a7.6 7.6 0 010 11"/></symbol>
     <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V11M11 10V5a1.5 1.5 0 013 0v6M14 10.5V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4-2L4.5 14.5a1.5 1.5 0 012.2-2L8 14"/></symbol>
     <symbol id="i-skip" viewBox="0 0 24 24"><path d="M6 6l9 6-9 6zM18 6v12"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5z"/><path d="M12 6v13.5"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.5h5v1M9 10h6M9 14h4"/></symbol>
+    <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></symbol>
+    <symbol id="i-chevr" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
     <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 01-10 0zM7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3M12 14v4M8 20h8"/></symbol>
   </defs>
 </svg>
@@ -76,6 +80,14 @@
           <button class="btn big" id="empty-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
         </div>
         <button class="btn link-btn" id="empty-demo-kb"><svg class="ic sm"><use href="#i-midi"/></svg>Probar con el teclado de pantalla</button>
+      </section>
+
+      <section id="theory-card" class="theory-entry" aria-labelledby="theory-card-h">
+        <button class="te-btn" id="open-theory">
+          <span class="te-ic"><svg class="ic"><use href="#i-book"/></svg></span>
+          <span class="te-t"><b id="theory-card-h">Teoría</b><span id="theory-card-sub">La escala mayor y los acordes de cada grado, con tu piano.</span></span>
+          <svg class="ic te-go" aria-hidden="true"><use href="#i-chevr"/></svg>
+        </button>
       </section>
 
       <section id="library-section">
@@ -179,6 +191,28 @@
         <button class="kb-fold" id="kb-fold" aria-expanded="false" aria-controls="piano" hidden><svg class="ic sm chev"><use href="#i-chev"/></svg><span id="kb-fold-t">Mostrar teclado</span></button>
         <div id="piano" class="pk-host"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- 3b. Teoría -->
+  <section id="screen-theory" class="screen" hidden aria-label="Teoría">
+    <header class="bar th-bar" id="th-head">
+      <button class="btn icon ghost" id="th-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
+      <h2 class="bar-title th-title">Teoría</h2>
+      <button class="input-pill off" id="th-pill" aria-haspopup="dialog" aria-label="Entrada: sin conectar. Tocá para conectar"><span class="pill-dot" aria-hidden="true"></span><span id="th-pill-t">Conectar piano</span></button>
+    </header>
+    <main class="th-body" id="th-body"></main>
+    <div class="panel th-panel" id="th-panel">
+      <div class="next-row">
+        <div class="next-info" id="th-next" role="status" aria-live="polite">
+          <span class="next-label" id="th-next-label"></span>
+          <span class="next-name" id="th-next-name"></span>
+          <span class="next-sub" id="th-next-sub"></span>
+        </div>
+        <button class="btn pause-btn" id="th-aux" hidden><svg class="ic sm"><use href="#i-ear"/></svg><span id="th-aux-t">Escuchar</span></button>
+      </div>
+      <div class="progress" aria-hidden="true"><div id="th-progress"></div></div>
+      <div class="kb-box"><div id="th-piano" class="pk-host"></div></div>
     </div>
   </section>
 
@@ -389,10 +423,30 @@
         <h3 id="sheet-title">Nueva partitura</h3>
         <button class="btn icon ghost" id="sheet-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
-      <section class="opt featured" aria-labelledby="compose-h">
-        <div class="opt-head"><span class="opt-ic"><svg class="ic"><use href="#i-sparkle"/></svg></span><div><b id="compose-h">Pedir una canción</b><span>Escribí qué querés tocar y la IA arma la partitura.</span></div></div>
-        <label class="sr" for="compose-query">Qué canción querés tocar</label>
-        <input id="compose-query" type="text" autocomplete="off" maxlength="120" placeholder="Ej.: Para Elisa, Himno a la Alegría, Feliz cumpleaños">
+      <div class="seg wide paths" role="group" aria-label="Cómo crear la partitura" id="sheet-paths">
+        <button data-path="ai" class="on" aria-pressed="true" aria-controls="path-ai">Crear con IA</button>
+        <button data-path="import" aria-pressed="false" aria-controls="path-import">Importar partitura</button>
+      </div>
+
+      <section class="opt featured" id="path-ai" aria-labelledby="compose-h">
+        <div class="opt-head"><span class="opt-ic"><svg class="ic"><use href="#i-sparkle"/></svg></span><div><b id="compose-h">Pedir una canción</b><span>Escribí el nombre o pegá un enlace y la IA arma la partitura.</span></div></div>
+        <label class="sr" for="compose-query">Nombre de la canción o enlace</label>
+        <div class="row query-row">
+          <input id="compose-query" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Nombre de la canción o enlace de YouTube, Spotify, Apple Music…">
+          <button class="btn" id="compose-paste" type="button"><svg class="ic sm"><use href="#i-clip"/></svg>Pegar</button>
+        </div>
+        <p class="link-note" id="compose-link-note">Uso el enlace para saber qué canción es; la partitura la arma la IA de memoria, no a partir del audio.</p>
+        <div id="link-box" class="link-box" hidden>
+          <div id="link-busy" class="link-busy" role="status" hidden><span class="spinner sm" aria-hidden="true"></span><span>Buscando qué canción es…</span><button class="btn sm" id="link-cancel" type="button">Cancelar</button></div>
+          <div id="link-confirm" class="link-confirm" hidden>
+            <p class="link-found" id="link-found" role="status"></p>
+            <div class="link-fields">
+              <label class="field-s">Título<input id="link-title" type="text" autocomplete="off" maxlength="120" placeholder="Título de la canción"></label>
+              <label class="field-s">Artista<input id="link-artist" type="text" autocomplete="off" maxlength="120" placeholder="Artista (opcional)"></label>
+            </div>
+          </div>
+          <p id="link-warn" class="link-warn" role="alert" hidden></p>
+        </div>
         <div class="seg wide" role="group" aria-label="Nivel" id="compose-level">
           <button data-level="principiante" class="on">Principiante</button>
           <button data-level="intermedio">Intermedio</button>
@@ -403,16 +457,22 @@
           <button data-hands="melodia">Sólo melodía</button>
           <button data-hands="dos-manos" class="on">Dos manos</button>
         </div>
-        <button class="btn primary big" id="compose-go"><svg class="ic"><use href="#i-sparkle"/></svg>Armar partitura</button>
+        <button class="btn primary big" id="compose-go"><svg class="ic"><use href="#i-sparkle"/></svg><span id="compose-go-t">Armar partitura</span></button>
+        <p class="hint">Necesita tu API key de IA en Ajustes.</p>
       </section>
-      <div class="opt-grid">
-        <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span>Fotografiá una hoja de tu partitura.</span></span></button>
-        <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
-        <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span>Leemos las páginas de un PDF.</span></span></button>
-        <button class="opt btn-opt" id="imp-xml"><span class="opt-ic"><svg class="ic"><use href="#i-xml"/></svg></span><span class="opt-t"><b>MusicXML</b><span>Archivo de MuseScore y similares. Sin internet.</span></span></button>
-        <button class="opt btn-opt" id="imp-midi"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>MIDI</b><span>Archivo .mid. Sin internet.</span></span></button>
-      </div>
-      <p class="hint">Pedir canción, foto, imágenes y PDF usan IA y necesitan tu API key en Ajustes.</p>
+
+      <section id="path-import" aria-labelledby="import-h" hidden>
+        <h4 class="import-h" id="import-h">Importar partitura</h4>
+        <p class="hint import-sub">Ya tenés la partitura: sacale una foto o abrí el archivo.</p>
+        <div class="opt-grid">
+          <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span>Fotografiá una hoja de tu partitura.</span></span></button>
+          <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
+          <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span>Leemos las páginas de un PDF.</span></span></button>
+          <button class="opt btn-opt" id="imp-xml"><span class="opt-ic"><svg class="ic"><use href="#i-xml"/></svg></span><span class="opt-t"><b>MusicXML</b><span>Archivo de MuseScore y similares. Sin internet.</span></span></button>
+          <button class="opt btn-opt" id="imp-midi"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>MIDI</b><span>Archivo .mid. Sin internet.</span></span></button>
+        </div>
+        <p class="hint">Foto, imágenes y PDF usan IA y necesitan tu API key en Ajustes. MusicXML y MIDI no.</p>
+      </section>
       <input type="file" id="file-photo" accept="image/*" capture="environment" hidden>
       <input type="file" id="file-images" accept="image/*" multiple hidden>
       <input type="file" id="file-pdf" accept="application/pdf,.pdf" hidden>

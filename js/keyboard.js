@@ -62,9 +62,11 @@ const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$
 
 /**
  * createKeyboard(container, { onKey?(midi), minWhite? }) →
- *   { setRange, setTargets([{midi, hand:"rh"|"lh", done?}]), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
+ *   { setRange, setTargets([{midi, hand:"rh"|"lh", done?, label?}]), setSteps(list), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
  *     setInteractive(bool), focus(midis), destroy() }
  * `done:true` en un objetivo lo pinta verde (nota del acorde que ya tocaste).
+ * `label` en un objetivo reemplaza el nombre de la tecla (p. ej. "Fa♯" o "Mi♯" con la ortografía de la tonalidad).
+ * setSteps([{fromMidi,toMidi,text}]) dibuja pastillas (T / S) entre dos teclas.
  */
 export function createKeyboard(container, opts = {}) {
   const minWhite = opts.minWhite || 22, maxWhite = opts.maxWhite || 60;
@@ -83,6 +85,7 @@ export function createKeyboard(container, opts = {}) {
   let targets = new Map();           // midi → {hand, done}
   const okSet = new Set(); const okTimers = new Map();
   let badMidi = null, hint = null, svg = null, pendingFocus = null, downEl = null;
+  let stepList = [];                 // etiquetas entre teclas vecinas (T / S) en la franja superior
 
   const centerX = (m) => (isBlack(m) ? (whiteIdx.get(m - 1) + 1) * ww : (whiteIdx.get(m) + 0.5) * ww);
 
@@ -118,7 +121,7 @@ export function createKeyboard(container, opts = {}) {
     keysEl.style.setProperty("--ww", ww + "px");
     keysEl.style.width = nWhite * ww + "px";
     keysEl.style.marginLeft = nWhite * ww < W ? Math.floor((W - nWhite * ww) / 2) + "px" : "0";
-    drawArrow();
+    drawArrow(); drawSteps();
     if (pendingFocus) { const f = pendingFocus; pendingFocus = null; focusNow(f, false); }
     else if (!scroller.dataset.init) { scroller.dataset.init = "1"; scroller.scrollLeft = Math.max(0, centerX(Math.min(high, Math.max(low, 60))) - W / 2); }
   }
@@ -138,10 +141,11 @@ export function createKeyboard(container, opts = {}) {
       el.className = cls.join(" ");
       let tag = el.querySelector(".pk-tag");
       if (t) {
-        const html = t.done ? `<i class="pk-chk" aria-hidden="true">✓</i>` : `<i class="pk-mk ${t.hand === "lh" ? "lh" : "rh"}" aria-hidden="true"></i><b>${tagName(m)}</b>`;
-        if (!tag) { tag = document.createElement("span"); tag.className = "pk-tag"; el.appendChild(tag); }
+        const html = t.label ? (t.done ? `<i class="pk-chk" aria-hidden="true">✓</i><b>${t.label}</b>` : `<b>${t.label}</b>`) : t.done ? `<i class="pk-chk" aria-hidden="true">✓</i>` : `<i class="pk-mk ${t.hand === "lh" ? "lh" : "rh"}" aria-hidden="true"></i><b>${tagName(m)}</b>`;
+        if (!tag) { tag = document.createElement("span"); el.appendChild(tag); }
+        tag.className = "pk-tag" + (t.label ? " lab" : "");
         if (tag.dataset.k !== html) { tag.innerHTML = html; tag.dataset.k = html; }
-        el.setAttribute("aria-label", `${midiName(m)}${t.done ? ", tocada" : t.hand === "lh" ? ", mano izquierda" : ", mano derecha"}`);
+        el.setAttribute("aria-label", t.label ? `${t.label}${t.done ? ", tocada" : ""}` : `${midiName(m)}${t.done ? ", tocada" : t.hand === "lh" ? ", mano izquierda" : ", mano derecha"}`);
       } else if (tag) { tag.remove(); el.setAttribute("aria-label", midiName(m)); }
     });
     legend.hidden = ![...targets.values()].some((t) => !t.done);
@@ -171,6 +175,20 @@ export function createKeyboard(container, opts = {}) {
     mk("path", { d, class: "line" });
     mk("polygon", { points: `${tipX},${tipY} ${bx + px},${by + py} ${bx - px},${by - py}`, class: "head" });
     mk("circle", { cx: xa, cy: y0, r: 5, class: "dot" });
+  }
+
+  /** Pastillas T / S centradas entre dos teclas (sólo si ambas existen en el rango). */
+  function drawSteps() {
+    keysEl.querySelectorAll(".pk-step").forEach((e) => e.remove());
+    for (const st of stepList) {
+      if (!els.has(st.fromMidi) || !els.has(st.toMidi)) continue;
+      const e = document.createElement("span");
+      e.className = "pk-step " + (st.text === "S" ? "s" : "t");
+      e.textContent = st.text;
+      e.style.left = (centerX(st.fromMidi) + centerX(st.toMidi)) / 2 + "px";
+      e.setAttribute("aria-hidden", "true");
+      keysEl.appendChild(e);
+    }
   }
 
   function focusNow(midis, smooth) {
@@ -211,7 +229,7 @@ export function createKeyboard(container, opts = {}) {
     },
     setTargets(list) {
       targets = new Map();
-      for (const t of list || []) if (t && Number.isFinite(t.midi)) targets.set(t.midi, { hand: t.hand === "lh" ? "lh" : "rh", done: !!t.done });
+      for (const t of list || []) if (t && Number.isFinite(t.midi)) targets.set(t.midi, { hand: t.hand === "lh" ? "lh" : "rh", done: !!t.done, label: typeof t.label === "string" ? t.label : "" });
       paint();
     },
     flash(midi, kind) {
@@ -225,6 +243,11 @@ export function createKeyboard(container, opts = {}) {
       hint = h && Number.isFinite(h.fromMidi) && Number.isFinite(h.toMidi) ? { fromMidi: h.fromMidi, toMidi: h.toMidi } : null;
       if (hint) badMidi = hint.fromMidi; else badMidi = null;
       paint(); drawArrow();
+    },
+    /** Etiquetas entre teclas: [{fromMidi, toMidi, text:"T"|"S"}]. Lista vacía las quita. */
+    setSteps(list) {
+      stepList = (list || []).filter((x) => x && Number.isFinite(x.fromMidi) && Number.isFinite(x.toMidi));
+      drawSteps();
     },
     setInteractive(v) { interactive = !!v; container.classList.toggle("interactive", interactive); },
     /** Lleva a la vista las teclas dadas (sólo se mueve si no se ven con margen). */

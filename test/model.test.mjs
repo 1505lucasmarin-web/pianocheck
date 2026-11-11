@@ -163,3 +163,14 @@ test('buildSteps: compás vacío usa el compás de la armadura de tiempo; entrad
   assert.deepEqual(buildSteps(null), []);
   assert.deepEqual(buildSteps({}), []);
 });
+
+test('sourceUrl: se conserva sólo si es http(s) válido', async () => {
+  const { validateScore } = await import('../js/model.js');
+  const base = { title: 'X', measures: [{ rh: [{ k: ['c/4'], d: 'q' }], lh: [] }] };
+  assert.equal(validateScore({ ...base, sourceUrl: ' https://youtu.be/abc?t=1 ' }).score.sourceUrl, 'https://youtu.be/abc?t=1');
+  assert.equal(validateScore({ ...base, sourceUrl: 'javascript:alert(1)' }).score.sourceUrl, undefined);
+  assert.equal(validateScore({ ...base, sourceUrl: 'https://a b' }).score.sourceUrl, undefined);
+  assert.equal(validateScore({ ...base, sourceUrl: 42 }).score.sourceUrl, undefined);
+  assert.equal(validateScore(base).score.sourceUrl, undefined);
+  assert.equal('sourceUrl' in validateScore(base).score, false);
+});

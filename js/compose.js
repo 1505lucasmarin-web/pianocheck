@@ -47,12 +47,14 @@ const LEVEL_LINE = {
   pro: 'Level: pro (complete arrangement in the original key, harmonized melody with chords or octaves, moving accompaniment, sixteenth notes and syncopations when the piece has them, original tempo).',
 };
 
-export function buildComposeUserPrompt(query, level, hands) {
+/** `artist` es opcional: si viene, se agrega una línea para identificar la pieza (no cambia el resto del prompt). */
+export function buildComposeUserPrompt(query, level, hands, artist) {
   const lv = LEVEL_LINE[level] || LEVEL_LINE.principiante;
   const hd = hands === 'melodia'
     ? 'Hands: melody only (right hand; left hand empty). The level still sets the rhythmic complexity and the key.'
     : 'Hands: both hands (melody in the right hand, accompaniment in the left hand).';
-  return `Piece requested by the user: ${JSON.stringify(String(query).trim())}\n${lv}\n${hd}\nWrite the arrangement as the JSON object described in the instructions. Every measure must add up exactly to the time signature. JSON only.`;
+  const who = artist && String(artist).trim() ? `\nArtist or performer (only to identify which piece it is): ${JSON.stringify(String(artist).trim())}` : '';
+  return `Piece requested by the user: ${JSON.stringify(String(query).trim())}${who}\n${lv}\n${hd}\nWrite the arrangement as the JSON object described in the instructions. Every measure must add up exactly to the time signature. JSON only.`;
 }
 
 /* ------------------------------------------------------------------ normalización */
@@ -116,8 +118,8 @@ const FAIL = 'La IA no pudo armar esta partitura';
 const SUGGEST = 'Probá con otra pieza o cargá una foto o un PDF de la partitura.';
 const composeFail = (reason) => new OmrError(`${FAIL}: ${String(reason || 'sin motivo').trim().replace(/[.\s]+$/, '')}. ${SUGGEST}`, 'compose');
 
-export function buildComposeRequest(provider, { apiKey, model, query, level, hands }) {
-  const user = buildComposeUserPrompt(query, level, hands);
+export function buildComposeRequest(provider, { apiKey, model, query, level, hands, artist }) {
+  const user = buildComposeUserPrompt(query, level, hands, artist);
   if (provider === 'anthropic') {
     return {
       url: ANTHROPIC_URL,
@@ -162,7 +164,8 @@ async function callText(provider, opts, fetchImpl, signal) {
 
 /**
  * Arma una partitura a partir de un pedido en texto.
- * { query, level: "principiante"|"intermedio"|"pro", hands: "melodia"|"dos-manos", provider, apiKey, model, onProgress, signal, fetchImpl }
+ * { query, artist?, sourceUrl?, level: "principiante"|"intermedio"|"pro", hands: "melodia"|"dos-manos", provider, apiKey, model, onProgress, signal, fetchImpl }
+ * `artist` va al prompt para identificar la pieza; `sourceUrl` (http/https) sólo se guarda en la partitura ("Abrir original").
  */
 export async function composeScore(opts = {}) {
   const { query, provider = 'anthropic', apiKey, onProgress = () => {}, signal } = opts;
@@ -176,7 +179,7 @@ export async function composeScore(opts = {}) {
   const model = opts.model || DEFAULT_MODELS[provider];
 
   onProgress('Pensando el arreglo… puede tardar un minuto');
-  const text = await callText(provider, { apiKey: String(apiKey).trim(), model, query, level, hands }, fetchImpl, signal);
+  const text = await callText(provider, { apiKey: String(apiKey).trim(), model, query, level, hands, artist: opts.artist }, fetchImpl, signal);
   onProgress('Armando la partitura…');
   let parsed;
   try { parsed = extractJson(text); } catch (e) {
@@ -191,6 +194,7 @@ export async function composeScore(opts = {}) {
   const r = normalizeScore(parsed);
   if (!r.ok) throw composeFail('no encontró notas para tocar');
   r.score.level = level;
+  if (typeof opts.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(opts.sourceUrl.trim()) && opts.sourceUrl.trim().length <= 2000) r.score.sourceUrl = opts.sourceUrl.trim();
   if (!parsed.title || !String(parsed.title).trim()) r.score.title = String(query).trim().slice(0, 80);
   return r.score;
 }

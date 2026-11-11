@@ -30,5 +30,10 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - Biblioteca: «Continuar práctica» reabre la última pieza con su bucle, mano y tempo; la demo tiene «Probar con el teclado de pantalla».
 - Claves nuevas en ajustes: `countIn` (cuenta de entrada), `lastPractice` (por partitura: `{from,to,loop,hands,bpm,measure,at}`), `onscreenKeyboard` (también desde la hoja de conexión). Cada intento del historial guarda además `range`, `loop`, `bpm`, `laps`, `measuresDone`, `measuresTotal` (los viejos se leen como pieza entera).
 
+## Etapa 2: teoría y enlaces
+- Teoría (tarjeta en la Biblioteca): lección 1 «La escala mayor» (fórmula T T S T T T S, las 12 tonalidades con su ortografía —Mi♯ en Fa♯ mayor—, «Escuchar», «Tocala» con corrección «Movete…», opción ida y vuelta, y «Armala vos» sin anticipar teclas) y lección 2 «Los grados y sus acordes» (tabla I–VII por tonalidad, tocar una fila la ilumina y la hace sonar; «Tocá el grado» acepta cualquier octava/inversión, juntas o de a una; quiz «Mayor, menor o disminuido»). Usa la misma entrada y el mismo estado de conexión que Práctica. El progreso (mejor puntaje y tonalidades con 80 % o más) se guarda en IndexedDB (clave `theory` del store de ajustes). Código: `js/theory.js` y `js/lessons.js` (puros, con tests), `js/teoria.js` (pantalla).
+- Pedir una canción por enlace (YouTube, YouTube Music, Spotify, Apple Music, Deezer, SoundCloud): el enlace sólo sirve para saber qué canción es (oEmbed / iTunes Lookup / Deezer, sin audio); siempre se confirma título y artista, editables, y la partitura la arma la IA de memoria. Se guarda `sourceUrl` y la tarjeta muestra «Abrir original». Desde otras apps de Android: Compartir → PianoCheck (`share_target` GET con `title`, `text`, `url`; requiere la app instalada). Si un servicio bloquea oEmbed por CORS se usa el texto del enlace; si no hay nada, se pide el nombre.
+- «Nueva partitura» separa «Crear con IA» (nombre o enlace) de «Importar partitura» (foto, imágenes, PDF, MusicXML, MIDI).
+
 ## Tests
 `node --test test/*.test.mjs`

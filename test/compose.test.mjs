@@ -114,3 +114,15 @@ test('summarizeAttempts', () => {
   assert.deepEqual(summarizeAttempts([]), { count: 0, best: null, last: null });
   assert.deepEqual(summarizeAttempts([{ at: 3, accuracy: 70 }, { at: 1, accuracy: 100 }, { at: 2, accuracy: 40 }]), { count: 3, best: 100, last: 70 });
 });
+
+test('artist: va al prompt sólo si viene; sourceUrl se guarda en la partitura', async () => {
+  assert.equal(buildComposeUserPrompt('Yesterday', 'pro', 'dos-manos'), buildComposeUserPrompt('Yesterday', 'pro', 'dos-manos', ''));
+  const p = buildComposeUserPrompt('Yesterday', 'pro', 'dos-manos', 'The Beatles');
+  assert.match(p, /"Yesterday"\nArtist or performer.*"The Beatles"/);
+  let sent;
+  const s = await composeScore(base(async (u, init) => { sent = JSON.parse(init.body); return anth(JSON.stringify(GOOD))(); }, { query: 'Yesterday', artist: 'The Beatles', sourceUrl: 'https://youtu.be/NrgmdOz227I' }));
+  assert.match(sent.messages[0].content, /The Beatles/);
+  assert.equal(s.sourceUrl, 'https://youtu.be/NrgmdOz227I');
+  const s2 = await composeScore(base(anth(JSON.stringify(GOOD)), { sourceUrl: 'ftp://x' }));
+  assert.equal(s2.sourceUrl, undefined);
+});

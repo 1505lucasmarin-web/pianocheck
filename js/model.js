@@ -113,6 +113,8 @@ export function validateScore(obj) {
       if (Number.isInteger(n) && n > 0 && n <= 32 && VALID_DEN.includes(dn)) score.timeSig = [n, dn];
     }
     score.keySig = normKeySig(obj.keySig);
+    const su = typeof obj.sourceUrl === 'string' ? obj.sourceUrl.trim() : '';
+    if (su && su.length <= 2000 && /^https?:\/\/\S+$/i.test(su)) score.sourceUrl = su;   // enlace de la canción original (sólo http/https)
     if (obj.level === 'principiante' || obj.level === 'intermedio' || obj.level === 'pro') score.level = obj.level;
 
     const ms = Array.isArray(obj.measures) ? obj.measures : [];

@@ -11,6 +11,8 @@ import { phraseColor } from "./render.js";
 import { buildShareUrl, decodeCfg, extractToken, maskKey, PROVIDER_NAMES } from "./share.js";
 import { normRange, isWholeRange, rangeText, passageSteps, currentPair, hardestMeasures, coverage, measureSummary, harderHand, handsWithNotes, attemptKey, equivalentAttempts, bestEquivalent, nextAction, mergePractice, latestPractice } from "./passage.js";
 import { buildEvents, createPlayer } from "./playback.js";
+import { createTheory } from "./teoria.js";
+import { parseMusicLink, resolveSong } from "./links.js";
 
 const MAX_STREAK = 5;
 const $ = (id) => document.getElementById(id);
@@ -28,6 +30,8 @@ const store = {
   addAttempt: async (a) => (await lazy("store")).addAttempt(a),
   summaries: async () => { try { return await (await lazy("store")).attemptSummaries(); } catch (e) { return {}; } },
   attempts: async (id) => { try { return await (await lazy("store")).listAttempts(id); } catch (e) { return []; } },
+  theory: async () => (await lazy("store")).getTheoryProgress(),
+  saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
 const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {} };
@@ -67,7 +71,7 @@ function confirmDialog({ title, text, yes = "Eliminar", no = "Cancelar", danger 
 }
 
 /* ---------- navegación ---------- */
-const screens = ["library", "review", "practice", "result", "settings"];
+const screens = ["library", "review", "practice", "result", "settings", "theory"];
 function show(name, push = true) {
   const prev = screen;
   screen = name;
@@ -75,6 +79,7 @@ function show(name, push = true) {
   $("app").dataset.screen = name;
   if (prev === "practice" && name !== "practice") leavePractice();
   if (prev === "settings" && name !== "settings") { hideShareQr(); stopScan(); }
+  if (prev === "theory" && name !== "theory") leaveTheory();
   if (push && name !== "library" && prev !== name) history.pushState({ s: name }, "", "");
   if (name === "library") refreshLibrary();
   if (name === "review") requestAnimationFrame(() => reviewR.redraw());
@@ -140,6 +145,7 @@ function cardHtml(s, demo, sum) {
   const title = esc(s.title || "Sin título");
   return `<li class="card" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${lvl}</div><div class="tags">${tags}</div>${res}
     <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("play", "sm")}Practicar</button>
+    ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
     ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
 }
 let continueInfo = null;
@@ -162,6 +168,7 @@ async function refreshLibrary() {
     $("continue-sub").textContent = [where, c.hands === "rh" ? "Mano derecha" : c.hands === "lh" ? "Mano izquierda" : "Ambas manos", c.bpm ? `♩ ${c.bpm}` : ""].filter(Boolean).join(" · ");
     $("continue-go").setAttribute("aria-label", `Continuar práctica de ${(sc && sc.title) || "la pieza"}: ${$("continue-sub").textContent}`);
   }
+  refreshTheoryCard();
   $("demo-list").innerHTML = cardHtml(demoScore, true, sums[demoScore.id]);
   $("library-list").innerHTML = list.map((s) => cardHtml(s, false, sums[s.id])).join("");
 }
@@ -225,14 +232,110 @@ document.querySelectorAll("#compose-hands button").forEach((b) => b.addEventList
   document.querySelectorAll("#compose-hands button").forEach((x) => x.classList.toggle("on", x === b));
 }));
 setComposeLevel("principiante");
-function openSheet() { sheetOpener = document.activeElement; $("sheet-new").hidden = false; $("compose-query").focus(); }
+function setSheetPath(p) {
+  document.querySelectorAll("#sheet-paths button").forEach((b) => { const on = b.dataset.path === p; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  $("path-ai").hidden = p !== "ai"; $("path-import").hidden = p !== "import";
+}
+document.querySelectorAll("#sheet-paths button").forEach((b) => b.addEventListener("click", () => setSheetPath(b.dataset.path)));
+function openSheet(o = {}) {
+  sheetOpener = document.activeElement; setSheetPath("ai");
+  if (typeof o.query === "string") { $("compose-query").value = o.query; }
+  $("sheet-new").hidden = false; $("compose-query").focus();
+}
 function closeSheet() { $("sheet-new").hidden = true; sheetOpener && sheetOpener.focus && screen === "library" && sheetOpener.focus(); }
-$("btn-new").addEventListener("click", openSheet);
-$("empty-new").addEventListener("click", openSheet);
+$("btn-new").addEventListener("click", () => openSheet());
+$("empty-new").addEventListener("click", () => openSheet());
 $("sheet-close").addEventListener("click", closeSheet);
 $("sheet-new").addEventListener("click", (e) => { if (e.target === $("sheet-new")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet-new").hidden && $("confirm").hidden && $("busy").hidden) closeSheet(); });
 $("compose-query").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("compose-go").click(); } });
+
+/* ---------- pedir una canción con enlace ---------- */
+// El enlace sólo sirve para saber qué canción es: no se descarga ni se escucha audio.
+// link: null | { url, phase: "busy" | "confirm" | "album", warn?, hint? }
+let link = null, linkCtl = null, queryTimer = 0;
+function renderLink() {
+  $("link-box").hidden = !link;
+  $("link-busy").hidden = !(link && link.phase === "busy");
+  $("link-confirm").hidden = !(link && link.phase === "confirm");
+  const w = $("link-warn"); w.hidden = !(link && link.phase === "album"); w.textContent = link && link.phase === "album" ? "Ese enlace es de un álbum o lista: pegá el de una canción puntual." : "";
+  $("compose-go").disabled = !!link && (link.phase === "busy" || link.phase === "album");
+}
+function resetLink() { if (linkCtl) { linkCtl.abort(); linkCtl = null; } link = null; renderLink(); }
+function showConfirm(title, artist, msg, focus) {
+  link.phase = "confirm";
+  $("link-title").value = title || ""; $("link-artist").value = artist || "";
+  $("link-found").innerHTML = msg;
+  renderLink();
+  if (focus) $("link-title").focus();
+}
+async function startResolve(text) {
+  const parsed = parseMusicLink(text);
+  if (!parsed) { resetLink(); return; }
+  if (link && link.url === parsed.url) return;   // ya está resolviendo o confirmando ese mismo enlace
+  if (linkCtl) linkCtl.abort();
+  const ctl = new AbortController(); linkCtl = ctl;
+  link = { url: parsed.url, phase: "busy", hint: link && link.hint };
+  renderLink();
+  let r;
+  try { r = await resolveSong(parsed, { signal: ctl.signal }); } catch (e) { r = { title: "", artist: "", source: "none" }; }
+  if (ctl !== linkCtl) return;   // cancelado o reemplazado
+  linkCtl = null;
+  if (r.needsTrack) { link.phase = "album"; renderLink(); return; }
+  if (r.source === "none" || !r.title) {
+    const other = parsed.service === "otro";
+    showConfirm(link.hint || "", "", other ? "Ese enlace no es de un servicio de música que conozca (YouTube, Spotify, Apple Music, Deezer o SoundCloud). Escribí el nombre de la canción." : "No pude saber qué canción es. Escribí el nombre de la canción.", true);
+    return;
+  }
+  showConfirm(r.title, r.artist, `Encontré: <b>«${esc(r.title)}»</b>${r.artist ? ` — ${esc(r.artist)}` : ""}. ¿Armo esta?`, false);
+}
+$("link-cancel").addEventListener("click", () => {
+  if (!link || link.phase !== "busy") return;
+  const c = linkCtl; linkCtl = null; if (c) c.abort();
+  showConfirm(link.hint || "", "", "Cancelaste la búsqueda. Escribí el nombre de la canción.", true);
+});
+$("compose-query").addEventListener("input", () => {
+  clearTimeout(queryTimer);
+  queryTimer = setTimeout(() => { const v = $("compose-query").value; if (parseMusicLink(v)) startResolve(v); else if (link) resetLink(); }, 350);
+});
+$("compose-paste").addEventListener("click", async () => {
+  let t = null;
+  try { if (navigator.clipboard && navigator.clipboard.readText) t = await navigator.clipboard.readText(); } catch (e) { t = null; }
+  const q = $("compose-query");
+  if (t === null) { q.focus(); toast("No pude leer el portapapeles. Mantené apretado el campo y elegí Pegar.", 4500); return; }
+  if (!t.trim()) { q.focus(); toast("No hay nada copiado.", 2600); return; }
+  q.value = t.trim().slice(0, 400);
+  clearTimeout(queryTimer);
+  if (parseMusicLink(q.value)) startResolve(q.value); else { if (link) resetLink(); q.focus(); }
+});
+async function onComposeGo() {
+  const raw = $("compose-query").value.trim();
+  if (!raw) { toast("Escribí qué canción querés tocar o pegá un enlace."); $("compose-query").focus(); return; }
+  const parsed = parseMusicLink(raw);
+  if (!parsed) { runCompose({ query: raw }); return; }
+  if (!link || link.url !== parsed.url) { startResolve(raw); return; }   // primero confirmar qué canción es
+  if (link.phase !== "confirm") return;
+  const title = $("link-title").value.trim();
+  if (!title) { toast("Escribí el título de la canción."); $("link-title").focus(); return; }
+  runCompose({ query: title, artist: $("link-artist").value.trim(), sourceUrl: parsed.url });
+}
+/** Compartir desde otras apps (Android, share_target GET): ?title=…&text=…&url=… abre "Pedir una canción" con el enlace. */
+function handleIncomingShare() {
+  const q = new URLSearchParams(location.search);
+  if (!(q.has("url") || q.has("text") || q.has("title"))) return;
+  history.replaceState(history.state, "", location.pathname + location.hash);
+  const url = q.get("url") || "", text = q.get("text") || "", title = (q.get("title") || "").trim();
+  const p = parseMusicLink(url) || parseMusicLink(text) || parseMusicLink(title);
+  if (!p) {
+    const t = (text || title || url).trim();
+    if (t) { openSheet({ query: t.slice(0, 400) }); toast("Recibí el texto que compartiste.", 2600); }
+    return;
+  }
+  link = null; renderLink();
+  openSheet({ query: p.url });
+  if (title && !parseMusicLink(title)) link = { url: "", phase: "busy", hint: title.slice(0, 120) };
+  startResolve(p.url);
+}
 
 /* ---------- importación ---------- */
 const busy = { open(title) { $("busy-title").textContent = title; $("busy-log").textContent = ""; $("busy-err").hidden = true; $("busy-settings").hidden = true; $("busy-spinner").classList.remove("stop"); $("busy-close").textContent = "Cancelar"; $("busy").hidden = false; },
@@ -245,8 +348,8 @@ function cancelImport() { if (composeAbort) { try { composeAbort.abort(); } catc
 $("busy-close").addEventListener("click", cancelImport);
 $("busy-settings").addEventListener("click", () => { cancelImport(); openSettings(); });
 
-async function runCompose() {
-  const query = $("compose-query").value.trim();
+async function runCompose({ query, artist = "", sourceUrl = "" } = {}) {
+  query = String(query || "").trim();
   if (!query) { toast("Escribí qué canción querés tocar."); $("compose-query").focus(); return; }
   lastImportKind = "compose";
   const token = ++importToken; const alive = () => token === importToken;
@@ -258,10 +361,11 @@ async function runCompose() {
   try {
     const cm = await lazy("compose"), omr = await lazy("omr");
     const prov = settings.provider || "anthropic";
-    const score = await cm.composeScore({ query, level: composeLevel, hands: composeHands, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (m) => alive() && busy.log(m), signal: ctl.signal });
+    const score = await cm.composeScore({ query, artist, sourceUrl, level: composeLevel, hands: composeHands, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (m) => alive() && busy.log(m), signal: ctl.signal });
     if (!alive()) return;
     score.id = score.id || newId();
     busy.close();
+    $("compose-query").value = ""; resetLink();
     openReview(score, true, null, "Partitura armada por IA de memoria: puede tener diferencias con la original. Revisala antes de practicar.");
   } catch (err) {
     if (!alive()) return;
@@ -270,7 +374,7 @@ async function runCompose() {
   } finally { composeAbort = null; }
 }
 let composeAbort = null;
-$("compose-go").addEventListener("click", runCompose);
+$("compose-go").addEventListener("click", onComposeGo);
 
 async function runImport(kind, files) {
   files = Array.from(files || []); if (!files.length) return;
@@ -539,7 +643,7 @@ window.addEventListener("hashchange", handleIncomingHash);
 const kb = createKeyboard($("piano"), { onKey: (m) => handleNoteOn(m) });
 let kbOpen = false;   // con la Guía apagada el teclado se pliega; el usuario puede desplegarlo
 function applyKeyboardSetting() {
-  kb.setInteractive(!!settings.onscreenKeyboard);
+  kb.setInteractive(!!settings.onscreenKeyboard); thKb.setInteractive(!!settings.onscreenKeyboard);
   const g = settings.guide !== false;
   $("guide-toggle").setAttribute("aria-pressed", String(g));
   $("kb-toggle").setAttribute("aria-pressed", String(!!settings.onscreenKeyboard));
@@ -585,6 +689,44 @@ $("guide-toggle").addEventListener("click", () => {
   $("guide-toggle").setAttribute("aria-pressed", String(settings.guide));
   kb.setHint(null); syncKbFold(); syncKeyboard(true); refreshNext();
 });
+
+/* ---------- Teoría (escala mayor y grados) ---------- */
+const thKb = createKeyboard($("th-piano"), { onKey: (m) => handleNoteOn(m), minWhite: 26 });
+const theory = createTheory({
+  $, kb: thKb, get player() { return player; }, toast,
+  inputReady: () => midiConnected || !!(mic && mic.running) || !!settings.onscreenKeyboard,
+  enableOnscreen: () => { settings.onscreenKeyboard = true; store.saveSettings({ onscreenKeyboard: true }).catch(() => {}); applyKeyboardSetting(); syncInputSheet(); toast("Teclado de pantalla activado", 2000); },
+  loadProgress: () => store.theory(),
+  saveResult: (...a) => store.saveTheory(...a),
+  onProgress: (p) => { theoryProgress = p; refreshTheoryCard(); },
+});
+let theoryProgress = null;
+function refreshTheoryCard() {
+  const sub = $("theory-card-sub");
+  if (!sub) return;
+  const p = theoryProgress;
+  const parts = [];
+  if (p) {
+    const a = theory.summary("escala", p), b = theory.summary("grados", p);
+    const keys = new Set([...a.keys, ...b.keys]).size;
+    const best = [a.best, b.best].filter((x) => x != null);
+    if (best.length) parts.push(`Mejor puntaje ${Math.max(...best)}%`);
+    if (a.keys.length || b.keys.length) parts.push(`Escala: ${a.keys.length} de 12 tonalidades · Grados: ${b.keys.length} de 12`);
+    void keys;
+  }
+  sub.textContent = parts.length ? parts.join(" · ") : "La escala mayor y los acordes de cada grado, con tu piano.";
+}
+async function openTheory() {
+  show("theory");
+  await theory.open();
+}
+function leaveTheory() { theory.leave(); closePSheet(true); stopMic(); $("toast").hidden = true; }
+$("open-theory").addEventListener("click", () => openTheory().catch((e) => toast("Error: " + e.message, 4000)));
+$("th-back").addEventListener("click", () => goLibrary());
+$("th-body").addEventListener("click", (e) => theory.onBodyClick(e));
+$("th-aux").addEventListener("click", () => theory.onAux());
+$("th-pill").addEventListener("click", () => openPSheet("input", $("th-pill")));
+store.theory().then((p) => { theoryProgress = p; refreshTheoryCard(); }).catch(() => {});
 
 /* ---------- frases repetidas: leyenda "Estructura" ---------- */
 function makeStructure(el, renderer, o = {}) {
@@ -655,11 +797,12 @@ let sheetName = null, sheetFrom = null;
 function openPSheet(name, opener) {
   if (sheetName === name) { closePSheet(); return; }
   if (sheetName) closePSheet(true);
-  sheetName = name; sheetFrom = opener || $(SHEET_OPENERS[name]);
+  sheetName = name; sheetFrom = opener || (name === "input" && screen === "theory" ? $("th-pill") : $(SHEET_OPENERS[name]));
   $("ps-title").textContent = SHEET_TITLES[name];
   document.querySelectorAll("#psheet .ps-sec").forEach((x) => (x.hidden = x.dataset.sec !== name));
   $("psheet").hidden = false;
   Object.entries(SHEET_OPENERS).forEach(([k, id]) => $(id).setAttribute("aria-expanded", String(k === name)));
+  $("th-pill").setAttribute("aria-expanded", String(name === "input" && screen === "theory"));
   if (name === "loop") initLoopSheet();
   if (name === "tempo") { $("countin-toggle").checked = !!settings.countIn; syncMetroUi(); }
   if (name === "input") syncInputSheet();
@@ -671,7 +814,7 @@ function closePSheet(silent) {
   const was = sheetName; sheetName = null;
   if (was === "loop") { stopListening(); practiceR.setRange(passage && passage.loop ? passage : null); }
   $("psheet").hidden = true;
-  Object.values(SHEET_OPENERS).forEach((id) => $(id).setAttribute("aria-expanded", "false"));
+  Object.values(SHEET_OPENERS).forEach((id) => $(id).setAttribute("aria-expanded", "false")); $("th-pill").setAttribute("aria-expanded", "false");
   if (!silent && sheetFrom && sheetFrom.focus) sheetFrom.focus({ preventScroll: true });
   sheetFrom = null;
 }
@@ -679,7 +822,7 @@ $("ps-close").addEventListener("click", () => closePSheet());
 for (const [name, id] of Object.entries(SHEET_OPENERS)) $(id).addEventListener("click", () => openPSheet(name, $(id)));
 document.addEventListener("pointerdown", (e) => {
   if (!sheetName || sheetName === "loop") return;   // el selector de bucle queda abierto para mirar la partitura
-  if (e.target.closest("#psheet") || e.target.closest("#pr-head") || e.target.closest("#confirm")) return;
+  if (e.target.closest("#psheet") || e.target.closest("#pr-head") || e.target.closest("#th-head") || e.target.closest("#confirm")) return;
   closePSheet(true);
 }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sheetName && $("confirm").hidden) closePSheet(); });
@@ -693,6 +836,9 @@ function refreshInputPill() {
   else if (settings.onscreenKeyboard) { cls = "alt"; text = "Teclado"; label = "Entrada: teclado de pantalla. Tocá para ver las opciones"; }
   pill.className = "input-pill " + cls;
   $("pill-t").textContent = text; pill.setAttribute("aria-label", label);
+  const tp = $("th-pill");   // mismo estado compacto en Teoría
+  tp.className = "input-pill " + cls; $("th-pill-t").textContent = text; tp.setAttribute("aria-label", label);
+  theory.refreshInput();
 }
 function syncInputSheet() {
   $("input-lead").textContent = midiConnected ? "Piano MIDI conectado." : mic && mic.running ? "El micrófono está escuchando." : settings.onscreenKeyboard ? "Estás usando el teclado de pantalla." : "Elegí cómo te escucha la app.";
@@ -773,6 +919,7 @@ $("midi-ble").addEventListener("click", () => midi.connectBle().catch((e) => toa
 /* ---------- micrófono ---------- */
 let mic = null, midiConnected = false;
 function currentExpected() {
+  if (screen === "theory") return theory.expected();
   if (!session) return [];
   const st = session.state;
   if (st.status !== "playing") return [];
@@ -1138,6 +1285,7 @@ $("practice-back").addEventListener("click", () => goLibrary());
 
 /* ----- entrada de notas ----- */
 function handleNoteOn(m) {
+  if (screen === "theory") { theory.noteOn(m); return; }
   if (screen !== "practice" || !session || paused || listening || countingIn) return;
   const ev = session.noteOn(m);
   if (ev.type === "ignored") return;
@@ -1309,6 +1457,7 @@ $("result-lib").addEventListener("click", () => { show("library", false); });
   await loadSettings();
   show("library", false);
   handleIncomingHash();
+  handleIncomingShare();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW:", e.message));
   }
