@@ -28,6 +28,12 @@
     <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4M6 5h12l-2.5 4L18 13H6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M3.5 20.5l1.2-4.2L16.6 4.4a2 2 0 012.8 0l.2.2a2 2 0 010 2.8L7.7 19.3z"/><path d="M14.5 6.5l3 3"/></symbol>
+    <symbol id="i-highlighter" viewBox="0 0 24 24"><path d="M14 4l6 6-8 8H8l-3-3v-4z"/><path d="M5 21h14"/></symbol>
+    <symbol id="i-textnote" viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 24 24"><path d="M9 19l-5-5 9-9 7 7-7 7z"/><path d="M9 19h11M8.5 8.5l7 7"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.6A10 10 0 0112 5.5c6.4 0 10 6.5 10 6.5a17 17 0 01-3.2 3.9M6.5 7.2A16 16 0 002 12s3.6 6.5 10 6.5a10 10 0 004-.9"/><path d="M9.9 9.9a3 3 0 004.2 4.2"/></symbol>
     <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/></symbol>
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
     <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4"/></symbol>
@@ -50,6 +56,12 @@
     <symbol id="i-clip" viewBox="0 0 24 24"><rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.5h5v1M9 10h6M9 14h4"/></symbol>
     <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></symbol>
     <symbol id="i-chevr" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M5 13v6h14v-6"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 4l9 16H3zM12 10v4.5M12 17.2v.01"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 24 24"><path d="M4 5h16v11H10l-4 4v-4H4z"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 6L4 11l5 5M4 11h9a5 5 0 010 10h-3"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 6l5 5-5 5M20 11h-9a5 5 0 000 10h3"/></symbol>
+    <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 01-10 0zM7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3M12 14v4M8 20h8"/></symbol>
   </defs>
 </svg>
@@ -90,6 +102,11 @@
         </button>
       </section>
 
+      <section id="tasks-section" aria-labelledby="tasks-h" hidden>
+        <h2 id="tasks-h">Tareas</h2>
+        <ul id="task-list" class="cards"></ul>
+      </section>
+
       <section id="library-section">
         <div class="lib-head">
           <h2>Mi biblioteca</h2>
@@ -112,20 +129,67 @@
       <label class="bpm-field"><svg class="ic sm"><use href="#i-metro"/></svg><input id="review-bpm" type="number" min="30" max="240" inputmode="numeric" aria-label="Tempo (negras por minuto)"></label>
     </header>
     <div id="review-note" class="notice" role="note" hidden><svg class="ic"><use href="#i-info"/></svg><span id="review-note-t"></span></div>
-    <div id="review-struct" class="struct" hidden></div>
-    <div id="review-score" class="score-wrap"></div>
-    <div class="panel" id="review-panel">
-      <div id="review-sel" class="sel-info">Tocá una nota de la partitura para corregirla.</div>
-      <div class="row wrap">
-        <button class="btn" id="ed-up" disabled>&#9839; +1</button>
-        <button class="btn" id="ed-down" disabled>&#9837; &minus;1</button>
-        <button class="btn" id="ed-oct-up" disabled>8va &uarr;</button>
-        <button class="btn" id="ed-oct-down" disabled>8va &darr;</button>
-        <button class="btn danger" id="ed-del" disabled>Borrar nota</button>
-        <button class="btn" id="ed-undo" disabled>Deshacer</button>
+    <div id="review-issues" class="issues" role="group" aria-label="Avisos de importación" hidden>
+      <svg class="ic is-ic" aria-hidden="true"><use href="#i-warn"/></svg>
+      <div class="is-body"><b id="is-count">Aviso 1 de 1</b><span id="is-text" role="status" aria-live="polite"></span></div>
+      <div class="is-btns">
+        <button class="btn icon" id="is-prev" aria-label="Aviso anterior"><svg class="ic"><use href="#i-back"/></svg></button>
+        <button class="btn icon" id="is-next" aria-label="Aviso siguiente"><svg class="ic" style="transform:scaleX(-1)"><use href="#i-back"/></svg></button>
+        <button class="btn sm" id="is-done" aria-pressed="false"><svg class="ic sm"><use href="#i-check"/></svg><span id="is-done-t">Marcar como revisado</span></button>
       </div>
-      <div class="row">
+    </div>
+    <div id="review-struct" class="struct" hidden></div>
+    <div id="review-anno" class="anno-host"></div>
+    <div class="score-area" id="review-area"><div id="review-score" class="score-wrap"></div></div>
+    <div class="panel" id="review-panel">
+      <div id="review-sel" class="sel-info" role="status" aria-live="polite">Tocá una nota de la partitura para corregirla.</div>
+      <div id="ed-bar" class="ed-bar" hidden>
+        <div class="seg opts ed-tabs" role="group" aria-label="Qué querés cambiar de la nota" id="ed-tabs">
+          <button data-tab="pitch" class="on" aria-pressed="true">Altura</button><button data-tab="dur" aria-pressed="false">Duración</button><button data-tab="hand" aria-pressed="false">Mano</button><button data-tab="finger" aria-pressed="false" aria-label="Digitación">Dedo</button><button data-tab="ins" aria-pressed="false">Insertar</button>
+        </div>
+        <div class="ed-tools" data-tab="pitch" role="group" aria-label="Altura">
+          <button class="btn" id="ed-up">&#9839; +1</button>
+          <button class="btn" id="ed-down">&#9837; &minus;1</button>
+          <button class="btn" id="ed-oct-up">8va &uarr;</button>
+          <button class="btn" id="ed-oct-down">8va &darr;</button>
+        </div>
+        <div class="ed-tools" data-tab="dur" role="group" aria-label="Duración" hidden>
+          <div class="seg ed-dur" id="ed-dur">
+            <button data-d="w">Redonda</button><button data-d="h">Blanca</button><button data-d="q">Negra</button><button data-d="8">Corchea</button><button data-d="16">Semicorchea</button>
+          </div>
+          <button class="chip" id="ed-dot" aria-pressed="false">Puntillo</button>
+        </div>
+        <div class="ed-tools" data-tab="hand" role="group" aria-label="Mano" hidden>
+          <button class="btn" id="ed-hand"><svg class="ic sm"><use href="#i-hand"/></svg><span id="ed-hand-t">Pasar a la mano izquierda</span></button>
+        </div>
+        <div class="ed-tools" data-tab="finger" role="group" aria-label="Digitación" hidden>
+          <div class="seg ed-fing" id="ed-fing">
+            <button data-f="1" aria-label="Dedo 1, pulgar">1</button><button data-f="2" aria-label="Dedo 2">2</button><button data-f="3" aria-label="Dedo 3">3</button><button data-f="4" aria-label="Dedo 4">4</button><button data-f="5" aria-label="Dedo 5, meñique">5</button>
+          </div>
+          <button class="btn" id="ed-fing-0">Sin dedo</button>
+        </div>
+        <div class="ed-tools" data-tab="ins" role="group" aria-label="Insertar" hidden>
+          <button class="btn" id="ins-before">Nota antes</button>
+          <button class="btn" id="ins-after">Nota después</button>
+          <button class="btn" id="ins-chord">Sumar al acorde</button>
+          <button class="btn" id="ins-rest-before">Silencio antes</button>
+          <button class="btn" id="ins-rest-after">Silencio después</button>
+        </div>
+      </div>
+      <div class="row wrap ed-common">
+        <button class="btn danger" id="ed-del" disabled><svg class="ic sm"><use href="#i-trash"/></svg>Borrar nota</button>
+        <button class="btn" id="ed-comment" disabled><svg class="ic sm"><use href="#i-comment"/></svg>Comentario</button>
+        <button class="btn" id="ed-undo" disabled aria-label="Deshacer"><svg class="ic sm"><use href="#i-undo"/></svg><span class="lbl">Deshacer</span></button>
+        <button class="btn" id="ed-redo" disabled aria-label="Rehacer"><svg class="ic sm"><use href="#i-redo"/></svg><span class="lbl">Rehacer</span></button>
+      </div>
+      <div id="cm-box" class="cm-box" hidden>
+        <label class="field-s" for="cm-input"><span id="cm-label">Comentario del compás 1</span></label>
+        <div class="row"><input id="cm-input" type="text" maxlength="160" autocomplete="off" placeholder="Ej.: Sostené el bajo durante todo su valor"><button class="btn primary" id="cm-save">Guardar</button><button class="btn" id="cm-del">Quitar</button></div>
+      </div>
+      <div class="row wrap ed-save">
         <button class="btn" id="review-save">Guardar</button>
+        <button class="btn" id="review-task"><svg class="ic sm"><use href="#i-clip"/></svg>Crear tarea</button>
+        <button class="btn" id="review-annotate" aria-pressed="false"><svg class="ic sm"><use href="#i-pen"/></svg>Anotar</button>
         <button class="btn primary grow" id="review-save-practice"><svg class="ic"><use href="#i-play"/></svg>Guardar y practicar</button>
       </div>
     </div>
@@ -149,6 +213,7 @@
         <button class="ctl" id="btn-loop" aria-haspopup="dialog" aria-pressed="false"><span id="loop-t">Bucle</span></button>
         <button class="ctl" id="guide-toggle" aria-pressed="true" title="Guía: ilumina en el teclado las notas que siguen">Guía</button>
         <button class="ctl icon" id="btn-look" aria-haspopup="dialog" aria-label="Lectura: aspecto, tamaño y vista de la partitura"><span class="aa" aria-hidden="true">Aa</span></button>
+        <button class="ctl icon" id="btn-anno" aria-pressed="false" aria-label="Anotar la partitura" title="Anotar"><svg class="ic" aria-hidden="true"><use href="#i-pen"/></svg></button>
       </div>
     </header>
     <div id="connect-hint" class="hint-card" hidden>
@@ -156,12 +221,20 @@
       <div><b>Conectá tu piano para empezar</b><span>Tocá «Conectar piano» arriba: USB, Bluetooth o micrófono. Sin piano, usá el teclado de pantalla.</span></div>
       <button class="btn" id="connect-hint-ok">Entendido</button>
     </div>
+    <div id="task-banner" class="task-banner" role="note" hidden>
+      <svg class="ic" aria-hidden="true"><use href="#i-clip"/></svg>
+      <div class="tb-t"><b id="task-banner-h">Tarea</b><span id="task-banner-t"></span></div>
+      <button class="btn icon ghost" id="task-banner-x" aria-label="Ocultar la consigna"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
     <div class="struct-wrap">
       <div id="practice-struct" class="struct" hidden></div>
       <div id="phrase-note" class="phrase-note" role="status" aria-live="polite" hidden></div>
     </div>
     <div id="lap-line" class="lap-line" hidden role="status"></div>
-    <div class="score-area">
+    <div id="err-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="practice-anno" class="anno-host"></div>
+    <div class="score-area" id="practice-area">
+      <div id="measure-note" class="measure-note" role="status" aria-live="polite" hidden></div>
       <div id="practice-score" class="score-wrap"></div>
     </div>
     <div class="panel" id="practice-panel">
@@ -239,13 +312,18 @@
       </div>
 
       <div class="ps-sec" data-sec="tempo" hidden>
+        <span class="field-t first" id="lbl-mode">Cómo practicás</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-mode" id="mode-seg">
+          <button data-mode="espera" aria-pressed="true">Te espero</button><button data-mode="pulso" aria-pressed="false">A pulso</button>
+        </div>
+        <p class="hint mode-hint" id="mode-hint" role="status"></p>
         <div class="tempo-row">
           <button class="btn icon" id="bpm-down" aria-label="Bajar tempo">&minus;</button>
           <div class="tempo-val"><output id="bpm-val" class="bpm-val" aria-label="Tempo">80</output><span>negras por minuto</span></div>
           <button class="btn icon" id="bpm-up" aria-label="Subir tempo">+</button>
         </div>
         <label class="switch"><input id="metro-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Metrónomo</b><span class="metro-viz"><span id="beat-dot" class="beat-dot" aria-hidden="true"></span><span id="beat-pips" class="pips" aria-hidden="true"></span></span></span></label>
-        <label class="switch"><input id="countin-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Cuenta de entrada</b><span>Un compás de clics antes de empezar (y al reiniciar o continuar).</span></span></label>
+        <label class="switch"><input id="countin-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Cuenta de entrada</b><span id="countin-sub">Un compás de clics antes de empezar (y al reiniciar o continuar).</span></span></label>
       </div>
 
       <div class="ps-sec" data-sec="loop" hidden>
@@ -315,23 +393,46 @@
         <button class="btn primary big" id="result-action-btn"></button>
       </section>
       <div class="result-metrics">
-        <div class="metric"><span class="m-lbl">Precisión</span><b id="res-acc">0%</b><span class="m-sub" id="res-acc-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-acc-bar"></i></span></div>
-        <div class="metric"><span class="m-lbl">Avance</span><b id="res-cov">0 de 0 compases</b><span class="m-sub" id="res-prog-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-cov-bar"></i></span></div>
+        <div class="metric"><span class="m-lbl" id="res-acc-l">Precisión</span><b id="res-acc">0%</b><span class="m-sub" id="res-acc-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-acc-bar"></i></span></div>
+        <div class="metric"><span class="m-lbl" id="res-cov-l">Avance</span><b id="res-cov">0 de 0 compases</b><span class="m-sub" id="res-prog-sub"></span><span class="m-bar" aria-hidden="true"><i id="res-cov-bar"></i></span></div>
       </div>
+      <p id="result-trend" class="result-trend" hidden></p>
       <p id="result-scope" class="result-scope" hidden></p>
       <section class="mstrip-wrap" aria-labelledby="strip-t">
         <span class="m-lbl" id="strip-t">Compás por compás</span>
         <div id="measure-strip" class="mstrip" role="group" aria-label="Resumen por compás"></div>
         <div id="strip-offer" class="strip-offer" hidden><span id="strip-offer-t"></span><button class="btn sm primary" id="strip-offer-go"></button></div>
-        <p class="strip-legend" aria-hidden="true"><span class="lg clean">✓ Limpio</span><span class="lg dirty">✕ Con error</span><span class="lg none">· No tocado</span></p>
+        <p class="strip-legend" id="legend-espera" aria-hidden="true"><span class="lg clean">✓ Limpio</span><span class="lg dirty">✕ Con error</span><span class="lg none">· No tocado</span></p>
+        <p class="strip-legend" id="legend-pulso" aria-hidden="true" hidden><span class="lg clean">✓ A tiempo</span><span class="lg off">≈ Fuera de tiempo</span><span class="lg dirty">✕ Errado u omitido</span></p>
       </section>
       <p id="result-compare" class="result-compare" hidden></p>
+      <details id="res-errors" class="res-errors" hidden><summary id="res-errors-t">Errores de esta toma</summary><ul id="res-errors-list" aria-label="Lista de errores"></ul></details>
       <dl class="result-stats">
-        <div><dt>Pasos limpios</dt><dd id="res-clean">0</dd></div>
-        <div><dt>Pasos con error</dt><dd id="res-dirty">0</dd></div>
-        <div><dt>Notas erradas</dt><dd id="res-wrong">0</dd></div>
-        <div id="res-laps-box"><dt>Vueltas</dt><dd id="res-laps">0</dd></div>
+        <div><dt id="st-l1">Pasos limpios</dt><dd id="res-clean">0</dd></div>
+        <div><dt id="st-l2">Pasos con error</dt><dd id="res-dirty">0</dd></div>
+        <div><dt id="st-l3">Notas erradas</dt><dd id="res-wrong">0</dd></div>
+        <div id="res-laps-box"><dt id="st-l4">Vueltas</dt><dd id="res-laps">0</dd></div>
       </dl>
+      <section class="teacher" id="result-teacher" aria-labelledby="teacher-h">
+        <h3 class="teacher-h" id="teacher-h">Para tu profe</h3>
+        <div class="row wrap">
+          <button class="btn" id="share-summary"><svg class="ic sm"><use href="#i-share"/></svg><span id="share-summary-t">Compartir resumen</span></button>
+          <button class="btn" id="rec-start"><svg class="ic sm" style="color:var(--bad)"><use href="#i-rec"/></svg>Grabar una toma</button>
+        </div>
+        <div id="rec-live" class="rec-live" role="group" aria-label="Grabando" hidden>
+          <span class="rec-dot" aria-hidden="true"></span>
+          <span class="rec-t"><b>Grabando</b><span id="rec-time" role="timer">0:00 / 1:00</span></span>
+          <button class="btn danger solid" id="rec-stop"><svg class="ic sm"><use href="#i-stop"/></svg>Detener</button>
+        </div>
+        <div id="rec-done" class="rec-done" hidden>
+          <audio id="rec-audio" controls preload="metadata" aria-label="Escuchar la toma grabada"></audio>
+          <div class="row wrap">
+            <button class="btn" id="rec-save">Descargar</button>
+            <button class="btn danger" id="rec-discard"><svg class="ic sm"><use href="#i-trash"/></svg>Descartar</button>
+          </div>
+        </div>
+        <p class="hint" id="rec-hint">La grabación queda sólo en este dispositivo: se comparte o descarga si vos querés.</p>
+      </section>
       <div class="row center">
         <button class="btn big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg><span id="result-retry-t">Reintentar</span></button>
         <button class="btn big" id="result-lib">Biblioteca</button>
@@ -390,6 +491,14 @@
         <div class="seg opts" role="group" aria-labelledby="lbl-size" id="set-size">
           <button data-size="chico">Chico</button><button data-size="mediano">Mediano</button><button data-size="grande">Grande</button>
         </div>
+      </section>
+      <section class="group-card">
+        <h2>A pulso</h2>
+        <span class="field-t first" id="lbl-win">Margen para «a tiempo»</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-win" id="set-win">
+          <button data-win="80">Justo ±80 ms</button><button data-win="120">Normal ±120 ms</button><button data-win="180">Amplio ±180 ms</button>
+        </div>
+        <p class="hint">En tempos lentos el margen crece solo. Se usa en «A pulso» (Tempo → Cómo practicás).</p>
       </section>
       <section class="group-card" id="share-card">
         <h2>Pasar ajustes a otro dispositivo</h2>
@@ -469,6 +578,7 @@
           <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
           <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span>Leemos las páginas de un PDF.</span></span></button>
           <button class="opt btn-opt" id="imp-xml"><span class="opt-ic"><svg class="ic"><use href="#i-xml"/></svg></span><span class="opt-t"><b>MusicXML</b><span>Archivo de MuseScore y similares. Sin internet.</span></span></button>
+          <button class="opt btn-opt" id="imp-task"><span class="opt-ic"><svg class="ic"><use href="#i-clip"/></svg></span><span class="opt-t"><b>Tarea del profe</b><span>Archivo .pianocheck que te mandaron. Sin internet.</span></span></button>
           <button class="opt btn-opt" id="imp-midi"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>MIDI</b><span>Archivo .mid. Sin internet.</span></span></button>
         </div>
         <p class="hint">Foto, imágenes y PDF usan IA y necesitan tu API key en Ajustes. MusicXML y MIDI no.</p>
@@ -477,7 +587,35 @@
       <input type="file" id="file-images" accept="image/*" multiple hidden>
       <input type="file" id="file-pdf" accept="application/pdf,.pdf" hidden>
       <input type="file" id="file-xml" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml,application/xml,text/xml" hidden>
+      <input type="file" id="file-task" hidden>
       <input type="file" id="file-midi" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+    </div>
+  </div>
+
+  <div id="sheet-task" class="overlay sheet" hidden role="dialog" aria-modal="true" aria-labelledby="task-h">
+    <div class="dialog sheet-box task-box">
+      <div class="sheet-head">
+        <h3 id="task-h">Crear tarea</h3>
+        <button class="btn icon ghost" id="task-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="hint" id="task-piece"></p>
+      <div class="range-ed">
+        <div class="stepper" role="group" aria-label="Desde el compás"><span class="stepper-l">Desde el compás</span><button class="btn icon" id="tk-from-dn" aria-label="Desde: compás anterior">&minus;</button><output id="tk-from" aria-live="polite">1</output><button class="btn icon" id="tk-from-up" aria-label="Desde: compás siguiente">+</button></div>
+        <div class="stepper" role="group" aria-label="Hasta el compás"><span class="stepper-l">Hasta el compás</span><button class="btn icon" id="tk-to-dn" aria-label="Hasta: compás anterior">&minus;</button><output id="tk-to" aria-live="polite">1</output><button class="btn icon" id="tk-to-up" aria-label="Hasta: compás siguiente">+</button></div>
+      </div>
+      <span class="field-t" id="lbl-tk-hands">Mano</span>
+      <div class="seg opts" role="group" aria-labelledby="lbl-tk-hands" id="tk-hands"><button data-hands="both">Ambas</button><button data-hands="rh">Derecha</button><button data-hands="lh">Izquierda</button></div>
+      <span class="field-t" id="lbl-tk-mode">Modo</span>
+      <div class="seg opts" role="group" aria-labelledby="lbl-tk-mode" id="tk-mode"><button data-mode="espera">Te espero</button><button data-mode="pulso">A pulso</button></div>
+      <div class="stepper tk-bpm" role="group" aria-label="Tempo"><span class="stepper-l">Tempo (negras por minuto)</span><button class="btn icon" id="tk-bpm-dn" aria-label="Bajar tempo">&minus;</button><output id="tk-bpm" aria-live="polite">80</output><button class="btn icon" id="tk-bpm-up" aria-label="Subir tempo">+</button></div>
+      <label class="field-t" for="tk-text">Consigna para el alumno</label>
+      <textarea id="tk-text" rows="3" maxlength="400" placeholder="Ej.: Compases 5–8, mano izquierda, 56 BPM. Sostené el bajo durante todo su valor"></textarea>
+      <div class="tk-foot"><span class="hint" id="tk-count">0 / 400</span><button class="btn sm" id="tk-auto">Armar consigna</button></div>
+      <div class="row wrap">
+        <button class="btn primary big grow" id="task-share"><svg class="ic"><use href="#i-share"/></svg>Compartir tarea</button>
+        <button class="btn big" id="task-download">Guardar archivo</button>
+      </div>
+      <p class="hint">Se comparte un archivo .pianocheck con la partitura y la consigna. No lleva tu API key ni tus datos.</p>
     </div>
   </div>
 

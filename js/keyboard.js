@@ -62,7 +62,7 @@ const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$
 
 /**
  * createKeyboard(container, { onKey?(midi), minWhite? }) →
- *   { setRange, setTargets([{midi, hand:"rh"|"lh", done?, label?}]), setSteps(list), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
+ *   { setRange, setTargets([{midi, hand:"rh"|"lh", done?, label?, finger?}]), setSteps(list), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
  *     setInteractive(bool), focus(midis), destroy() }
  * `done:true` en un objetivo lo pinta verde (nota del acorde que ya tocaste).
  * `label` en un objetivo reemplaza el nombre de la tecla (p. ej. "Fa♯" o "Mi♯" con la ortografía de la tonalidad).
@@ -141,11 +141,12 @@ export function createKeyboard(container, opts = {}) {
       el.className = cls.join(" ");
       let tag = el.querySelector(".pk-tag");
       if (t) {
-        const html = t.label ? (t.done ? `<i class="pk-chk" aria-hidden="true">✓</i><b>${t.label}</b>` : `<b>${t.label}</b>`) : t.done ? `<i class="pk-chk" aria-hidden="true">✓</i>` : `<i class="pk-mk ${t.hand === "lh" ? "lh" : "rh"}" aria-hidden="true"></i><b>${tagName(m)}</b>`;
+        const fg = t.finger ? `<i class="pk-f" aria-hidden="true">${t.finger}</i>` : "";   // dedo sugerido (1–5)
+        const html = fg + (t.label ? (t.done ? `<i class="pk-chk" aria-hidden="true">✓</i><b>${t.label}</b>` : `<b>${t.label}</b>`) : t.done ? `<i class="pk-chk" aria-hidden="true">✓</i>` : `<i class="pk-mk ${t.hand === "lh" ? "lh" : "rh"}" aria-hidden="true"></i><b>${tagName(m)}</b>`);
         if (!tag) { tag = document.createElement("span"); el.appendChild(tag); }
-        tag.className = "pk-tag" + (t.label ? " lab" : "");
+        tag.className = "pk-tag" + (t.label ? " lab" : "") + (t.finger ? " fing" : "");
         if (tag.dataset.k !== html) { tag.innerHTML = html; tag.dataset.k = html; }
-        el.setAttribute("aria-label", t.label ? `${t.label}${t.done ? ", tocada" : ""}` : `${midiName(m)}${t.done ? ", tocada" : t.hand === "lh" ? ", mano izquierda" : ", mano derecha"}`);
+        el.setAttribute("aria-label", t.label ? `${t.label}${t.done ? ", tocada" : ""}` : `${midiName(m)}${t.done ? ", tocada" : t.hand === "lh" ? ", mano izquierda" : ", mano derecha"}${t.finger ? `, dedo ${t.finger}` : ""}`);
       } else if (tag) { tag.remove(); el.setAttribute("aria-label", midiName(m)); }
     });
     legend.hidden = ![...targets.values()].some((t) => !t.done);
@@ -229,7 +230,7 @@ export function createKeyboard(container, opts = {}) {
     },
     setTargets(list) {
       targets = new Map();
-      for (const t of list || []) if (t && Number.isFinite(t.midi)) targets.set(t.midi, { hand: t.hand === "lh" ? "lh" : "rh", done: !!t.done, label: typeof t.label === "string" ? t.label : "" });
+      for (const t of list || []) if (t && Number.isFinite(t.midi)) targets.set(t.midi, { hand: t.hand === "lh" ? "lh" : "rh", done: !!t.done, label: typeof t.label === "string" ? t.label : "", finger: t.finger >= 1 && t.finger <= 5 ? t.finger | 0 : 0 });
       paint();
     },
     flash(midi, kind) {

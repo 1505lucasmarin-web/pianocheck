@@ -5,6 +5,9 @@ const SHARP_NAMES = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#',
 const LATIN_NAMES = ['Do', 'Do#', 'Re', 'Re#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si'];
 const DUR_BEATS = { w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125 };
 const VALID_DEN = [1, 2, 4, 8, 16, 32];
+export const MAX_COMMENT = 160;                                  // largo máximo del comentario de un compás
+export const ORIGINS = ['foto', 'imagenes', 'pdf', 'ia'];        // partituras leídas por IA: se les buscan avisos de importación
+const fingerOf = (v) => { const n = Math.round(Number(v)); return n >= 1 && n <= 5 ? n : 0; };
 
 /** "c/4" → 60. Acepta #, ##, b, bb, n. Devuelve null si es inválida. */
 export function keyToMidi(key) {
@@ -69,19 +72,22 @@ function normEvent(raw, where, errors) {
     return null;
   }
   const k = [];
-  for (const x of ks) {
+  const fs = [];
+  const rawF = Array.isArray(raw.f) ? raw.f : [];
+  ks.forEach((x, xi) => {
     const s = typeof x === 'string' ? x.trim().toLowerCase().replace(/\s+/g, '') : '';
     if (keyToMidi(s) === null) {
       errors.push(`${where}: altura inválida "${x}" ignorada`);
-      continue;
+      return;
     }
-    if (!k.includes(s)) k.push(s);
-  }
+    if (!k.includes(s)) { k.push(s); fs.push(fingerOf(rawF[xi])); }   // la digitación `f` va en paralelo a `k`
+  });
   if (ks.length > 0 && k.length === 0) {
     errors.push(`${where}: sin alturas válidas, descartado`);
     return null;
   }
   const ev = { k, d };
+  if (fs.some((x) => x > 0)) ev.f = fs;
   const dots = Number(raw.dots);
   if (dots === 1 || dots === 2) ev.dots = dots;
   if (raw.tie === true || raw.tie === 'true') ev.tie = true;
@@ -116,6 +122,7 @@ export function validateScore(obj) {
     const su = typeof obj.sourceUrl === 'string' ? obj.sourceUrl.trim() : '';
     if (su && su.length <= 2000 && /^https?:\/\/\S+$/i.test(su)) score.sourceUrl = su;   // enlace de la canción original (sólo http/https)
     if (obj.level === 'principiante' || obj.level === 'intermedio' || obj.level === 'pro') score.level = obj.level;
+    if (ORIGINS.includes(obj.origin)) score.origin = obj.origin;
 
     const ms = Array.isArray(obj.measures) ? obj.measures : [];
     if (!Array.isArray(obj.measures)) errors.push('Falta la lista de compases');
@@ -138,6 +145,20 @@ export function validateScore(obj) {
       }
       score.measures.push(out);
     });
+    // comentarios por compás y avisos ya revisados (opcionales)
+    if (obj.comments && typeof obj.comments === 'object' && !Array.isArray(obj.comments)) {
+      const cm = {};
+      for (const key of Object.keys(obj.comments)) {
+        const idx = Number(key);
+        const txt = typeof obj.comments[key] === 'string' ? obj.comments[key].replace(/\s+/g, ' ').trim().slice(0, MAX_COMMENT) : '';
+        if (Number.isInteger(idx) && idx >= 0 && idx < score.measures.length && txt) cm[idx] = txt;
+      }
+      if (Object.keys(cm).length) score.comments = cm;
+    }
+    if (Array.isArray(obj.reviewed)) {
+      const rv = [...new Set(obj.reviewed.filter((x) => typeof x === 'string' && /^[a-z]{2,12}:\d{1,4}(:[a-z]{2})?$/.test(x)))].slice(0, 300);
+      if (rv.length) score.reviewed = rv;
+    }
     if (score.measures.length === 0) errors.push('La partitura no tiene compases');
     else if (notes === 0) errors.push('La partitura no tiene notas');
     return { ok: notes > 0, errors, score };

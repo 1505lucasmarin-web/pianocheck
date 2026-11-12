@@ -62,7 +62,20 @@ export async function getScore(id) {
 export async function deleteScore(id) {
   await run('scores', 'readwrite', (s) => s.delete(id));
   try { await deleteAttempts(id); } catch (e) { /* sin historial */ }
+  try { await deleteAnnotations(id); } catch (e) { /* sin anotaciones */ }
 }
+
+/* ---- anotaciones a mano (clave "anno:<id de partitura>" del store de ajustes: no cambia el esquema de la base) ---- */
+export async function getAnnotations(scoreId) {
+  if (!scoreId) return null;
+  return (await run('settings', 'readonly', (s) => s.get('anno:' + scoreId))) || null;
+}
+/** `data` = lo que devuelve toJSON() del módulo de anotaciones (objeto serializable). Vacío/null borra el registro. */
+export async function saveAnnotations(scoreId, data) {
+  if (!scoreId) return;
+  await run('settings', 'readwrite', (s) => (data ? s.put(JSON.parse(JSON.stringify(data)), 'anno:' + scoreId) : s.delete('anno:' + scoreId)));
+}
+export async function deleteAnnotations(scoreId) { return saveAnnotations(scoreId, null); }
 
 /* ---- historial de intentos por partitura ---- */
 
@@ -88,11 +101,11 @@ export async function deleteAttempts(scoreId) {
 
 /**
  * Pura: { count, best, last } (porcentajes) de la PIEZA ENTERA a partir de una lista de intentos.
- * Los intentos de un pasaje o de bucle (range / loop) no entran: no son comparables con la pieza completa.
+ * Los intentos de un pasaje o de bucle (range / loop) y los de modo "A pulso" no entran: no son comparables con la pieza completa en "Te espero".
  * `best` sólo considera intentos completos (sin status = datos viejos, se toman como completos).
  */
 export function summarizeAttempts(list) {
-  const a = (list || []).filter((x) => x && Number.isFinite(x.accuracy) && !x.range && !x.loop).sort((p, q) => p.at - q.at);
+  const a = (list || []).filter((x) => x && Number.isFinite(x.accuracy) && !x.range && !x.loop && x.mode !== 'pulso').sort((p, q) => p.at - q.at);
   if (!a.length) return { count: 0, best: null, last: null };
   const full = a.filter((x) => !x.status || x.status === 'finished');
   return { count: a.length, best: full.length ? Math.max(...full.map((x) => x.accuracy)) : null, last: a[a.length - 1].accuracy };

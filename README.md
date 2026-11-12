@@ -35,5 +35,16 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - Pedir una canción por enlace (YouTube, YouTube Music, Spotify, Apple Music, Deezer, SoundCloud): el enlace sólo sirve para saber qué canción es (oEmbed / iTunes Lookup / Deezer, sin audio); siempre se confirma título y artista, editables, y la partitura la arma la IA de memoria. Se guarda `sourceUrl` y la tarjeta muestra «Abrir original». Desde otras apps de Android: Compartir → PianoCheck (`share_target` GET con `title`, `text`, `url`; requiere la app instalada). Si un servicio bloquea oEmbed por CORS se usa el texto del enlace; si no hay nada, se pide el nombre.
 - «Nueva partitura» separa «Crear con IA» (nombre o enlace) de «Importar partitura» (foto, imágenes, PDF, MusicXML, MIDI).
 
+## Etapa 7: a pulso, revisión y tareas
+- **A pulso** (Tempo → Modo): un compás de entrada y el cursor avanza solo al tempo elegido; mide notas correctas, % a tiempo (±120 ms, más ancho a tempos lentos) y la tendencia. Sólo con MIDI o teclado en pantalla; con micrófono se queda en «Te espero». `js/timing.js`.
+- **Revisión docente**: tocá una nota para cambiar altura, duración, mano, digitación, insertar o borrar (con deshacer/rehacer); comentarios por compás; avisos de importación (compás que no suma, vacío, saltos grandes) para revisar uno por uno. `js/review.js`, `js/issues.js`.
+- **Tareas**: «Crear tarea» arma un archivo `.pianocheck` (partitura + compases, mano, tempo, modo, consigna) que se comparte o descarga; se abre con Nueva partitura → Importar. Validación estricta en `js/task.js`.
+- **Resumen y toma**: «Compartir resumen» genera un texto para el profe; la toma de audio (hasta 60 s) es voluntaria, pide permiso cada vez y no se sube a ningún lado. Agregar `?debug` a la URL expone `window.__pc` para pruebas.
+
+## Etapa 8: dónde estoy, dónde me equivoqué y anotaciones
+- **Dónde estoy**: el compás que se evalúa lleva un fondo suave (distinto del cursor de la nota); en vista por página también se resalta el renglón actual (banda lateral + fondo) y se mantiene a la vista; en continua hay una etiqueta fija «Compás N» y, si te corriste, un botón de borde «Nota esperada» para volver.
+- **Dónde me equivoqué**: la nota esperada queda marcada con ✕ (color + símbolo, contraste AA en los tres temas) y una nota «fantasma» a la altura que tocaste; el panel dice «Tocaste Re4 · Se esperaba Mi4» (se anuncia con aria-live). El cursor no avanza hasta corregir; al corregir la marca queda como historial discreto. En A pulso el pulso sigue y los errores quedan donde ocurrieron (✕ equivocada, ○ omitida); tocá la marca para ver el detalle. Resultado lista los errores de la toma.
+- **Anotar** (botón del lápiz en Práctica y «Anotar» en Revisión): lápiz (3 colores), resaltador, texto de hasta 60 caracteres, goma, deshacer/rehacer. Los gestos dibujan; para moverte, dos dedos o los botones ‹ › (con lápiz activo se ignoran los dedos). La evaluación queda en pausa mientras anotás. Las marcas se anclan al compás (`js/annotations.js`, puro y con tests; UI en `js/annotate-ui.js`), se guardan en IndexedDB (clave `anno:<id>` del store de ajustes), viajan en las tareas `.pianocheck` y sobreviven a recargar, rotar, cambiar tamaño y pasar de continua a por página. El ojo las oculta/muestra con un toque (ajuste `hideMarks`).
+
 ## Tests
 `node --test test/*.test.mjs`

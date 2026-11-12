@@ -92,9 +92,9 @@ export function createMidiInput({ onNoteOn, onNoteOff, onStatus } = {}) {
   let bleWanted = false;
   let reconnecting = false;
 
-  function handleMsg(st, d1, d2) {
+  function handleMsg(st, d1, d2, ts) {
     const hi = st & 0xf0;
-    if (hi === 0x90 && d2 > 0) onNoteOn && onNoteOn(d1, d2);
+    if (hi === 0x90 && d2 > 0) onNoteOn && onNoteOn(d1, d2, ts);   // ts = instante del evento (misma escala que performance.now())
     else if (hi === 0x80 || hi === 0x90) onNoteOff && onNoteOff(d1);
   }
 
@@ -110,7 +110,7 @@ export function createMidiInput({ onNoteOn, onNoteOff, onStatus } = {}) {
     inputs.forEach((inp) => {
       inp.onmidimessage = (e) => {
         const d = e.data;
-        if (d && d.length >= 3) handleMsg(d[0], d[1], d[2]);
+        if (d && d.length >= 3) handleMsg(d[0], d[1], d[2], e.timeStamp);
       };
     });
     if (live.length) status({ connected: true, name: live.map((i) => i.name).join(', '), via: 'usb' });
@@ -139,7 +139,7 @@ export function createMidiInput({ onNoteOn, onNoteOff, onStatus } = {}) {
   function onBleValue(ev) {
     const v = ev.target && ev.target.value;
     if (!v) return;
-    for (const m of parseBleMidi(v)) handleMsg(m.status, m.data1, m.data2);
+    for (const m of parseBleMidi(v)) handleMsg(m.status, m.data1, m.data2, ev.timeStamp);
   }
   async function bleSetup(device) {
     const server = await device.gatt.connect();

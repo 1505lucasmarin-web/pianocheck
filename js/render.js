@@ -1,9 +1,10 @@
 // Dibujo de la partitura con VexFlow (global `VexFlow`, vendor/vexflow/vexflow-bravura.js).
-// API: createRenderer(container, {mode}) → { draw, setCursor, follow, markStep, onNoteTap, clearMarks, setSelected,
-//   setPhrases, setRange, scrollToMeasure, setLook, redraw, destroy }
+// API: createRenderer(container, {mode}) → { draw, setCursor, follow, markStep(i, "clean"|"dirty"|"early"|"late"), setTag, onNoteTap, onBadgeTap, clearMarks, setSelected,
+//   setPhrases, setRange, setBadges, setFocusMeasure, scrollToMeasure, setLook, redraw, destroy }
 // Dos vistas: "page" (sistemas apilados, con scroll vertical) y "cont" (toda la pieza en una sola fila que se desplaza).
 // Los colores salen de variables CSS por tema (data-sheet="hoja|sepia|oscuro" en el contenedor): cambiar de tema no redibuja.
 import { phraseCaption, baseLetter } from "./phrases.js";
+import { midiToKey } from "./model.js";
 const VF = () => window.VexFlow;
 
 // Un color por letra de frase para la interfaz oscura (leyenda). En la partitura se usan --ph0..--ph7 según el tema.
@@ -18,6 +19,9 @@ const PAGE_SIZE_F = { chico: 0.82, mediano: 1, grande: 1.25 };   // factor sobre
 const CONT_SIZE_F = { chico: 0.65, mediano: 0.85, grande: 1 };   // fracción del alto que ocupa el gran pentagrama
 const SNAP = 20, SEG_NAT = 1700, SCALE_STEP = 0.05;              // tramos: ancho múltiplo de 20 y escala múltiplo de 0,05 → sin costuras
 const H0 = 330, FLAG_Y = 240, NUM_Y = 48, TOP_Y = 18, BOT_Y = 128, X0 = 22;
+const SPACE = 10, STAFF_TOP = TOP_Y + 4 * SPACE, STAFF_BOT = BOT_Y + 8 * SPACE;   // primera línea del gran pentagrama y última línea del bajo (unidades del SVG)
+const SYS_SPACES = (STAFF_BOT - STAFF_TOP) / SPACE, LH_TOP_SP = (BOT_Y + 4 * SPACE - STAFF_TOP) / SPACE;   // alto del gran pentagrama y línea superior del bajo, en espacios
+const LBL_H = 26;   // alto reservado arriba en la vista continua para la etiqueta fija «Compás N»
 
 const LETTER = { c: 0, d: 1, e: 2, f: 3, g: 4, a: 5, b: 6 };
 function diatonic(key) {
@@ -56,6 +60,7 @@ export function createRenderer(container, opts = {}) {
   let phrases = [];
   let range = null;        // pasaje resaltado/acotado { from, to } (base 0) o null
   let marks = [], cursor = -1, tapCb = null, selected = null;
+  let badges = [], badgeCb = null, focusMeasure = null, tagEl = null, tagTimer = 0;
   let lastWidth = 0, lastHeight = 0, resizeTimer = 0, cursorRect = null, selMark = null;
   const flagEls = new Map();
   let flagY = FLAG_Y;
@@ -63,6 +68,10 @@ export function createRenderer(container, opts = {}) {
   let cs = null;           // { view, track, cursorEl, clefs, scale, total, viewW, Dw, stepPos, gx, ... }
   let look = null;         // desplazamiento libre (arrastre / frase elegida) en px; null = seguir al cursor
   let curOffset = 0, drag = null, inertia = 0;
+  let activeM = null;      // compás que se está evaluando (el del cursor)
+  const errs = new Map();  // paso → { kind: "wrong"|"omit", played, expected[], text, resolved }
+  let errCb = null;
+  let annotating = false, drawCb = null, annoSvg = null, curLayout = null;
 
   const nk = (m, h, i) => m + "|" + h + "|" + i;
 
@@ -153,12 +162,15 @@ export function createRenderer(container, opts = {}) {
       if (rhN.length) beams.push(...V.Beam.generateBeams(rhN));
       if (lhN.length) beams.push(...V.Beam.generateBeams(lhN));
       voices[0].draw(ctx, top); voices[1].draw(ctx, bot);
-      if (o.ext) [...rhN, ...lhN].forEach((n) => {   // extensión vertical real (líneas adicionales, plicas, corchetes)
+      if (o.ext) [["rh", rhN], ["lh", lhN]].forEach(([hand, ns]) => ns.forEach((n, idx) => {   // extensión vertical real (líneas adicionales, plicas, corchetes, digitaciones)
         try {
-          const ys = n.getYs(); o.ext.min = Math.min(o.ext.min, ...ys); o.ext.max = Math.max(o.ext.max, ...ys);
-          if (n.hasStem && n.hasStem()) { const se = n.getStemExtents(); o.ext.min = Math.min(o.ext.min, se.topY, se.baseY); o.ext.max = Math.max(o.ext.max, se.topY, se.baseY); }
+          const ys = n.getYs(); let lo = Math.min(...ys), hi = Math.max(...ys);
+          if (n.hasStem && n.hasStem()) { const se = n.getStemExtents(); lo = Math.min(lo, se.topY, se.baseY); hi = Math.max(hi, se.topY, se.baseY); }
+          o.ext.min = Math.min(o.ext.min, lo); o.ext.max = Math.max(o.ext.max, hi);
+          const ev = (m[hand] || [])[idx];
+          if (ev && ev.f && ev.k && ev.k.length) { if (hand === "rh") o.ext.min = Math.min(o.ext.min, lo - 14 - 12 * (ev.f.filter(Boolean).length - 1)); else o.ext.max = Math.max(o.ext.max, hi + 20 + 12 * (ev.f.filter(Boolean).length - 1)); }
         } catch (e) { /* sin extensión */ }
-      });
+      }));
       beams.forEach((b) => b.setContext(ctx).draw());
       [["rh", rhN], ["lh", lhN]].forEach(([hand, ns]) => {
         (m[hand] || []).forEach((e, idx) => {
@@ -307,11 +319,12 @@ export function createRenderer(container, opts = {}) {
 
     // alto real del contenido (líneas adicionales, plicas) para escalar sin recortar
     let cmin = Math.min(TOP_Y + 40 - 8, NUM_Y - 12, ext.min - 7), cmax = Math.max(BOT_Y + 80 + 8, ext.max + 7);
+    if (badges.length) cmin = Math.min(cmin, 12);   // lugar para los íconos de comentario / aviso sobre el compás
     flagY = cmax + 8; cmax = flagY + 8;
     const R0 = cmax - cmin;
     const hasPh = phrases.length > 0;
     const PH = hasPh ? 28 : 0;                       // px reservados arriba para corchetes y letras
-    const availH = viewH - 14 - PH;
+    const availH = viewH - 14 - PH - LBL_H;
     let scale = (availH / R0) * CONT_SIZE_F[size];
     // tope por ancho: en pantallas angostas y altas (celular vertical) tienen que verse ~2 compases
     scale = Math.min(scale, viewW / ({ chico: 640, mediano: 500, grande: 400 })[size]);
@@ -320,7 +333,7 @@ export function createRenderer(container, opts = {}) {
     const y0 = cmin - PH * u, Rn = R0 + PH * u;
     const svgH = Rn * scale;
     systems.forEach((s) => s.svg.querySelectorAll(".mnum").forEach((t) => t.setAttribute("font-size", 11 * u)));
-    const topPx = Math.max(0, Math.round((viewH - svgH) / 2));
+    const topPx = LBL_H + Math.max(0, Math.round((viewH - LBL_H - svgH) / 2));
     track.style.top = topPx + "px"; track.style.width = (total * scale) + "px";
     systems.forEach((s) => {
       s.scale = scale; s.u = u; s.bracketY = cmin - 6 * u;
@@ -358,7 +371,12 @@ export function createRenderer(container, opts = {}) {
 
     const bandTop = topPx + PH, bandH = (cmax - cmin) * scale + 4;
     cursorEl.style.top = (bandTop - 2) + "px"; cursorEl.style.height = bandH + "px";
-    cs = { view, track, cursorEl, clefs, scale, total, viewW, viewH, Dw, gx, gw, stepPos: [], PH, topPx };
+    const mlabel = document.createElement("div"); mlabel.className = "cs-mlabel"; mlabel.hidden = true; mlabel.setAttribute("aria-hidden", "true");
+    const back = document.createElement("button"); back.type = "button"; back.className = "cs-back"; back.hidden = true;
+    back.addEventListener("click", (e) => { e.stopPropagation(); follow(); });
+    back.addEventListener("pointerdown", (e) => e.stopPropagation());
+    view.append(mlabel, back);
+    cs = { view, track, cursorEl, clefs, mlabel, back, y0, svgH, scale, total, viewW, viewH, Dw, gx, gw, stepPos: [], PH, topPx };
     curOffset = 0; look = null;
   }
 
@@ -366,8 +384,9 @@ export function createRenderer(container, opts = {}) {
   function draw(sc, st) {
     score = sc; steps = st || [];
     systems = []; noteIndex = new Map(); stepEls = [];
-    cursorRect = null; selMark = null; cs = null; flagEls.clear(); flagY = FLAG_Y;
+    cursorRect = null; selMark = null; cs = null; activeM = null; flagEls.clear(); flagY = FLAG_Y; tagEl = null; clearTimeout(tagTimer);
     cancelAnimationFrame(inertia); drag = null;
+    if (annoSvg) { annoSvg.remove(); annoSvg = null; }
     root.innerHTML = ""; root.className = "score-root";
     container.classList.toggle("cont", mode === "cont");
     if (!sc || !VF()) return;
@@ -380,8 +399,10 @@ export function createRenderer(container, opts = {}) {
     marks.forEach((mk, i) => mk && applyMark(i, mk));
     drawPhrases();
     drawRange();
+    drawFingers(); drawBadges(); drawFocus(); drawErrors();
     if (cursor >= 0) applyCursor(cursor, false);
     if (selected) setSelected(selected);
+    buildOverlay();
   }
 
   function computeStepPos() {
@@ -393,6 +414,58 @@ export function createRenderer(container, opts = {}) {
       return { c: (l + r) / 2, w: r - l };
     });
   }
+
+  /* ---------------------------- capa de anotaciones y layout de compases ---------------------------- */
+  /** Cajas de los compases de la vista actual, en px del lienzo que se desplaza con la partitura (página: contenido del contenedor; continua: la pista).
+   *  → { mode, space (px por espacio de pentagrama), width, height, measures: [{ measure, x, y, w, staffSpace, systemHeight, lhTop }] } (forma que espera js/annotations.js: y = línea superior del gran pentagrama). */
+  function buildLayout() {
+    const out = [];
+    if (cs) {
+      const sc = cs.scale;
+      for (let mi = 0; mi < (score ? score.measures.length : 0); mi++) {
+        if (cs.gx[mi] == null) continue;
+        out.push({ measure: mi, x: cs.gx[mi] * sc, y: (STAFF_TOP - cs.y0) * sc, w: cs.gw[mi] * sc, staffSpace: SPACE * sc, systemHeight: SYS_SPACES, lhTop: LH_TOP_SP });
+      }
+      return { mode: "cont", space: SPACE * sc, width: cs.total * sc, height: cs.svgH, measures: out };
+    }
+    systems.forEach((s) => {
+      if (!s) return;
+      const sc = s.scale || 1;
+      for (let mi = s.from; mi <= s.to; mi++) {
+        const m = s.mx[mi]; if (!m) continue;
+        out.push({ measure: mi, x: s.el.offsetLeft + m.x * sc, y: s.el.offsetTop + STAFF_TOP * sc, w: m.w * sc, staffSpace: SPACE * sc, systemHeight: SYS_SPACES, lhTop: LH_TOP_SP });
+      }
+    });
+    const first = systems.find(Boolean);
+    return { mode: "page", space: SPACE * ((first && first.scale) || 1), width: container.clientWidth, height: Math.max(container.scrollHeight, container.clientHeight), measures: out };
+  }
+  /** SVG vacío para las marcas: en continua dentro de la pista (se desplaza con ella), en página dentro del contenedor (scrollea con la hoja). */
+  function buildOverlay() {
+    annoSvg = null; curLayout = null;
+    if (!systems.length) return;
+    curLayout = buildLayout();
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("class", "anno-svg" + (annotating ? " on" : ""));
+    svg.setAttribute("width", curLayout.width); svg.setAttribute("height", curLayout.height);
+    svg.setAttribute("viewBox", `0 0 ${curLayout.width} ${curLayout.height}`);
+    svg.style.width = curLayout.width + "px"; svg.style.height = curLayout.height + "px";
+    (cs ? cs.track : container).appendChild(svg);
+    annoSvg = svg;
+    if (drawCb) drawCb({ svg, layout: curLayout });
+  }
+  /** Modo Anotar: los gestos sobre la partitura dibujan; arrastrar/tocar notas queda desactivado. */
+  function setAnnotating(on) {
+    annotating = !!on;
+    container.classList.toggle("annotating", annotating);
+    if (annoSvg) annoSvg.classList.toggle("on", annotating);
+    if (annotating) { cancelAnimationFrame(inertia); drag = null; if (cs) cs.view.classList.remove("cs-dragging"); }
+  }
+  /** Desplaza la partitura (modo Anotar): continua → dx px; página → dy px. */
+  function panBy(dx, dy, live) {
+    if (cs) lookAt((look != null ? look : curOffset) + dx, !live);
+    else container.scrollBy({ top: dy, behavior: live || reduceMotion() ? "auto" : "smooth" });
+  }
+  const scrollPos = () => (cs ? { x: look != null ? look : curOffset } : { y: container.scrollTop });
 
   /* ---------------------------- frases ---------------------------- */
   function drawPhrases() {
@@ -435,6 +508,98 @@ export function createRenderer(container, opts = {}) {
     if (mode === "cont" && score && systems.length && had !== (phrases.length > 0)) { redraw(); return; } // cambia el alto reservado
     drawPhrases();
   }
+
+  /* ---------------------------- digitación ---------------------------- */
+  /** Números de dedo: sobre la nota en la mano derecha, bajo la nota en la izquierda (apilados en acordes). */
+  function drawFingers() {
+    systems.forEach((s) => s && s.svg.querySelectorAll(".fing-g").forEach((e) => e.remove()));
+    if (!score) return;
+    noteIndex.forEach((info) => {
+      const ev = ((score.measures[info.measure] || {})[info.hand] || [])[info.idx];
+      if (!ev || !ev.f || !ev.k || !ev.k.length || info.rest) return;
+      const s = systems[info.sys]; if (!s) return;
+      const u = s.u || 1 / (s.scale || 1);
+      let ys, x, lo, hi;
+      try {
+        ys = info.note.getYs(); x = info.note.getAbsoluteX() + 6; lo = Math.min(...ys); hi = Math.max(...ys);
+        if (info.note.hasStem && info.note.hasStem()) { const se = info.note.getStemExtents(); lo = Math.min(lo, se.topY, se.baseY); hi = Math.max(hi, se.topY, se.baseY); }
+      } catch (e) { return; }
+      const digits = (info.k2 || []).map((orig, j) => ({ f: ev.f[orig] || 0, j })).filter((d) => d.f);   // j crece con la altura
+      if (!digits.length) return;
+      const fs = 12 * u, g = document.createElementNS(SVGNS, "g");
+      g.setAttribute("class", "fing-g");
+      const put = (d, y) => {
+        const t = document.createElementNS(SVGNS, "text");
+        t.setAttribute("class", "fing"); t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", fs);
+        t.textContent = String(d.f); g.appendChild(t);
+      };
+      if (info.hand === "rh") { let y = lo - 6 * u; digits.forEach((d) => { put(d, y); y -= fs * 1.02; }); }
+      else { let y = hi + fs + 3 * u; digits.slice().reverse().forEach((d) => { put(d, y); y += fs * 1.02; }); }
+      s.svg.appendChild(g);
+    });
+  }
+
+  /* ---------------------------- íconos sobre el compás (comentario / aviso) ---------------------------- */
+  const BADGE_PATH = {
+    comment: "M-8 -7H8Q10 -7 10 -5V3Q10 5 8 5H-1L-6 9V5H-8Q-10 5 -10 3V-5Q-10 -7 -8 -7Z",
+    warn: "M0 -9.5L10.5 8.5H-10.5Z",
+  };
+  function drawBadges() {
+    systems.forEach((s) => s && s.svg.querySelectorAll(".mbadge").forEach((e) => e.remove()));
+    if (!badges.length || !score) return;
+    const by = new Map();
+    badges.forEach((b) => { (by.get(b.measure) || by.set(b.measure, []).get(b.measure)).push(b); });
+    systems.forEach((s) => {
+      if (!s) return;
+      const u = Math.min(s.u || 1 / (s.scale || 1), 1.7);
+      by.forEach((list, mi) => {
+        const m = s.mx[mi]; if (!m) return;
+        list.forEach((b, k) => {
+          const x = m.x + m.w - (16 + k * 24) * u, y = 33;
+          const g = document.createElementNS(SVGNS, "g");
+          g.setAttribute("class", `mbadge ${b.type}${b.current ? " cur" : ""}`); g.dataset.measure = mi; g.dataset.type = b.type;
+          g.setAttribute("transform", `translate(${x} ${y}) scale(${u})`);
+          g.setAttribute("role", "img"); g.setAttribute("aria-label", b.label || b.type);
+          const el = (tag, at) => { const e = document.createElementNS(SVGNS, tag); for (const kk in at) e.setAttribute(kk, at[kk]); g.appendChild(e); return e; };
+          el("circle", { r: 15, class: "mb-hit" });
+          if (b.type === "comment") el("path", { d: BADGE_PATH.comment, class: "mb-shape" });
+          else if (b.type === "warn") { el("path", { d: BADGE_PATH.warn, class: "mb-shape" }); el("path", { d: "M-1.4 -3.5h2.8v7h-2.8z", class: "mb-mark" }); el("circle", { cx: 0, cy: 6.6, r: 1.6, class: "mb-mark" }); }
+          else { el("circle", { r: 9.5, class: "mb-shape" }); el("path", { d: "M-4.6 0.4L-1.4 3.6L4.8 -3.4", class: "mb-tick" }); }
+          if (b.current) el("circle", { r: 13.5, class: "mb-ring" });
+          s.svg.appendChild(g);
+        });
+      });
+    });
+  }
+  /** Íconos sobre los compases: [{ measure, type: "comment"|"warn"|"done", label?, current? }]. */
+  function setBadges(list) {
+    const next = Array.isArray(list) ? list.filter((b) => b && Number.isInteger(b.measure)) : [];
+    const was = badges.length > 0;
+    badges = next;
+    if (mode === "cont" && score && systems.length && was !== (badges.length > 0)) { redraw(); return; }   // cambia el alto reservado
+    drawBadges();
+  }
+  root.addEventListener("click", (ev) => {
+    const b = ev.target.closest && ev.target.closest(".mbadge");
+    if (!b || !badgeCb) return;
+    ev.stopPropagation();
+    badgeCb({ measure: +b.dataset.measure, type: b.dataset.type });
+  }, true);
+
+  /** Resalta un compás (aviso que se está mirando). */
+  function drawFocus() {
+    systems.forEach((s) => s && s.svg.querySelectorAll(".focus-band").forEach((e) => e.remove()));
+    if (focusMeasure == null) return;
+    systems.forEach((s) => {
+      const m = s && s.mx[focusMeasure]; if (!m) return;
+      let vb; try { vb = s.svg.viewBox.baseVal; } catch (e) { vb = null; }
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("class", "focus-band"); r.setAttribute("x", m.x); r.setAttribute("width", m.w);
+      r.setAttribute("y", vb && vb.height ? vb.y : 0); r.setAttribute("height", vb && vb.height ? vb.height : (s.H || 300));
+      s.svg.insertBefore(r, s.svg.firstChild);
+    });
+  }
+  function setFocusMeasure(m) { focusMeasure = Number.isInteger(m) ? m : null; drawFocus(); }
 
   /* ---------------------------- pasaje (bucle) ---------------------------- */
   /** Resalta el rango y atenúa lo de afuera. */
@@ -512,6 +677,14 @@ export function createRenderer(container, opts = {}) {
       cs.cursorEl.style.transform = `translate3d(${p.c * cs.scale - p.w * cs.scale / 2 - off}px,0,0)`;
     } else cs.cursorEl.hidden = true;
     cs.clefs.classList.toggle("on", off > 2);
+    if (cs.back) {   // si mirás otra parte y la nota esperada quedó fuera de pantalla, un botón de borde la recupera
+      const cx = p ? p.c * cs.scale - off : null;
+      const left = cx != null && cx < (off > 2 ? cs.Dw * cs.scale : 0), right = cx != null && cx > cs.viewW - 6;
+      cs.back.hidden = !(look != null && (left || right));
+      cs.back.className = "cs-back " + (left ? "l" : "r");
+      cs.back.textContent = left ? "◂ Nota esperada" : "Nota esperada ▸";
+      cs.back.setAttribute("aria-label", "Volver a la nota esperada");
+    }
     if (!anim) { void cs.track.offsetWidth; cs.track.style.transition = ""; cs.cursorEl.style.transition = ""; }
   }
   function currentRenderedOffset() {
@@ -532,7 +705,7 @@ export function createRenderer(container, opts = {}) {
 
   // arrastre con el dedo para mirar adelante / atrás
   root.addEventListener("pointerdown", (ev) => {
-    if (mode !== "cont" || !cs || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+    if (annotating || mode !== "cont" || !cs || (ev.pointerType === "mouse" && ev.button !== 0)) return;
     cancelAnimationFrame(inertia);
     drag = { id: ev.pointerId, x: ev.clientX, off: currentRenderedOffset(), moved: false, samples: [[performance.now(), ev.clientX]] };
   });
@@ -583,6 +756,7 @@ export function createRenderer(container, opts = {}) {
   /* ---------------------------- marcas, cursor, selección ---------------------------- */
   function setCls(infos, cls, on) { infos.forEach((n) => n.el && n.el.classList.toggle(cls, on)); }
   /** Marca no cromática: ✓ (limpio) o ✕ (con error) debajo del pentagrama, además del color. */
+  const FLAG_PATH = { clean: "M-4 0L-1 3.5L5 -4", dirty: "M-3.6 -3.6L3.6 3.6M3.6 -3.6L-3.6 3.6", early: "M2.6 -4.2L-2.6 0L2.6 4.2", late: "M-2.6 -4.2L2.6 0L-2.6 4.2" };
   function setFlag(i, kind) {
     const old = flagEls.get(i); if (old) { old.remove(); flagEls.delete(i); }
     if (!kind) return;
@@ -593,7 +767,7 @@ export function createRenderer(container, opts = {}) {
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2 + 5, u = s.u || 1;
     const p = document.createElementNS(SVGNS, "path");
     p.setAttribute("class", "step-flag " + kind);
-    p.setAttribute("d", kind === "clean" ? "M-4 0L-1 3.5L5 -4" : "M-3.6 -3.6L3.6 3.6M3.6 -3.6L-3.6 3.6");
+    p.setAttribute("d", FLAG_PATH[kind] || FLAG_PATH.dirty);
     p.setAttribute("transform", `translate(${cx} ${flagY}) scale(${u})`);
     p.setAttribute("stroke-width", 2.2);
     s.svg.appendChild(p); flagEls.set(i, p);
@@ -602,14 +776,121 @@ export function createRenderer(container, opts = {}) {
     const infos = stepEls[i]; if (!infos) return;
     setCls(infos, "pc-clean", kind === "clean");
     setCls(infos, "pc-dirty", kind === "dirty");
+    setCls(infos, "pc-early", kind === "early");
+    setCls(infos, "pc-late", kind === "late");
     setFlag(i, kind);
+  }
+  /** Rótulo breve junto a la nota ("adelantado", "atrasado", "a tiempo"…); desaparece solo. Sólo hay uno a la vez. */
+  function setTag(i, text, cls) {
+    if (tagEl) { tagEl.remove(); tagEl = null; } clearTimeout(tagTimer);
+    const infos = stepEls[i]; if (!infos || !infos.length || !text) return;
+    const s = systems[infos[0].sys]; if (!s) return;
+    const xs = infos.map((n) => { try { return n.note.getAbsoluteX(); } catch (e) { return NaN; } }).filter(Number.isFinite);
+    if (!xs.length) return;
+    const u = s.u || 1;
+    const t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("class", "step-tag " + (cls || "")); t.setAttribute("text-anchor", "middle");
+    t.setAttribute("x", (Math.min(...xs) + Math.max(...xs)) / 2 + 5); t.setAttribute("y", flagY - 9 * u); t.setAttribute("font-size", 11 * u);
+    t.textContent = text; s.svg.appendChild(t); tagEl = t;
+    tagTimer = setTimeout(() => { if (tagEl === t) { t.remove(); tagEl = null; } }, 1300);
   }
   function markStep(i, kind) { marks[i] = kind || null; applyMark(i, kind); }
   function clearMarks() {
-    marks = [];
-    stepEls.forEach((infos) => { setCls(infos, "pc-clean", false); setCls(infos, "pc-dirty", false); });
+    marks = []; errs.clear();
+    systems.forEach((s) => s && s.svg.querySelectorAll(".err-g").forEach((e) => e.remove()));
+    stepEls.forEach((infos) => { setCls(infos, "pc-clean", false); setCls(infos, "pc-dirty", false); setCls(infos, "pc-early", false); setCls(infos, "pc-late", false); });
     flagEls.forEach((e) => e.remove()); flagEls.clear();
+    if (tagEl) { tagEl.remove(); tagEl = null; } clearTimeout(tagTimer);
   }
+
+  /* ---------------------------- compás y renglón en evaluación ---------------------------- */
+  /** Fondo suave sobre el compás actual (ambos pentagramas), distinto del cursor de la nota. En página, además, el renglón entero; en continua, la etiqueta fija «Compás N». */
+  function drawActive() {
+    systems.forEach((s) => { if (!s) return; s.svg.querySelectorAll(".meas-band").forEach((e) => e.remove()); s.el.classList.remove("sys-active"); delete s.el.dataset.label; });
+    if (cs && cs.mlabel) cs.mlabel.hidden = activeM == null;
+    if (activeM == null || !score) return;
+    systems.forEach((s, si) => {
+      const m = s && s.mx[activeM]; if (!m) return;
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("class", "meas-band"); r.setAttribute("data-measure", activeM);
+      r.setAttribute("x", m.x); r.setAttribute("width", m.w); r.setAttribute("y", STAFF_TOP - 18); r.setAttribute("height", STAFF_BOT - STAFF_TOP + 36); r.setAttribute("rx", 6);
+      s.svg.insertBefore(r, s.svg.firstChild);
+      if (mode === "page") { s.el.classList.add("sys-active"); s.el.dataset.label = `Renglón ${si + 1} de ${systems.length}`; }
+    });
+    if (cs && cs.mlabel) cs.mlabel.textContent = `Compás ${activeM + 1}`;
+  }
+  function setActive(m) {
+    const next = Number.isInteger(m) ? m : null;
+    if (next === activeM && systems.some((s) => s && s.svg.querySelector(".meas-band"))) return;
+    activeM = next; drawActive();
+  }
+
+  /* ---------------------------- errores: símbolo + nota fantasma ---------------------------- */
+  const stepLetters = (midi) => { const k = midiToKey(midi); const m = /^([a-g])(#?)\/(-?\d+)$/.exec(k || ""); return m ? { d: parseInt(m[3], 10) * 7 + LETTER[m[1]], sharp: !!m[2] } : null; };
+  function drawErrors() {
+    systems.forEach((s) => s && s.svg.querySelectorAll(".err-g").forEach((e) => e.remove()));
+    errs.forEach((e, i) => drawErr(i, e));
+  }
+  function drawErr(i, e) {
+    const infos = stepEls[i]; if (!infos || !infos.length) return;
+    const s = systems[infos[0].sys]; if (!s) return;
+    let anchor = null, ay = Infinity;
+    for (const n of infos) {
+      try { const ys = n.note.getYs(); const y = Math.min(...ys); if (y < ay) { ay = y; anchor = n; } } catch (er) { /* sin posición */ }
+    }
+    if (!anchor) return;
+    let ax; try { ax = anchor.note.getAbsoluteX(); } catch (er) { return; }
+    const u = s.u || 1 / (s.scale || 1), k = Math.max(1, Math.min(u, 1.6));
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", `err-g ${e.kind}${e.resolved ? " resolved" : ""}`);
+    g.dataset.step = i; g.dataset.measure = anchor.measure; g.dataset.kind = e.kind;
+    g.setAttribute("role", "img"); g.setAttribute("aria-label", `Compás ${anchor.measure + 1}: ${e.text}`);
+    const el = (tag, at, parent) => { const x = document.createElementNS(SVGNS, tag); for (const kk in at) x.setAttribute(kk, at[kk]); (parent || g).appendChild(x); return x; };
+    el("circle", { class: "err-hit", cx: ax + 24, cy: ay, r: 20 * k });
+    let shifted = false, ghostY = null;
+    // cabeza "fantasma" a la altura que tocó el usuario (sólo si entra razonablemente en el pentagrama de la nota esperada)
+    if (e.kind === "wrong" && Number.isInteger(e.played)) {
+      const pl = stepLetters(e.played);
+      let bottomY = anchor.hand === "rh" ? TOP_Y + 8 * SPACE : BOT_Y + 8 * SPACE;
+      try { bottomY = anchor.note.getStave().getYForLine(4); } catch (er) { /* constante */ }
+      const baseD = anchor.hand === "rh" ? 30 : 18;   // E4 / G2: línea de abajo
+      if (pl) {
+        const y = bottomY - (pl.d - baseD) * (SPACE / 2);
+        const near = Math.abs(y - ay) <= 9 * SPACE / 2;   // a lo sumo ~una octava de la nota esperada
+        const inStaff = pl.d >= baseD - 6 && pl.d <= baseD + 8 + 6;
+        if (inStaff && near) {
+          const dy = Math.abs(y - ay);
+          shifted = dy < SPACE * 0.7;
+          const cx = ax + 6 + (shifted ? 13 : 0);
+          const topLine = bottomY - 4 * SPACE;
+          for (let ly = topLine - SPACE; ly >= y - 2; ly -= SPACE) el("line", { class: "ghost-ledger", x1: cx - 9, x2: cx + 9, y1: ly, y2: ly });
+          for (let ly = bottomY + SPACE; ly <= y + 2; ly += SPACE) el("line", { class: "ghost-ledger", x1: cx - 9, x2: cx + 9, y1: ly, y2: ly });
+          ghostY = y; el("ellipse", { class: "ghost-note", cx, cy: y, rx: 7.4, ry: 5.3, transform: `rotate(-20 ${cx} ${y})` });
+          if (pl.sharp) { const t = el("text", { class: "ghost-acc", x: cx - 15, y: y + 5, "font-size": 15 }); t.textContent = "♯"; }
+        }
+      }
+    }
+    const bx = ax + 22 + (shifted ? 6 : 0), by = ay + (ghostY != null && ghostY < ay ? 14 : -14);
+    const sym = el("g", { class: "err-sym", transform: `translate(${bx} ${by}) scale(${k})` });
+    if (e.kind === "omit") { el("circle", { class: "err-ring", r: 7 }, sym); }
+    else { el("circle", { class: "err-disc", r: 8 }, sym); el("path", { class: "err-x", d: "M-3.4 -3.4L3.4 3.4M3.4 -3.4L-3.4 3.4" }, sym); }
+    s.svg.appendChild(g);
+  }
+  /** Marca un error junto a la nota esperada del paso: { kind: "wrong"|"omit", played?, expected[], text }. Queda hasta clearMarks(). */
+  function markError(i, info) {
+    if (!info) return;
+    errs.set(i, { kind: info.kind === "omit" ? "omit" : "wrong", played: Number.isInteger(info.played) ? info.played : null, expected: info.expected || [], text: String(info.text || ""), resolved: false });
+    drawErrors();
+  }
+  /** El usuario corrigió: la marca queda como historial discreto. */
+  function resolveError(i) { const e = errs.get(i); if (!e || e.resolved) return; e.resolved = true; drawErrors(); }
+  root.addEventListener("click", (ev) => {
+    const g = ev.target.closest && ev.target.closest(".err-g");
+    if (!g || !errCb) return;
+    ev.stopPropagation();
+    const i = +g.dataset.step, e = errs.get(i);
+    if (e) errCb({ step: i, measure: +g.dataset.measure, kind: e.kind, text: e.text });
+  }, true);
 
   function ensureRect(sysIdx) {
     const s = systems[sysIdx]; if (!s) return null;
@@ -625,6 +906,7 @@ export function createRenderer(container, opts = {}) {
   function applyCursor(i, animate) {
     stepEls.forEach((infos) => setCls(infos, "pc-cur", false));
     const infos = stepEls[i];
+    setActive(steps[i] ? steps[i].measure : null);
     if (cs) {
       if (!infos || !infos.length) { cs.cursorEl.hidden = true; return; }
       setCls(infos, "pc-cur", true);
@@ -639,18 +921,19 @@ export function createRenderer(container, opts = {}) {
     const xs = infos.map((n) => { try { return n.note.getAbsoluteX(); } catch (e) { return 0; } });
     const x = Math.min(...xs);
     if (r) { r.setAttribute("x", x - 12); r.setAttribute("width", Math.max(...xs) - x + 34); r.setAttribute("y", 26); r.setAttribute("height", systems[si].H - 34); }
-    if (animate !== false) scrollToSystem(si);
+    scrollToSystem(si, animate !== false);
   }
-  function scrollToSystem(si) {
+  function scrollToSystem(si, smooth = true) {
     const s = systems[si]; if (!s) return;
     const top = s.el.offsetTop, bottom = top + s.el.offsetHeight;
     const vt = container.scrollTop, vb = vt + container.clientHeight;
-    if (top < vt + 4 || bottom > vb - 4) container.scrollTo({ top: Math.max(0, top - 10), behavior: "smooth" });
+    if (top < vt + 4 || bottom > vb - 4) container.scrollTo({ top: Math.max(0, top - 10), behavior: smooth && !reduceMotion() ? "smooth" : "auto" });
   }
   function setCursor(i) {
     const prev = cursor;
     cursor = (i === null || i === undefined) ? -1 : i;
     if (cursor < 0) {
+      setActive(null);
       stepEls.forEach((infos) => setCls(infos, "pc-cur", false));
       if (cursorRect) { cursorRect.remove(); cursorRect = null; }
       if (cs) { cs.cursorEl.hidden = true; look = null; }
@@ -677,7 +960,7 @@ export function createRenderer(container, opts = {}) {
 
   // toque: nota más cercana al punto tocado
   root.addEventListener("click", (ev) => {
-    if (!tapCb) return;
+    if (!tapCb || annotating) return;
     const sysEl = ev.target.closest(".system"); if (!sysEl) return;
     const s = systems[+sysEl.dataset.sys]; if (!s) return;
     let p;
@@ -724,8 +1007,9 @@ export function createRenderer(container, opts = {}) {
   ro.observe(container);
 
   return {
-    draw, setCursor, follow, markStep, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook,
+    draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError: (i) => errs.has(i), onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag,
     onNoteTap(cb) { tapCb = cb; },
+    onBadgeTap(cb) { badgeCb = cb; },
     redraw,
     destroy() { ro.disconnect(); root.remove(); },
   };

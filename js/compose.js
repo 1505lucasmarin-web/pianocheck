@@ -3,15 +3,18 @@
 import { validateScore, durBeats } from './model.js';
 import { extractJson, mapHttpError, textFromResponse, OmrError, DEFAULT_MODELS } from './omr.js';
 
-export const LEVELS = ['principiante', 'intermedio', 'pro'];
-export const HANDS = ['melodia', 'dos-manos'];
+export const LEVELS = ['principiante', 'intermedio', 'pro'];                    // niveles fijos (siguen aceptándose)
+export const COMPOSE_LEVELS = ['auto', ...LEVELS];                              // 'auto' = la IA elige la complejidad según la pieza (valor por defecto)
+export const STYLES = ['auto', 'melodia', 'acompanamiento'];                    // 'auto' = lo más sencillo que suene a la pieza
+export const HANDS = ['melodia', 'dos-manos'];                                  // parámetro viejo; equivale a style melodia / acompanamiento
+const MAX_SOURCE_CHARS = 12000;                                                 // tope del texto de notas de la fuente que va al prompt
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
 /* ------------------------------------------------------------------ prompt */
 
-export const COMPOSE_SYSTEM_PROMPT = `You are a piano arranger. The user names a piece of music and you write a piano arrangement of it, from memory, as strict JSON for a practice app. Output ONLY one JSON object: no markdown fences, no commentary.
+export const COMPOSE_SYSTEM_PROMPT = `You are a piano arranger. The user names a piece of music and you write a piano arrangement of it, from memory (or from the source notes the user message supplies, if any), as strict JSON for a practice app. Output ONLY one JSON object: no markdown fences, no commentary.
 
 JSON schema:
 {
@@ -30,11 +33,16 @@ Rules:
 4. Every measure of each hand must add up EXACTLY to the time signature (4/4 = four quarter-note beats). Check each measure before answering. A whole-measure rest is a rest event as long as the measure.
 5. Length: write the main, recognizable section of the piece, about 16 to 32 measures, ending at a natural stopping point.
 6. Keep the pitches in a comfortable playing range for the hands.
-7. Level of the arrangement (the user message says which one):
+7. Complexity of the arrangement (the user message says which mode applies):
+ - auto (default): choose the complexity the piece itself asks for, looking at its register, melodic leaps, rhythm and harmony. Start from the SIMPLEST version that still sounds like the piece: keep the melody and its characteristic rhythm recognizable, in a comfortable key and register. Add a left hand, elaborate accompaniment patterns, harmonized chords, variations or embellishments ONLY when the identity of the piece depends on them (for example a piece defined by its arpeggiated or ostinato accompaniment) or when the user asks for them. Do not make it harder than necessary and do not pad it with decoration.
  - principiante: a single-note melody in the right hand, in a fixed or nearly fixed hand position, with quarter notes or longer (eighth notes only if essential); a key with 0 or 1 accidentals; the left hand plays one note or one fifth per measure (whole or half notes); slow tempo.
  - intermedio: the complete melody with its real rhythm; the left hand with broken chords or bass plus chord; some double notes (intervals) in the right hand; a comfortable key (up to 3 accidentals).
  - pro: a complete arrangement in the original key; the melody harmonized with chords or octaves in the right hand; a moving accompaniment (arpeggios, octave basses, leaps); sixteenth notes and syncopations when the piece has them; the original tempo.
-8. If the user asks for melody only, write only the melody in "rh" and leave "lh" as an empty array in every measure; the level still decides the rhythmic complexity and the key.
+8. Style (the user message says which one applies):
+ - melodia: write only the melody in "rh" and leave "lh" as an empty array in every measure; the level still decides the rhythmic complexity and the key.
+ - acompanamiento: melody in "rh" plus an accompaniment in "lh" (simple bass notes or block chords unless the level asks for more).
+ - auto: you decide, following the "auto" complexity rule above (a melody alone is a perfectly good answer when that is enough to recognize the piece).
+ If the user message includes SOURCE NOTES (the notes of an existing edition of this piece, as the same JSON measures), use them as the base: keep their pitches and rhythms for the melody and do NOT reinvent or "improve" it. You may only fix obvious errors, transpose to an easier key if the level or the auto rule calls for it, and add or remove the accompaniment according to the style.
 9. If you do not know the piece confidently enough, or you cannot write it, do not invent something else: answer with {"error": "<reason in Spanish>"} instead of a score.
 
 Example of the format (3/4, key of G, one measure): {"title":"Example","bpm":90,"timeSig":[3,4],"keySig":"G","measures":[{"rh":[{"k":["g/4"],"d":"q"},{"k":["b/4"],"d":"q"},{"k":["d/5"],"d":"q"}],"lh":[{"k":["g/2","d/3"],"d":"h","dots":1}]}]}
@@ -42,19 +50,42 @@ Example of the format (3/4, key of G, one measure): {"title":"Example","bpm":90,
 Reply with the JSON object only.`;
 
 const LEVEL_LINE = {
+  auto: 'Complexity: auto. Choose it from what the piece itself asks for (register, leaps, rhythm, harmony). Start with the simplest version that still sounds like the piece; keep the melody and its rhythm recognizable; add variations or an elaborate accompaniment only if the music justifies it or the user asked for them.',
   principiante: 'Level: principiante (single-note melody, fixed hand position, quarter notes or longer, 0-1 accidentals, one note or fifth per measure in the left hand, slow tempo).',
   intermedio: 'Level: intermedio (complete melody with its real rhythm, broken chords or bass plus chord in the left hand, some double notes in the right hand, up to 3 accidentals).',
   pro: 'Level: pro (complete arrangement in the original key, harmonized melody with chords or octaves, moving accompaniment, sixteenth notes and syncopations when the piece has them, original tempo).',
 };
 
-/** `artist` es opcional: si viene, se agrega una línea para identificar la pieza (no cambia el resto del prompt). */
-export function buildComposeUserPrompt(query, level, hands, artist) {
-  const lv = LEVEL_LINE[level] || LEVEL_LINE.principiante;
-  const hd = hands === 'melodia'
-    ? 'Hands: melody only (right hand; left hand empty). The level still sets the rhythmic complexity and the key.'
-    : 'Hands: both hands (melody in the right hand, accompaniment in the left hand).';
+const STYLE_LINE = {
+  auto: 'Style: auto. Melody in the right hand; write a left hand only if the piece needs it to sound like itself (otherwise leave "lh" empty); if you do, keep it simple unless the music asks for more.',
+  melodia: 'Hands: melody only (right hand; left hand empty). The level still sets the rhythmic complexity and the key.',
+  acompanamiento: 'Hands: both hands (melody in the right hand, accompaniment in the left hand).',
+};
+
+/** Resumen compacto de una partitura de origen para el prompt: tonalidad, compás, tempo y los compases en JSON. */
+export function describeSource(score) {
+  if (!score || !Array.isArray(score.measures) || !score.measures.length) return '';
+  const head = { title: score.title, bpm: score.bpm, timeSig: score.timeSig, keySig: score.keySig };
+  const ms = score.measures.map((m) => ({ rh: m.rh || [], lh: m.lh || [] }));
+  let n = ms.length;
+  let body = JSON.stringify(ms.slice(0, n));
+  while (body.length > MAX_SOURCE_CHARS && n > 1) { n = Math.max(1, Math.floor(n * 0.8)); body = JSON.stringify(ms.slice(0, n)); }
+  const cut = n < ms.length ? ` (only the first ${n} of ${ms.length} measures are shown)` : '';
+  return `SOURCE NOTES (existing edition of this piece${cut}): ${JSON.stringify(head)}\nmeasures: ${body}`;
+}
+
+/**
+ * `artist` es opcional: si viene, se agrega una línea para identificar la pieza.
+ * `level`: "auto" (valor por defecto) | "principiante" | "intermedio" | "pro".
+ * `hands` (parámetro viejo): "melodia" | "dos-manos"; `extra.style` ("auto"|"melodia"|"acompanamiento") tiene prioridad.
+ * `extra.sourceScore`: notas de una fuente (Score) para usar como base en vez de reinventar la melodía.
+ */
+export function buildComposeUserPrompt(query, level, hands, artist, extra = {}) {
+  const lv = LEVEL_LINE[level] || LEVEL_LINE.auto;
+  const style = STYLES.includes(extra && extra.style) ? extra.style : hands === 'melodia' ? 'melodia' : hands === 'dos-manos' ? 'acompanamiento' : 'auto';
   const who = artist && String(artist).trim() ? `\nArtist or performer (only to identify which piece it is): ${JSON.stringify(String(artist).trim())}` : '';
-  return `Piece requested by the user: ${JSON.stringify(String(query).trim())}${who}\n${lv}\n${hd}\nWrite the arrangement as the JSON object described in the instructions. Every measure must add up exactly to the time signature. JSON only.`;
+  const src = extra && extra.sourceScore ? describeSource(extra.sourceScore) : '';
+  return `Piece requested by the user: ${JSON.stringify(String(query).trim())}${who}\n${lv}\n${STYLE_LINE[style]}${src ? '\n' + src : ''}\nWrite the arrangement as the JSON object described in the instructions. Every measure must add up exactly to the time signature. JSON only.`;
 }
 
 /* ------------------------------------------------------------------ normalización */
@@ -118,8 +149,8 @@ const FAIL = 'La IA no pudo armar esta partitura';
 const SUGGEST = 'Probá con otra pieza o cargá una foto o un PDF de la partitura.';
 const composeFail = (reason) => new OmrError(`${FAIL}: ${String(reason || 'sin motivo').trim().replace(/[.\s]+$/, '')}. ${SUGGEST}`, 'compose');
 
-export function buildComposeRequest(provider, { apiKey, model, query, level, hands, artist }) {
-  const user = buildComposeUserPrompt(query, level, hands, artist);
+export function buildComposeRequest(provider, { apiKey, model, query, level, hands, artist, style, sourceScore }) {
+  const user = buildComposeUserPrompt(query, level, hands, artist, { style, sourceScore });
   if (provider === 'anthropic') {
     return {
       url: ANTHROPIC_URL,
@@ -164,13 +195,16 @@ async function callText(provider, opts, fetchImpl, signal) {
 
 /**
  * Arma una partitura a partir de un pedido en texto.
- * { query, artist?, sourceUrl?, level: "principiante"|"intermedio"|"pro", hands: "melodia"|"dos-manos", provider, apiKey, model, onProgress, signal, fetchImpl }
+ * { query, artist?, sourceUrl?, level?: "auto"(defecto)|"principiante"|"intermedio"|"pro", style?: "auto"(defecto)|"melodia"|"acompanamiento",
+ *   hands?: "melodia"|"dos-manos" (viejo; si no hay `style` se traduce), sourceScore?: Score (notas de una fuente para usar como base),
+ *   provider, apiKey, model, onProgress, signal, fetchImpl }
  * `artist` va al prompt para identificar la pieza; `sourceUrl` (http/https) sólo se guarda en la partitura ("Abrir original").
  */
 export async function composeScore(opts = {}) {
   const { query, provider = 'anthropic', apiKey, onProgress = () => {}, signal } = opts;
-  const level = LEVELS.includes(opts.level) ? opts.level : 'principiante';
-  const hands = HANDS.includes(opts.hands) ? opts.hands : 'dos-manos';
+  const level = COMPOSE_LEVELS.includes(opts.level) ? opts.level : 'auto';
+  const style = STYLES.includes(opts.style) ? opts.style : opts.hands === 'melodia' ? 'melodia' : opts.hands === 'dos-manos' ? 'acompanamiento' : 'auto';
+  const hands = HANDS.includes(opts.hands) ? opts.hands : undefined;
   const fetchImpl = opts.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   if (provider !== 'anthropic' && provider !== 'gemini') throw new OmrError('Proveedor de IA desconocido.', 'config');
   if (!query || !String(query).trim()) throw new OmrError('Escribí qué canción querés tocar.', 'config');
@@ -179,7 +213,7 @@ export async function composeScore(opts = {}) {
   const model = opts.model || DEFAULT_MODELS[provider];
 
   onProgress('Pensando el arreglo… puede tardar un minuto');
-  const text = await callText(provider, { apiKey: String(apiKey).trim(), model, query, level, hands, artist: opts.artist }, fetchImpl, signal);
+  const text = await callText(provider, { apiKey: String(apiKey).trim(), model, query, level, hands, artist: opts.artist, style, sourceScore: opts.sourceScore }, fetchImpl, signal);
   onProgress('Armando la partitura…');
   let parsed;
   try { parsed = extractJson(text); } catch (e) {
@@ -193,7 +227,7 @@ export async function composeScore(opts = {}) {
   if (!parsed || Array.isArray(parsed) || !Array.isArray(parsed.measures)) throw composeFail('no devolvió compases');
   const r = normalizeScore(parsed);
   if (!r.ok) throw composeFail('no encontró notas para tocar');
-  r.score.level = level;
+  if (level !== 'auto') r.score.level = level;                                 // en modo auto la partitura no queda marcada con un nivel fijo
   if (typeof opts.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(opts.sourceUrl.trim()) && opts.sourceUrl.trim().length <= 2000) r.score.sourceUrl = opts.sourceUrl.trim();
   if (!parsed.title || !String(parsed.title).trim()) r.score.title = String(query).trim().slice(0, 80);
   return r.score;

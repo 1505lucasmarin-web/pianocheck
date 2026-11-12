@@ -111,11 +111,13 @@ export function handsWithNotes(steps) {
 
 /* ---------- intentos equivalentes ---------- */
 
-/** Clave de equivalencia de un intento: mismo rango, misma mano, bucle o no. Sin rango = pieza entera (datos viejos). */
+/** Clave de equivalencia de un intento: mismo rango, misma mano, bucle o no y mismo modo ("A pulso" no se compara con "Te espero"). Sin rango = pieza entera (datos viejos). */
 export function attemptKey(att, n) {
   const r = att && att.range ? normRange(att.range, n) : null;
   const whole = isWholeRange(r, n);
-  return [whole ? "all" : `${r.from}-${r.to}`, (att && att.hands) || "both", att && att.loop ? "loop" : "once"].join("|");
+  const k = [whole ? "all" : `${r.from}-${r.to}`, (att && att.hands) || "both", att && att.loop ? "loop" : "once"];
+  if (att && att.mode === "pulso") k.push("pulso");   // los intentos viejos y los de "Te espero" conservan la clave de siempre
+  return k.join("|");
 }
 export const sameKind = (a, b, n) => attemptKey(a, n) === attemptKey(b, n);
 export const isComplete = (a) => !!a && (!a.status || a.status === "finished");

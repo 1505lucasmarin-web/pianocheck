@@ -126,3 +126,62 @@ test('artist: va al prompt sólo si viene; sourceUrl se guarda en la partitura',
   const s2 = await composeScore(base(anth(JSON.stringify(GOOD)), { sourceUrl: 'ftp://x' }));
   assert.equal(s2.sourceUrl, undefined);
 });
+
+/* ---- modo auto (nuevo valor por defecto), style y sourceScore ---- */
+import { describeSource, COMPOSE_LEVELS, STYLES } from '../js/compose.js';
+
+test('auto es el valor por defecto: prompt de complejidad automática y la partitura no queda con un nivel fijo', async () => {
+  let sent;
+  const s = await composeScore({ query: 'Para Elisa', provider: 'anthropic', apiKey: 'k', fetchImpl: async (u, init) => { sent = JSON.parse(init.body); return anth(JSON.stringify(GOOD))(); } });
+  assert.equal(s.level, undefined);
+  assert.match(sent.messages[0].content, /Complexity: auto/);
+  assert.match(sent.messages[0].content, /simplest version/);
+  assert.match(sent.messages[0].content, /Style: auto/);
+  assert.deepEqual(COMPOSE_LEVELS, ['auto', 'principiante', 'intermedio', 'pro']);
+  assert.deepEqual(STYLES, ['auto', 'melodia', 'acompanamiento']);
+  const bad = await composeScore({ query: 'x', level: 'experto', provider: 'anthropic', apiKey: 'k', fetchImpl: anth(JSON.stringify(GOOD)) });
+  assert.equal(bad.level, undefined);                 // nivel desconocido → auto
+});
+
+test('el prompt de sistema describe el modo auto y las notas de la fuente', () => {
+  assert.match(COMPOSE_SYSTEM_PROMPT, /auto \(default\)/);
+  assert.match(COMPOSE_SYSTEM_PROMPT, /SIMPLEST version/);
+  assert.match(COMPOSE_SYSTEM_PROMPT, /recognizable/);
+  assert.match(COMPOSE_SYSTEM_PROMPT, /ONLY when the identity of the piece depends on them/);
+  assert.match(COMPOSE_SYSTEM_PROMPT, /SOURCE NOTES/);
+  assert.match(COMPOSE_SYSTEM_PROMPT, /do NOT reinvent|do NOT reinvent or/);
+  for (const lv of ['principiante', 'intermedio', 'pro']) assert.match(COMPOSE_SYSTEM_PROMPT, new RegExp(` - ${lv}:`));
+  const a = buildComposeUserPrompt('x', 'auto', undefined);
+  assert.notEqual(a, buildComposeUserPrompt('x', 'pro', undefined));
+  assert.equal(buildComposeUserPrompt('x'), a);
+});
+
+test('style tiene prioridad sobre hands y hands viejo se traduce', () => {
+  assert.match(buildComposeUserPrompt('x', 'auto', 'dos-manos', '', { style: 'melodia' }), /melody only/);
+  assert.match(buildComposeUserPrompt('x', 'auto', undefined, '', { style: 'acompanamiento' }), /both hands/);
+  assert.match(buildComposeUserPrompt('x', 'pro', 'melodia'), /melody only/);
+  assert.match(buildComposeUserPrompt('x', 'pro', 'dos-manos'), /both hands/);
+});
+
+test('sourceScore va al prompt como notas de la fuente (y se recorta si es enorme)', async () => {
+  const src = { title: 'Oda', bpm: 90, timeSig: [4, 4], keySig: 'C', measures: [{ rh: [{ k: ['e/4'], d: 'q' }], lh: [] }] };
+  const p = buildComposeUserPrompt('Oda a la alegría', 'auto', undefined, '', { sourceScore: src });
+  assert.match(p, /SOURCE NOTES/);
+  assert.match(p, /"k":\["e\/4"\]/);
+  assert.equal(describeSource(null), '');
+  const big = { timeSig: [4, 4], keySig: 'C', measures: Array.from({ length: 2000 }, () => ({ rh: [{ k: ['c/4'], d: 'q' }, { k: ['d/4'], d: 'q' }, { k: ['e/4'], d: 'h' }], lh: [] })) };
+  const d = describeSource(big);
+  assert.ok(d.length < 13000);
+  assert.match(d, /only the first \d+ of 2000 measures/);
+  let sent;
+  await composeScore({ query: 'Oda', sourceScore: src, style: 'melodia', provider: 'anthropic', apiKey: 'k', fetchImpl: async (u, init) => { sent = JSON.parse(init.body); return anth(JSON.stringify(GOOD))(); } });
+  assert.match(sent.messages[0].content, /SOURCE NOTES/);
+  assert.match(sent.messages[0].content, /melody only/);
+});
+
+test('los tres niveles viejos siguen funcionando', async () => {
+  for (const lv of ['principiante', 'intermedio', 'pro']) {
+    const s = await composeScore(base(anth(JSON.stringify(GOOD)), { level: lv }));
+    assert.equal(s.level, lv);
+  }
+});

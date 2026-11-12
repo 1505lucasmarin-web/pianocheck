@@ -13,6 +13,7 @@ export function createMetronome() {
   let timer = null;
   let nextTime = 0;
   let beatIdx = 0;
+  let beatNo = 0;   // número de clic desde que arrancó (0, 1, 2…), para contar compases
   const listeners = new Set();
   const pending = new Set();
 
@@ -30,12 +31,19 @@ export function createMetronome() {
     osc.stop(time + 0.05);
   }
 
-  function emit(idx, time) {
+  /** Instante (en la escala de performance.now()) en que se OYE un clic programado a `time` del AudioContext. */
+  function perfOf(time) {
+    const lat = (ctx.outputLatency || ctx.baseLatency || 0);
+    return performance.now() + (time - ctx.currentTime + lat) * 1000;
+  }
+
+  function emit(idx, time, n) {
+    const info = { n, perf: perfOf(time) };
     const delay = Math.max(0, (time - ctx.currentTime) * 1000);
     const id = setTimeout(() => {
       pending.delete(id);
       if (!running) return;
-      listeners.forEach((cb) => { try { cb(idx); } catch (e) { /* ignorar */ } });
+      listeners.forEach((cb) => { try { cb(idx, info); } catch (e) { /* ignorar */ } });
     }, delay);
     pending.add(id);
   }
@@ -45,7 +53,7 @@ export function createMetronome() {
     while (nextTime < ctx.currentTime + SCHEDULE_AHEAD_S) {
       const idx = beatIdx % beats;
       click(nextTime, idx === 0);
-      emit(idx, nextTime);
+      emit(idx, nextTime, beatNo++);
       nextTime += 60 / bpm;
       beatIdx = (beatIdx + 1) % beats;
     }
@@ -59,7 +67,7 @@ export function createMetronome() {
       if (!ctx) ctx = new AC();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
       running = true;
-      beatIdx = 0;
+      beatIdx = 0; beatNo = 0;
       nextTime = ctx.currentTime + 0.05;
       tick();
       timer = setInterval(tick, LOOKAHEAD_MS);
@@ -83,7 +91,7 @@ export function createMetronome() {
     },
     get isRunning() { return running; },
     get bpm() { return bpm; },
-    /** cb(beatIndex) con beatIndex 0..beats-1 (0 = tiempo acentuado). Devuelve función para desuscribir. */
+    /** cb(beatIndex, { n, perf }) con beatIndex 0..beats-1 (0 = tiempo acentuado), n = clic desde el arranque y perf = instante audible (performance.now). Devuelve función para desuscribir. */
     onBeat(cb) {
       if (typeof cb !== 'function') return () => {};
       listeners.add(cb);

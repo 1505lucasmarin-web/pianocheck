@@ -9,10 +9,17 @@ import { createKeyboard, describeMove, nearestMissing, computeRange } from "./ke
 import { findPhrases, phraseAt, repeatNotice, measureRangeText } from "./phrases.js";
 import { phraseColor } from "./render.js";
 import { buildShareUrl, decodeCfg, extractToken, maskKey, PROVIDER_NAMES } from "./share.js";
-import { normRange, isWholeRange, rangeText, passageSteps, currentPair, hardestMeasures, coverage, measureSummary, harderHand, handsWithNotes, attemptKey, equivalentAttempts, bestEquivalent, nextAction, mergePractice, latestPractice } from "./passage.js";
+import { sameKind, normRange, isWholeRange, rangeText, passageSteps, currentPair, hardestMeasures, coverage, measureSummary, harderHand, handsWithNotes, attemptKey, equivalentAttempts, bestEquivalent, nextAction, mergePractice, latestPractice } from "./passage.js";
 import { buildEvents, createPlayer } from "./playback.js";
 import { createTheory } from "./teoria.js";
 import { parseMusicLink, resolveSong } from "./links.js";
+import { windowFor, DEFAULT_WINDOW, measureStarts, measureStates, createPulse, beatMs, normMode, TIMING_ES, devText, trendText, timingAction, MODE_NAMES } from "./timing.js";
+import { setDuration, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
+import { detectIssues, needsImportCheck } from "./issues.js";
+import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
+import { buildSummary } from "./summary.js";
+import { createAnnotateUI } from "./annotate-ui.js";
+import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 
 const MAX_STREAK = 5;
 const $ = (id) => document.getElementById(id);
@@ -34,7 +41,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {} };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -78,8 +85,10 @@ function show(name, push = true) {
   screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
   $("app").dataset.screen = name;
   if (prev === "practice" && name !== "practice") leavePractice();
+  if (prev === "review" && name !== "review") annoR.exit(true);
   if (prev === "settings" && name !== "settings") { hideShareQr(); stopScan(); }
   if (prev === "theory" && name !== "theory") leaveTheory();
+  if (prev === "result" && name !== "result") discardTake();
   if (push && name !== "library" && prev !== name) history.pushState({ s: name }, "", "");
   if (name === "library") refreshLibrary();
   if (name === "review") requestAnimationFrame(() => reviewR.redraw());
@@ -102,9 +111,30 @@ let prevBeforeSettings = "library";
 const reviewR = createRenderer($("review-score"), { mode: "page", lockMode: true });   // Revisión siempre por página
 const practiceR = createRenderer($("practice-score"));                               // Práctica: continua o por página (Ajustes)
 
+/* Anotar: marcas a mano ancladas al compás, una capa por pantalla (Práctica y Revisión); el ojo las oculta/muestra en las dos. */
+const annoPersist = { get: async (id) => (await lazy("store")).getAnnotations(id), save: async (id, d) => (await lazy("store")).saveAnnotations(id, d) };
+const annoHidden = { getHidden: () => !!settings.hideMarks, setHidden: (v) => { settings.hideMarks = !!v; store.saveSettings({ hideMarks: !!v }).catch(() => {}); annoP.refresh(); annoR.refresh(); } };
+const annoP = createAnnotateUI({ renderer: practiceR, host: $("practice-anno"), area: $("practice-area"), persist: annoPersist, toast, ...annoHidden, hint: "Dibujá sobre la partitura. Con dos dedos o con los botones de desplazamiento te movés. La evaluación queda en pausa mientras anotás.", onActive: (on, silent) => practiceAnnoMode(on, silent) });
+const annoR = createAnnotateUI({ renderer: reviewR, host: $("review-anno"), area: $("review-area"), persist: annoPersist, toast, ...annoHidden, onActive: (on) => { $("review-annotate").setAttribute("aria-pressed", String(on)); if (on) { editState && (editState.selected = null); updateEditUi(); } } });
+$("review-annotate").addEventListener("click", () => { if (annoR.isActive()) annoR.exit(); else annoR.enter(); });
+let annoPaused = false;
+function practiceAnnoMode(on, silent) {
+  $("btn-anno").setAttribute("aria-pressed", String(on)); $("practice-pause").disabled = on;
+  if (on) {
+    stopListening(true); closePSheet(true); hideStuck();
+    const live = isPulso() ? !!pulse : !!(session && session.state.status === "playing");
+    annoPaused = live && !paused;
+    if (annoPaused) setPaused(true);
+  } else if (annoPaused) { annoPaused = false; if (!silent) setPaused(false); }
+  if (!silent) refreshNext(); else $("practice-pause").disabled = false;
+}
+$("btn-anno").addEventListener("click", () => { if (annoP.isActive()) annoP.exit(); else annoP.enter(); });
+
 /* Aspecto de la partitura: vista, hoja (tema) y tamaño. Se guardan en los ajustes y se aplican al instante. */
 const LOOK_OPTS = { scoreView: ["continua", "pagina"], scoreTheme: ["hoja", "sepia", "oscuro"], scoreSize: ["chico", "mediano", "grande"] };
 function normalizeLook() { for (const k in LOOK_OPTS) if (!LOOK_OPTS[k].includes(settings[k])) settings[k] = DEFAULT_SETTINGS[k]; }
+function syncWinUi() { document.querySelectorAll("#set-win button").forEach((b) => { const on = +b.dataset.win === (settings.pulseWindow || DEFAULT_WINDOW); b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }); }
+$("set-win").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; settings.pulseWindow = +b.dataset.win; store.saveSettings({ pulseWindow: settings.pulseWindow }).catch(() => {}); syncWinUi(); });
 function syncLookUi() {
   const mark = (id, attr, val) => document.querySelectorAll(`#${id} button`).forEach((b) => { const on = b.dataset[attr] === val; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   mark("look-theme", "theme", settings.scoreTheme); mark("set-theme", "theme", settings.scoreTheme);
@@ -115,7 +145,7 @@ function applyLook() {
   normalizeLook();
   practiceR.setLook({ view: settings.scoreView === "pagina" ? "page" : "cont", theme: settings.scoreTheme, size: settings.scoreSize });
   reviewR.setLook({ theme: settings.scoreTheme, size: settings.scoreSize });
-  syncLookUi();
+  syncLookUi(); syncWinUi();
 }
 function setLookPref(patch) {
   settings = { ...settings, ...patch };
@@ -146,7 +176,7 @@ function cardHtml(s, demo, sum) {
   return `<li class="card" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${lvl}</div><div class="tags">${tags}</div>${res}
     <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("play", "sm")}Practicar</button>
     ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
-    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
+    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
 }
 let continueInfo = null;
 const id2score = (id, list) => (id === demoScore.id ? demoScore : (list || []).find((x) => x.id === id));
@@ -169,6 +199,11 @@ async function refreshLibrary() {
     $("continue-go").setAttribute("aria-label", `Continuar práctica de ${(sc && sc.title) || "la pieza"}: ${$("continue-sub").textContent}`);
   }
   refreshTheoryCard();
+  const tk = settings.tasks || {}, tIds = Object.keys(tk).filter((id) => list.some((x) => x.id === id)).sort((p, q) => (tk[q].at || 0) - (tk[p].at || 0));
+  const tHtml = [];
+  for (const id of tIds) tHtml.push(taskCardHtml(list.find((x) => x.id === id), tk[id], await store.attempts(id)));
+  $("tasks-section").hidden = !tHtml.length;
+  $("task-list").innerHTML = tHtml.join("");
   $("demo-list").innerHTML = cardHtml(demoScore, true, sums[demoScore.id]);
   $("library-list").innerHTML = list.map((s) => cardHtml(s, false, sums[s.id])).join("");
 }
@@ -189,9 +224,10 @@ async function onCardClick(e) {
     if (act === "practice") startPractice(await resolveScore(id));
     else if (act === "demokb") await startOnscreen(await resolveScore(id));
     else if (act === "edit") openReview(await resolveScore(id), false);
+    else if (act === "task") openTaskSheet(await resolveScore(id));
     else if (act === "del") {
       const name = card.querySelector(".t").textContent;
-      if (await confirmDialog({ title: "¿Eliminar esta partitura?", text: `«${name}» se borra de tu biblioteca junto con su historial de resultados. No se puede deshacer.`, yes: "Eliminar" })) { await store.del(id); refreshLibrary(); toast("Partitura eliminada"); }
+      if (await confirmDialog({ title: "¿Eliminar esta partitura?", text: `«${name}» se borra de tu biblioteca junto con su historial de resultados. No se puede deshacer.`, yes: "Eliminar" })) { await store.del(id); if (settings.tasks && settings.tasks[id]) { delete settings.tasks[id]; await saveTasks(); } refreshLibrary(); toast("Partitura eliminada"); }
     } else if (act === "adddemo") {
       await addDemo(); refreshLibrary(); toast("Agregada a tu biblioteca");
     }
@@ -364,6 +400,7 @@ async function runCompose({ query, artist = "", sourceUrl = "" } = {}) {
     const score = await cm.composeScore({ query, artist, sourceUrl, level: composeLevel, hands: composeHands, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (m) => alive() && busy.log(m), signal: ctl.signal });
     if (!alive()) return;
     score.id = score.id || newId();
+    score.origin = "ia";
     busy.close();
     $("compose-query").value = ""; resetLink();
     openReview(score, true, null, "Partitura armada por IA de memoria: puede tener diferencias con la original. Revisala antes de practicar.");
@@ -376,8 +413,10 @@ async function runCompose({ query, artist = "", sourceUrl = "" } = {}) {
 let composeAbort = null;
 $("compose-go").addEventListener("click", onComposeGo);
 
+const ORIGIN_OF = { photo: "foto", images: "imagenes", pdf: "pdf" };
 async function runImport(kind, files) {
   files = Array.from(files || []); if (!files.length) return;
+  if (kind === "task") { await runImportTask(files[0]); return; }
   lastImportKind = kind;
   const token = ++importToken;
   const alive = () => token === importToken;
@@ -413,6 +452,7 @@ async function runImport(kind, files) {
     const v = validateScore(score);
     if (!v.ok || !v.score.measures.length) { busy.error("No se pudo leer ninguna nota de la partitura. " + (v.errors || []).slice(0, 2).join(" ")); return; }
     v.score.id = v.score.id || newId();
+    if (ORIGIN_OF[kind]) v.score.origin = ORIGIN_OF[kind];   // foto / imágenes / PDF: se le buscan avisos de importación en Revisión
     busy.close();
     openReview(v.score, true, v.errors);
   } catch (err) {
@@ -421,72 +461,168 @@ async function runImport(kind, files) {
     busy.error(err && err.message ? err.message : String(err), /key|clave|401|403/i.test(String(err && err.message)));
   }
 }
-const importMap = { "imp-photo": ["file-photo", "photo"], "imp-images": ["file-images", "images"], "imp-pdf": ["file-pdf", "pdf"], "imp-xml": ["file-xml", "xml"], "imp-midi": ["file-midi", "midi"] };
+const importMap = { "imp-photo": ["file-photo", "photo"], "imp-images": ["file-images", "images"], "imp-pdf": ["file-pdf", "pdf"], "imp-xml": ["file-xml", "xml"], "imp-midi": ["file-midi", "midi"], "imp-task": ["file-task", "task"] };
 for (const [btn, [inp, kind]] of Object.entries(importMap)) {
   $(btn).addEventListener("click", () => { closeSheet(); $(inp).click(); });
   $(inp).addEventListener("change", (e) => { const f = e.target.files; runImport(kind, f); e.target.value = ""; });
 }
 
 /* ---------- revisión / edición ---------- */
+const DUR_NAME = { w: "redonda", h: "blanca", q: "negra", "8": "corchea", "16": "semicorchea", "32": "fusa" };
+const durText = (ev) => `${DUR_NAME[ev.d] || ev.d}${ev.dots ? " con puntillo" : ""}`;
+const tiemposText = (x) => { const r = Math.round(x * 100) / 100; return `${String(r).replace(".", ",")} ${r === 1 ? "tiempo" : "tiempos"}`; };
 function openReview(score, isNew, warnings, note) {
-  editState = { score: clone(score), selected: null, history: [], isNew };
+  editState = { score: clone(score), selected: null, hist: createHistory(60), isNew, warnings: warnings || [], tab: "pitch", issues: [], issueIdx: 0, cmMeasure: null };
   $("review-note").hidden = !note; $("review-note-t").textContent = note || "";
   $("review-title").value = score.title || "";
   $("review-bpm").value = score.bpm || 80;
+  $("cm-box").hidden = true;
   show("review");
-  reviewR.clearMarks(); reviewR.setCursor(null);
+  reviewR.clearMarks(); reviewR.setCursor(null); reviewR.setFocusMeasure(null);
   reviewR.draw(editState.score, []);
+  annoR.setScore(score.id, score.measures.length);
   refreshReviewPhrases();
-  updateEditUi();
-  if (warnings && warnings.length) toast("Aviso: " + warnings[0], 4500);
+  refreshReview();
+  if (editState.issues.length) requestAnimationFrame(() => gotoIssue(0, true));
+  else if (warnings && warnings.length) toast("Aviso: " + warnings[0], 4500);
 }
 function selNote() {
   const s = editState && editState.selected; if (!s) return null;
   const m = editState.score.measures[s.measure]; const ev = m && m[s.hand][s.idx];
   return ev && ev.k[s.keyIdx] ? { ev, key: ev.k[s.keyIdx] } : null;
 }
+/* avisos de importación + íconos sobre los compases */
+function computeIssues() {
+  if (!editState || !needsImportCheck(editState.score)) return [];
+  return detectIssues(editState.score, { warnings: editState.warnings });
+}
+function reviewBadges() {
+  const out = [];
+  const cm = editState.score.comments || {};
+  Object.keys(cm).forEach((k) => out.push({ measure: +k, type: "comment", label: `Comentario del compás ${+k + 1}: ${cm[k]}` }));
+  editState.issues.forEach((it, i) => { if (!it.reviewed) out.push({ measure: it.measure, type: "warn", current: i === editState.issueIdx, label: `Aviso: ${it.text}` }); });
+  return out;
+}
+function renderIssueBar() {
+  const list = editState.issues, bar = $("review-issues");
+  bar.hidden = !list.length;
+  if (!list.length) { reviewR.setFocusMeasure(null); return; }
+  const it = list[editState.issueIdx], pend = list.filter((x) => !x.reviewed).length;
+  $("is-count").textContent = `Aviso ${editState.issueIdx + 1} de ${list.length}${pend ? "" : " · todos revisados"}`;
+  $("is-text").textContent = it.text;
+  bar.classList.toggle("reviewed", it.reviewed);
+  $("is-done").setAttribute("aria-pressed", String(it.reviewed));
+  $("is-done-t").textContent = it.reviewed ? "Revisado (deshacer)" : "Marcar como revisado";
+  $("is-prev").disabled = $("is-next").disabled = list.length < 2;
+  reviewR.setFocusMeasure(it.measure);
+}
+function gotoIssue(i, first) {
+  const n = editState.issues.length; if (!n) return;
+  editState.issueIdx = ((i % n) + n) % n;
+  renderIssueBar();
+  reviewR.setBadges(reviewBadges());
+  reviewR.scrollToMeasure(editState.issues[editState.issueIdx].measure);
+  void first;
+}
+$("is-prev").addEventListener("click", () => gotoIssue(editState.issueIdx - 1));
+$("is-next").addEventListener("click", () => gotoIssue(editState.issueIdx + 1));
+$("is-done").addEventListener("click", () => {
+  const it = editState.issues[editState.issueIdx]; if (!it) return;
+  commit(setReviewed(editState.score, it.key, !it.reviewed), { keepSel: true });
+});
+/** Todo se recalcula después de cada cambio. */
+function refreshReview() {
+  editState.issues = computeIssues();
+  editState.issueIdx = Math.max(0, Math.min(editState.issueIdx, editState.issues.length - 1));
+  reviewR.setBadges(reviewBadges());
+  renderIssueBar();
+  updateEditUi();
+}
 function updateEditUi() {
-  const sel = selNote();
-  ["ed-up", "ed-down", "ed-oct-up", "ed-oct-down", "ed-del"].forEach((id) => ($(id).disabled = !sel));
-  $("ed-undo").disabled = !editState || !editState.history.length;
+  const sel = selNote(), has = !!sel;
+  $("ed-bar").hidden = !has;
+  $("ed-del").disabled = !has;
+  $("ed-comment").disabled = !has && editState.cmMeasure == null;
+  $("ed-undo").disabled = !editState.hist.canUndo; $("ed-redo").disabled = !editState.hist.canRedo;
+  document.querySelectorAll("#ed-tabs button").forEach((b) => { const on = b.dataset.tab === editState.tab; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  document.querySelectorAll("#ed-bar .ed-tools").forEach((t) => (t.hidden = t.dataset.tab !== editState.tab));
   if (sel) {
     const s = editState.selected, midi = keyToMidi(sel.key);
-    $("review-sel").innerHTML = `Seleccionada: <b>${midi == null ? sel.key : midiName(midi)}</b> — compás ${s.measure + 1}, ${HANDS_ES[s.hand]}`;
-  } else $("review-sel").textContent = "Tocá una nota de la partitura para corregirla.";
+    $("review-sel").innerHTML = `Seleccionada: <b>${midi == null ? sel.key : midiName(midi)}</b> — compás ${s.measure + 1}, ${HANDS_ES[s.hand]} · ${durText(sel.ev)}${sel.ev.f && sel.ev.f[s.keyIdx] ? ` · dedo ${sel.ev.f[s.keyIdx]}` : ""}`;
+    document.querySelectorAll("#ed-dur button").forEach((b) => { const on = b.dataset.d === sel.ev.d; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+    $("ed-dot").setAttribute("aria-pressed", String(!!sel.ev.dots));
+    const f = (sel.ev.f && sel.ev.f[s.keyIdx]) || 0;
+    document.querySelectorAll("#ed-fing button").forEach((b) => { const on = +b.dataset.f === f; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+    $("ed-hand-t").textContent = s.hand === "rh" ? "Pasar a la mano izquierda" : "Pasar a la mano derecha";
+    $("ins-chord").disabled = false;
+  } else $("review-sel").textContent = editState.score.measures.length ? "Tocá una nota de la partitura para corregirla." : "";
   reviewR.setSelected(sel ? editState.selected : null);
 }
-function applyEdit(fn) {
-  const sel = selNote(); if (!sel) return;
-  editState.history.push({ score: clone(editState.score), selected: { ...editState.selected } });
-  if (editState.history.length > 50) editState.history.shift();
-  fn(sel);
+/** Aplica el resultado de una operación de js/review.js: historial, selección, aviso si el compás se pasa. */
+function commit(r, { keepSel = false } = {}) {
+  if (!r || !r.ok) { toast((r && r.error) || "No se pudo hacer ese cambio.", 3800); return false; }
+  const m = editState.selected ? editState.selected.measure : null;
+  editState.hist.push({ score: editState.score, selected: editState.selected });
+  editState.score = r.score;
+  if (!keepSel) editState.selected = r.ref || null;
+  if (r.warn && r.warn.over && m != null) toast(`El compás ${m + 1} se pasa por ${tiemposText(r.warn.over)}. Acortá otra nota o sacá un silencio.`, 5200);
   redrawReview();
+  return true;
 }
 function redrawReview() {
   const st = $("review-score").scrollTop;
   reviewR.draw(editState.score, []);
+  annoR.prune(editState.score.measures.length);
   $("review-score").scrollTop = st;
   refreshReviewPhrases();
-  updateEditUi();
+  refreshReview();
 }
-function shift(semi) {
-  applyEdit(({ ev, key }) => {
-    const m = keyToMidi(key); if (m == null) return;
-    const nk = midiToKey(Math.max(21, Math.min(108, m + semi)));
-    const i = editState.selected.keyIdx;
-    if (!ev.k.some((k, j) => j !== i && k === nk)) ev.k[i] = nk;
-  });
-}
+const edSel = () => (selNote() ? editState.selected : null);
+const doEdit = (op, ...args) => { const ref = edSel(); if (!ref) return; commit(op(editState.score, ref, ...args)); };
 reviewR.onNoteTap((ref) => { if (!editState) return; editState.selected = ref; updateEditUi(); });
-$("ed-up").addEventListener("click", () => shift(1));
-$("ed-down").addEventListener("click", () => shift(-1));
-$("ed-oct-up").addEventListener("click", () => shift(12));
-$("ed-oct-down").addEventListener("click", () => shift(-12));
-$("ed-del").addEventListener("click", () => applyEdit(({ ev }) => { ev.k.splice(editState.selected.keyIdx, 1); editState.selected = null; }));
-$("ed-undo").addEventListener("click", () => {
-  const h = editState.history.pop(); if (!h) return;
-  editState.score = h.score; editState.selected = h.selected; redrawReview();
+reviewR.onBadgeTap(({ measure, type }) => {
+  if (!editState) return;
+  if (type === "comment") openCommentBox(measure);
+  else { const i = editState.issues.findIndex((x) => x.measure === measure && !x.reviewed); if (i >= 0) gotoIssue(i); }
 });
+$("ed-up").addEventListener("click", () => doEdit(shiftPitch, 1));
+$("ed-down").addEventListener("click", () => doEdit(shiftPitch, -1));
+$("ed-oct-up").addEventListener("click", () => doEdit(shiftPitch, 12));
+$("ed-oct-down").addEventListener("click", () => doEdit(shiftPitch, -12));
+$("ed-del").addEventListener("click", () => doEdit(deleteNote));
+$("ed-tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b || !editState) return; editState.tab = b.dataset.tab; updateEditUi(); });
+$("ed-dur").addEventListener("click", (e) => { const b = e.target.closest("button"); const s = selNote(); if (!b || !s) return; doEdit(setDuration, b.dataset.d, s.ev.dots || 0); });
+$("ed-dot").addEventListener("click", () => { const s = selNote(); if (s) doEdit(setDuration, s.ev.d, s.ev.dots ? 0 : 1); });
+$("ed-hand").addEventListener("click", () => doEdit(moveHand));
+$("ed-fing").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) doEdit(setFinger, +b.dataset.f); });
+$("ed-fing-0").addEventListener("click", () => doEdit(setFinger, 0));
+$("ins-before").addEventListener("click", () => doEdit(insertEvent, "before"));
+$("ins-after").addEventListener("click", () => doEdit(insertEvent, "after"));
+$("ins-chord").addEventListener("click", () => doEdit(insertEvent, "chord"));
+$("ins-rest-before").addEventListener("click", () => doEdit(insertEvent, "before", { rest: true }));
+$("ins-rest-after").addEventListener("click", () => doEdit(insertEvent, "after", { rest: true }));
+function undoRedo(kind) {
+  const cur = { score: editState.score, selected: editState.selected };
+  const h = kind === "undo" ? editState.hist.undo(cur) : editState.hist.redo(cur);
+  if (!h) return;
+  editState.score = h.score; editState.selected = h.selected; redrawReview();
+}
+$("ed-undo").addEventListener("click", () => undoRedo("undo"));
+$("ed-redo").addEventListener("click", () => undoRedo("redo"));
+/* comentarios por compás */
+function openCommentBox(m) {
+  editState.cmMeasure = m;
+  $("cm-label").textContent = `Comentario del compás ${m + 1}`;
+  $("cm-input").value = (editState.score.comments && editState.score.comments[m]) || "";
+  $("cm-box").hidden = false; $("cm-input").focus();
+  $("ed-comment").disabled = false;
+}
+function closeCommentBox() { $("cm-box").hidden = true; }
+$("ed-comment").addEventListener("click", () => { const s = edSel(); const m = s ? s.measure : editState.cmMeasure; if (m != null) openCommentBox(m); });
+const saveComment = (text) => { const m = editState.cmMeasure; if (m == null) return; if (commit(setComment(editState.score, m, text), { keepSel: true })) closeCommentBox(); };
+$("cm-save").addEventListener("click", () => saveComment($("cm-input").value));
+$("cm-del").addEventListener("click", () => saveComment(""));
+$("cm-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveComment($("cm-input").value); } });
 async function saveReview() {
   const sc = editState.score;
   sc.title = $("review-title").value.trim() || "Sin título";
@@ -499,10 +635,166 @@ async function saveReview() {
 }
 $("review-save").addEventListener("click", async () => { if (await saveReview()) { toast("Partitura guardada"); history.state && history.state.s ? history.back() : show("library", false); } });
 $("review-save-practice").addEventListener("click", async () => { const s = await saveReview(); if (s) startPractice(s); });
+$("review-task").addEventListener("click", () => { const v = validateScore(editState.score); if (!v.ok) { toast("Primero tiene que haber alguna nota."); return; } v.score.title = $("review-title").value.trim() || v.score.title; openTaskSheet(v.score, { bpm: parseInt($("review-bpm").value, 10) || v.score.bpm }); });
 $("review-back").addEventListener("click", async () => {
-  if (editState && (editState.history.length || editState.isNew) && !(await confirmDialog({ title: "¿Salir sin guardar?", text: "Los cambios que hiciste en esta partitura se pierden.", yes: "Salir sin guardar", no: "Seguir editando" }))) return;
+  if (editState && (editState.hist.canUndo || editState.isNew) && !(await confirmDialog({ title: "¿Salir sin guardar?", text: "Los cambios que hiciste en esta partitura se pierden.", yes: "Salir sin guardar", no: "Seguir editando" }))) return;
   goLibrary();
 });
+
+/* ---------- tareas para la clase ---------- */
+const taskTemplate = (t, n) => ({ range: t.from != null ? { from: t.from, to: t.to } : null, hands: t.hands || "both", loop: t.from != null, mode: t.mode || "espera", n });
+const nIntentos = (k) => `${k} ${k === 1 ? "intento" : "intentos"}`;
+function taskCardHtml(sc, t, atts) {
+  const n = (sc.measures || []).length, tpl = taskTemplate(t, n);
+  const eq = (atts || []).filter((a) => sameKind(a, tpl, n)).sort((p, q) => p.at - q.at);
+  const last = eq.length ? `Último: ${eq[eq.length - 1].accuracy}%${tpl.mode === "pulso" ? " a pulso" : ""} · ${nIntentos(eq.length)}` : "Todavía sin intentos";
+  const title = esc(sc.title || "Sin título");
+  return `<li class="card task-card" data-task="${esc(sc.id)}"><div class="card-top"><div><span class="task-k">Tarea</span><div class="t">${title}</div></div></div>
+    ${t.text ? `<p class="task-text">${esc(t.text)}</p>` : ""}
+    <div><div class="task-meta">${esc(describeTask(t, n))}</div><div class="task-meta">${esc(last)}</div></div>
+    <div class="row"><button class="btn primary grow" data-tact="start" aria-label="Empezar la tarea de ${title}">${ic("play", "sm")}Empezar</button>
+    <button class="btn" data-tact="share" aria-label="Compartir resumen de ${title}">${ic("share", "sm")}Compartir resumen</button>
+    <button class="btn icon danger" data-tact="del" aria-label="Quitar la tarea de ${title}">${ic("trash")}</button></div></li>`;
+}
+async function saveTasks() { await store.saveSettings({ tasks: settings.tasks }); }
+$("task-list").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-tact]"); if (!btn) return;
+  const id = btn.closest(".card").dataset.task, act = btn.dataset.tact;
+  try {
+    if (act === "start") await startTask(id);
+    else if (act === "share") await shareTaskSummary(id);
+    else if (act === "del" && await confirmDialog({ title: "¿Quitar esta tarea?", text: "Se saca de la lista de tareas. La partitura queda en tu biblioteca.", yes: "Quitar" })) {
+      delete settings.tasks[id]; await saveTasks(); refreshLibrary(); toast("Tarea quitada");
+    }
+  } catch (err) { toast("Error: " + err.message, 4000); }
+});
+async function startTask(id) {
+  const t = (settings.tasks || {})[id]; if (!t) throw new Error("No se encontró la tarea.");
+  const sc = await resolveScore(id);
+  $("toast").hidden = true;
+  startPractice(sc, { hands: t.hands, bpm: t.bpm, mode: t.mode, passage: t.from != null ? { from: t.from, to: t.to, loop: true } : null, task: t });
+}
+/** Resumen del último intento equivalente a la tarea. */
+async function shareTaskSummary(id) {
+  const t = (settings.tasks || {})[id]; if (!t) return;
+  const sc = await resolveScore(id), n = sc.measures.length, tpl = taskTemplate(t, n);
+  const atts = await store.attempts(id);
+  const eq = atts.filter((a) => sameKind(a, tpl, n));
+  if (!eq.length) { toast("Todavía no practicaste esta tarea. Tocá «Empezar».", 3600); return; }
+  await shareText(buildSummary({ title: sc.title, n, att: eq[eq.length - 1], attempts: atts, task: t }));
+}
+
+/* Crear tarea (desde Revisión o desde una tarjeta de la biblioteca) */
+let taskDraft = null, taskOpener = null;
+function taskAutoText() {
+  const d = taskDraft, whole = d.from === 0 && d.to === d.n - 1;
+  const parts = [whole ? "Pieza entera" : `Compases ${rangeText({ from: d.from, to: d.to })}`, d.hands === "rh" ? "mano derecha" : d.hands === "lh" ? "mano izquierda" : "ambas manos", `${d.bpm} BPM`];
+  return parts.join(", ") + "." + (d.mode === "pulso" ? " A pulso con el metrónomo." : "");
+}
+function syncTaskSheet() {
+  const d = taskDraft;
+  $("tk-from").textContent = d.from + 1; $("tk-to").textContent = d.to + 1; $("tk-bpm").textContent = d.bpm;
+  $("tk-from-dn").disabled = d.from <= 0; $("tk-from-up").disabled = d.from >= d.to;
+  $("tk-to-dn").disabled = d.to <= d.from; $("tk-to-up").disabled = d.to >= d.n - 1;
+  document.querySelectorAll("#tk-hands button").forEach((b) => { const on = b.dataset.hands === d.hands; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  document.querySelectorAll("#tk-mode button").forEach((b) => { const on = b.dataset.mode === d.mode; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  $("tk-count").textContent = `${$("tk-text").value.length} / ${MAX_TASK_TEXT}`;
+}
+function openTaskSheet(score, o = {}) {
+  const n = score.measures.length;
+  taskDraft = { score, n, from: 0, to: n - 1, hands: "both", bpm: o.bpm || score.bpm || 80, mode: "espera" };
+  taskOpener = document.activeElement;
+  $("task-piece").textContent = `${score.title || "Sin título"} · ${n} ${n === 1 ? "compás" : "compases"}`;
+  $("tk-text").value = "";
+  syncTaskSheet();
+  $("sheet-task").hidden = false; $("tk-text").focus();
+}
+function closeTaskSheet() { $("sheet-task").hidden = true; taskOpener && taskOpener.focus && taskOpener.focus(); taskDraft = null; }
+$("task-close").addEventListener("click", closeTaskSheet);
+$("sheet-task").addEventListener("click", (e) => { if (e.target === $("sheet-task")) closeTaskSheet(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet-task").hidden && $("confirm").hidden) closeTaskSheet(); });
+const moveTk = (k, d) => { const t = taskDraft; t[k] += d; if (t.from > t.to) { if (k === "from") t.from = t.to; else t.to = t.from; } t.from = Math.max(0, t.from); t.to = Math.min(t.n - 1, t.to); syncTaskSheet(); };
+$("tk-from-dn").addEventListener("click", () => moveTk("from", -1)); $("tk-from-up").addEventListener("click", () => moveTk("from", 1));
+$("tk-to-dn").addEventListener("click", () => moveTk("to", -1)); $("tk-to-up").addEventListener("click", () => moveTk("to", 1));
+$("tk-bpm-dn").addEventListener("click", () => { taskDraft.bpm = Math.max(30, taskDraft.bpm - 4); syncTaskSheet(); });
+$("tk-bpm-up").addEventListener("click", () => { taskDraft.bpm = Math.min(240, taskDraft.bpm + 4); syncTaskSheet(); });
+$("tk-hands").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { taskDraft.hands = b.dataset.hands; syncTaskSheet(); } });
+$("tk-mode").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { taskDraft.mode = b.dataset.mode; syncTaskSheet(); } });
+$("tk-text").addEventListener("input", syncTaskSheet);
+$("tk-auto").addEventListener("click", () => { const v = $("tk-text").value.trim(); $("tk-text").value = (taskAutoText() + (v ? " " + v : "")).slice(0, MAX_TASK_TEXT); syncTaskSheet(); });
+async function currentTaskFile() {
+  const d = taskDraft;
+  annoP.flush(); annoR.flush();
+  let annotations = null;
+  try { annotations = await annoPersist.get(d.score.id); } catch (e) { /* sin anotaciones */ }
+  const obj = buildTaskFile({ score: d.score, annotations, task: { from: d.from, to: d.to, hands: d.hands, bpm: d.bpm, mode: d.mode, text: $("tk-text").value } });
+  const text = serializeTask(obj);
+  return new File([text], taskFileName(d.score.title), { type: "application/json" });
+}
+$("task-share").addEventListener("click", async () => {
+  try {
+    const file = await currentTaskFile();
+    const r = await shareFile(file, { title: `Tarea: ${taskDraft.score.title || "PianoCheck"}`, text: "Tarea de PianoCheck. Abrila en la app: Nueva partitura → Importar → Tarea del profe." });
+    if (r === "downloaded") toast("Archivo guardado en Descargas. Mandalo por WhatsApp o mail.", 4200);
+  } catch (e) { toast("No se pudo armar la tarea: " + e.message, 4200); }
+});
+$("task-download").addEventListener("click", async () => { try { const f = await currentTaskFile(); downloadFile(f, f.name); toast("Archivo guardado en Descargas.", 3200); } catch (e) { toast("No se pudo armar la tarea: " + e.message, 4200); } });
+
+/* compartir / descargar archivos y texto */
+function downloadFile(file, name) {
+  const url = URL.createObjectURL(file), a = document.createElement("a");
+  a.href = url; a.download = name || file.name; a.rel = "noopener"; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+/** "shared" | "cancel" | "downloaded". Usa el menú de compartir del sistema (WhatsApp, mail…) si acepta archivos. */
+async function shareFile(file, { title, text } = {}) {
+  try {
+    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title, text }); return "shared"; }
+  } catch (e) { if (e && e.name === "AbortError") return "cancel"; }
+  downloadFile(file, file.name);
+  return "downloaded";
+}
+/** Comparte texto (y opcionalmente un archivo de audio). Sin menú del sistema: copia al portapapeles. */
+async function shareText(text, file) {
+  try {
+    if (navigator.share) {
+      const data = { title: "Resumen de práctica", text };
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) data.files = [file];
+      await navigator.share(data);
+      if (file && !data.files) downloadFile(file, file.name);
+      return;
+    }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  try { await navigator.clipboard.writeText(text); toast("Resumen copiado. Pegalo donde quieras.", 3600); }
+  catch (e) { window.prompt("Copiá el resumen:", text); }
+  if (file) downloadFile(file, file.name);
+}
+
+/* importar una tarea (.pianocheck) */
+async function runImportTask(file) {
+  lastImportKind = "task";
+  const token = ++importToken; const alive = () => token === importToken;
+  busy.open("Abriendo la tarea");
+  try {
+    if (file.size > MAX_TASK_BYTES) { busy.error("El archivo es demasiado grande para ser una tarea de PianoCheck."); return; }
+    const text = await file.text();
+    if (!alive()) return;
+    const r = parseTaskFile(text);
+    if (!r.ok) { busy.error(r.error); return; }
+    const saved = await store.save(r.score);
+    if (r.annotations) { try { await annoPersist.save(r.id, r.annotations); } catch (e) { /* sin anotaciones */ } }
+    settings.tasks = { ...(settings.tasks || {}), [r.id]: { ...r.task, at: Date.now() } };
+    const keys = Object.keys(settings.tasks).sort((p, q) => (settings.tasks[q].at || 0) - (settings.tasks[p].at || 0));
+    keys.slice(30).forEach((k) => delete settings.tasks[k]);
+    await saveTasks();
+    busy.close();
+    if (screen !== "library") show("library", false); else refreshLibrary();
+    toast(`Tarea recibida: «${saved.title}». Tocá «Empezar».`, 4200);
+  } catch (err) {
+    if (!alive()) return;
+    busy.error("No se pudo abrir el archivo: " + (err && err.message ? err.message : err));
+  }
+}
 
 /* ---------- ajustes ---------- */
 async function loadSettings() {
@@ -664,6 +956,15 @@ function scoreRange(sc) {
   for (const m of sc.measures || []) for (const h of ["rh", "lh"]) for (const ev of m[h] || []) for (const k of ev.k || []) { const x = keyToMidi(k); if (x != null) { lo = Math.min(lo, x); hi = Math.max(hi, x); } }
   return Number.isFinite(lo) ? computeRange(lo, hi) : computeRange(60, 71);
 }
+function stepFingers(step) {
+  const map = new Map();
+  for (const r of (step && step.refs) || []) {
+    const ev = current && current.measures[r.measure] && (current.measures[r.measure][r.hand] || [])[r.idx];
+    const m = ev && keyToMidi(ev.k[r.keyIdx]), f = ev && ev.f && ev.f[r.keyIdx];
+    if (m != null && f) map.set(m, f);
+  }
+  return map;
+}
 function stepHands(step) {
   const map = new Map();
   for (const r of (step && step.refs) || []) {
@@ -676,10 +977,10 @@ function stepHands(step) {
 /** Con Guía: ilumina el paso actual (las ya tocadas en verde). Sin Guía: no anticipa nada. */
 function syncKeyboard(focus = true) {
   const st = session && session.state;
-  const step = st && st.status === "playing" ? steps[st.index] : null;
+  const step = isPulso() ? (pulseRun ? steps[pulseRun.k] : null) : st && st.status === "playing" ? steps[st.index] : null;
   if (!step || settings.guide === false || listening) { if (!listening) kb.setTargets([]); return; }
-  const hm = stepHands(step);
-  kb.setTargets(step.midi.map((m) => ({ midi: m, hand: hm.get(m) || "rh", done: st.pressed.includes(m) })));
+  const hm = stepHands(step), fm = stepFingers(step), pressed = st && !isPulso() ? st.pressed : [];
+  kb.setTargets(step.midi.map((m) => ({ midi: m, hand: hm.get(m) || "rh", done: pressed.includes(m), finger: fm.get(m) || 0 })));
   if (focus) kb.focus(step.midi);
 }
 $("guide-toggle").addEventListener("click", () => {
@@ -779,9 +1080,8 @@ function hidePhraseNote() { clearTimeout(noteTimer); $("phrase-note").hidden = t
 $("phrase-note").addEventListener("click", hidePhraseNote);
 /** Al entrar a una frase nueva: resalta su letra y, si es repetición, avisa. */
 function trackPhrase() {
-  if (!session || !phrases.length) { practiceStruct.setCurrent(null); return; }
-  const st = session.state;
-  const step = steps[Math.min(st.index, steps.length - 1)];
+  if (!(session || pulseRun) || !phrases.length) { practiceStruct.setCurrent(null); return; }
+  const step = curStep();
   const p = step ? phraseAt(phrases, step.measure) : null;
   const id = p ? p.id : null;
   if (id === curPhrase) return;
@@ -804,7 +1104,7 @@ function openPSheet(name, opener) {
   Object.entries(SHEET_OPENERS).forEach(([k, id]) => $(id).setAttribute("aria-expanded", String(k === name)));
   $("th-pill").setAttribute("aria-expanded", String(name === "input" && screen === "theory"));
   if (name === "loop") initLoopSheet();
-  if (name === "tempo") { $("countin-toggle").checked = !!settings.countIn; syncMetroUi(); }
+  if (name === "tempo") { $("countin-toggle").checked = !!settings.countIn; syncModeUi(); }
   if (name === "input") syncInputSheet();
   if (name === "hands") syncHandsUi();
   $("ps-box").focus({ preventScroll: true });
@@ -869,8 +1169,11 @@ function syncMetroUi() {
 function setMetroBpm(n, silent) {
   metroBpm = Math.max(30, Math.min(240, Math.round(n))); metro.setBpm(metroBpm);
   $("bpm-val").textContent = metroBpm; $("tempo-t").textContent = `♩ ${metroBpm} BPM`;
-  $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto. Tocá para cambiarlo`);
-  if (!silent) rememberPractice();
+  $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${isPulso() ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
+  if (!silent) {
+    rememberPractice();
+    if (isPulso() && pulse && screen === "practice") { clearTimeout(pulseRestartT); pulseRestartT = setTimeout(() => { if (screen === "practice" && isPulso()) resetSession(); }, 600); }   // otro tempo = otra toma
+  }
 }
 $("bpm-down").addEventListener("click", () => setMetroBpm(metroBpm - 4));
 $("bpm-up").addEventListener("click", () => setMetroBpm(metroBpm + 4));
@@ -878,7 +1181,7 @@ $("metro-toggle").addEventListener("change", (e) => { if (e.target.checked) metr
 $("countin-toggle").addEventListener("change", (e) => { settings.countIn = e.target.checked; store.saveSettings({ countIn: settings.countIn }).catch(() => {}); });
 /** Cuenta de entrada: un compás de clics; mientras tanto se ignoran las notas. */
 function beginCountIn() {
-  if (!settings.countIn || !current || !session) return;
+  if (isPulso() || !settings.countIn || !current || !session) return;
   countWasOn = metro.isRunning;
   if (!metro.isRunning) { metro.start(); syncMetroUi(); }
   if (!metro.isRunning) return;   // sin audio: no se espera
@@ -894,7 +1197,7 @@ function endCountIn() {
 }
 
 const midi = createMidiInput({
-  onNoteOn: (m) => handleNoteOn(m),
+  onNoteOn: (m, vel, ts) => handleNoteOn(m, ts),
   onNoteOff: () => {},
   onStatus: (s) => {
     midiConnected = !!s.connected;
@@ -960,6 +1263,7 @@ async function startMic() {
     mic = m.createMicInput({ onNoteOn: (n) => { if (!midiConnected) handleNoteOn(n); }, onStatus: onMicStatus, getExpected: currentExpected, sensitivity: settings.micSensitivity });
   }
   mic.setSensitivity(settings.micSensitivity);
+  if (isPulso()) { toast("A pulso todavía no funciona con micrófono. Pasamos a «Te espero».", 4800); setMode("espera"); }
   await mic.start();
 }
 function stopMic() { if (mic) mic.stop(); }
@@ -990,7 +1294,10 @@ const isLoop = () => !!(passage && passage.loop);
 const N = () => (current && current.measures ? current.measures.length : 0);
 const handsText = () => (hands === "rh" ? "Mano derecha" : hands === "lh" ? "Mano izquierda" : "Ambas manos");
 
-function curStep() { const st = session && session.state; return st ? steps[Math.min(st.index, steps.length - 1)] : null; }
+function curStep() {
+  if (isPulso()) return pulseRun ? steps[Math.min(pulseRun.k, steps.length - 1)] || null : null;
+  const st = session && session.state; return st ? steps[Math.min(st.index, steps.length - 1)] : null;
+}
 function curMeasure() { const s = curStep(); return s ? s.measure : passage ? passage.from : 0; }
 
 function startPractice(score, o = {}) {
@@ -1005,13 +1312,20 @@ function startPractice(score, o = {}) {
   if (passage && !passage.loop && passage.from === 0) passage = null;
   document.querySelectorAll("#hands-seg button").forEach((b) => b.classList.toggle("on", b.dataset.hands === hands));
   $("practice-title").textContent = score.title || "Práctica";
+  let md = normMode(o.mode || (r && r.mode));
+  if (md === "pulso" && mic && mic.running) { toast("A pulso todavía no funciona con micrófono. Seguís en «Te espero».", 4800); md = "espera"; }
+  practiceMode = md;
+  activeTask = o.task || null; taskBannerOff = false;
   setMetroBpm(o.bpm || (r && r.bpm) || score.bpm || 80, true);
   metro.setBeats((score.timeSig || [4, 4])[0]);
   buildPips((score.timeSig || [4, 4])[0]);
   kb.setRange(...Object.values(scoreRange(score)));
   kbOpen = false; paused = false; listening = false; closePSheet(true);
-  session = null; // evita avisos de frases de la sesión anterior
+  session = null; pulse = null; pulseRun = null; // evita avisos de frases de la sesión anterior
+  practiceR.setBadges(commentBadges(score));
+  annoP.setScore(score.id, n);
   applyPhrases();
+  renderTaskBanner(); syncModeUi();
   if (screen !== "practice") show("practice");
   resetSession();
   syncKbFold(); updateConnectHint(); refreshInputPill(); syncMetroUi();
@@ -1020,7 +1334,9 @@ function startPractice(score, o = {}) {
 }
 function resetSession() {
   attemptSaved = false; kb.setHint(null); curPhrase = "-"; hidePhraseNote(); hideStuck(); missView = null;
-  clearTimeout(finishTimer); clearTimeout(lapTimer); stopListening(true); endCountIn(); setPaused(false, true);
+  clearTimeout(finishTimer); clearTimeout(lapTimer); stopPulse(); stopListening(true); endCountIn(); setPaused(false, true);
+  lastNoteMeasure = -1; hideMeasureNote(); pulseRun = null; pulse = null; session = null;
+  errLog = []; errDetail = null; clearTimeout(errDetailT);
   laps = []; agg = { clean: 0, dirty: 0, wrong: 0 }; trace = { clean: [], dirty: [], errors: [] }; handMiss = { rh: 0, lh: 0 };
   allSteps = buildSteps(current, hands);
   steps = passage ? passageSteps(allSteps, passage) : allSteps;
@@ -1029,8 +1345,9 @@ function resetSession() {
   practiceR.setRange(isLoop() ? passage : null);
   syncLoopButton(); renderLapLine();
   if (!steps.length) { session = null; refreshNext(); updatePracticeUi(); syncKeyboard(); return; }
+  if (isPulso()) { startPulseTake(); return; }
   newSession(true);
-  trackPhrase();
+  trackPhrase(); trackMeasureNote(steps[0].measure);
   beginCountIn();
 }
 /** Sesión nueva sobre los mismos pasos (arranque o nueva vuelta del bucle). */
@@ -1039,9 +1356,12 @@ function newSession(first) {
   missView = null;
   if (!first) practiceR.clearMarks();
   practiceR.setCursor(steps[0].i);
+  lastNoteMeasure = -1; trackMeasureNote(steps[0].measure);
   updatePracticeUi(); syncKeyboard(true); refreshNext();
 }
 function leavePractice() {
+  annoP.exit(true); annoPaused = false;
+  stopPulse(); hideMeasureNote();
   rememberPractice(true);
   metro.stop(); syncMetroUi(); releaseWake(); stopMic(); updateMicNote();
   clearTimeout(finishTimer); clearTimeout(lapTimer); hidePhraseNote(); stopListening(true); endCountIn(); closePSheet(true); hideStuck(); $("toast").hidden = true;
@@ -1051,12 +1371,186 @@ function leavePractice() {
 let saveMemT = 0;
 function rememberPractice(now) {
   if (!current || !current.id) return;
-  const entry = { from: passage ? passage.from : null, to: passage ? passage.to : null, loop: isLoop(), hands, bpm: metroBpm, measure: curMeasure(), at: Date.now() };
+  const entry = { from: passage ? passage.from : null, to: passage ? passage.to : null, loop: isLoop(), hands, bpm: metroBpm, mode: practiceMode, measure: curMeasure(), at: Date.now() };
   settings.lastPractice = mergePractice(settings.lastPractice, current.id, entry);
   clearTimeout(saveMemT);
   const save = () => store.saveSettings({ lastPractice: settings.lastPractice }).catch(() => {});
   if (now) save(); else saveMemT = setTimeout(save, 700);
 }
+
+/* ----- modo "A pulso": el cursor avanza solo al tempo y cada paso tiene su instante ideal ----- */
+let practiceMode = "espera";           // "espera" (Te espero) | "pulso" (A pulso)
+let pulse = null, pulseRun = null, pulseTimer = 0, pulseRestartT = 0, pulseInfo = null, markedLap = -1;
+const pulseWin = () => windowFor(metroBpm, settings.pulseWindow || DEFAULT_WINDOW);
+const isPulso = () => practiceMode === "pulso";
+metro.onBeat((i, info) => {   // la primera pulsación fija el instante de la toma: cuenta de entrada de un compás y arranca
+  if (!pulseRun || !info) return;
+  if (pulseRun.take0 == null && info.n === 0) pulseRun.take0 = info.perf + pulseRun.nBeats * beatMs(metroBpm);
+  if (pulseRun.phase === "count") { pulseRun.countN = Math.min(pulseRun.nBeats, info.n + 1); refreshNext(); }
+});
+const MODE_HINT = {
+  espera: "Aprendé las notas: la app espera a que toques cada una.",
+  pulso: "Tocá con el metrónomo: el cursor avanza solo y te marca si vas adelantado o atrasado.",
+};
+function syncModeUi() {
+  const p = isPulso();
+  document.querySelectorAll("#mode-seg button").forEach((b) => { const on = b.dataset.mode === practiceMode; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  $("mode-hint").textContent = MODE_HINT[practiceMode] + (mic && mic.running && !p ? " A pulso todavía no funciona con micrófono." : "");
+  $("btn-tempo").classList.toggle("pulso", p);
+  $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${p ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
+  $("metro-toggle").disabled = p; $("countin-toggle").disabled = p;
+  $("metro-toggle").closest(".switch").classList.toggle("locked", p); $("countin-toggle").closest(".switch").classList.toggle("locked", p);
+  $("countin-sub").textContent = p ? "En «A pulso» siempre hay un compás de cuenta antes de empezar." : "Un compás de clics antes de empezar (y al reiniciar o continuar).";
+  if (p) $("metro-toggle").checked = true;
+  $("countin-toggle").checked = p || !!settings.countIn;
+  $("practice-streak").hidden = p;
+  syncMetroUi();
+}
+function setMode(m) {
+  m = normMode(m);
+  if (m === "pulso" && mic && mic.running) { toast("A pulso todavía no funciona con micrófono. Seguís en «Te espero».", 4800); syncModeUi(); return false; }
+  if (m === practiceMode) { syncModeUi(); return true; }
+  practiceMode = m;
+  if (current && screen === "practice") { clearTimeout(finishTimer); closePSheet(true); resetSession(); rememberPractice(); }
+  syncModeUi();
+  return true;
+}
+$("mode-seg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setMode(b.dataset.mode); });
+function stopPulse() { clearInterval(pulseTimer); pulseTimer = 0; clearTimeout(pulseRestartT); pulseRestartT = 0; }
+function startPulseTake() {
+  stopPulse();
+  const ms = measureStarts(current);
+  const from = passage ? passage.from : 0, to = passage ? passage.to : N() - 1;
+  const origin = ms.starts[from] || 0, lapBeats = (to + 1 < ms.starts.length ? ms.starts[to + 1] : ms.total) - origin;
+  const nBeats = Math.max(1, Math.round(ms.barLen));
+  pulse = createPulse(steps, { bpm: metroBpm, win: pulseWin(), origin, lapBeats: lapBeats > 0 ? lapBeats : ms.barLen, loop: isLoop() });
+  pulseRun = { phase: "count", take0: null, nBeats, countN: 0, k: 0, lap: -1, laps: [] };
+  pulseInfo = null; markedLap = -1; missView = null;
+  metro.stop(); metro.setBpm(metroBpm); metro.setBeats(nBeats); metro.start();
+  if (!metro.isRunning) {
+    pulse = null; pulseRun = null; practiceMode = "espera"; syncModeUi();
+    toast("Este navegador no puede reproducir el metrónomo: seguís en «Te espero».", 4800);
+    resetSession(); return;
+  }
+  syncMetroUi();
+  practiceR.setCursor(steps[0].i);
+  pulseTimer = setInterval(pulseTick, 30);
+  trackPhrase(); lastNoteMeasure = -1; trackMeasureNote(steps[0].measure);
+  updatePracticeUi(); syncKeyboard(true); refreshNext();
+}
+function markPulse(entry, kind) {   // la partitura muestra la vuelta en curso: al empezar otra vuelta se limpian las marcas
+  if (entry.lap < markedLap) return;
+  if (entry.lap > markedLap) { practiceR.clearMarks(); markedLap = entry.lap; }
+  practiceR.markStep(entry.i, kind);
+}
+function pulseTick() {
+  if (!pulse || !pulseRun || screen !== "practice" || paused || listening || pulseRun.take0 == null) return;
+  const now = performance.now() - pulseRun.take0;
+  if (now < 0) return;
+  if (pulseRun.phase !== "play") { pulseRun.phase = "play"; refreshNext(); }
+  const lap = isLoop() ? Math.floor(now / pulse.lapMs) : 0;
+  let k = 0;
+  for (let q = 0; q < steps.length; q++) { if (pulse.idealAt(q, lap) <= now + 20) k = q; else break; }
+  if (lap !== pulseRun.lap || k !== pulseRun.k) {
+    pulseRun.lap = lap; pulseRun.k = k;
+    practiceR.setCursor(steps[k].i); practiceR.follow();
+    trackPhrase(); trackMeasureNote(steps[k].measure); syncKeyboard(true); updatePracticeUi(); refreshNext();
+  }
+  let changed = false;
+  for (const c of pulse.tick(now)) {
+    changed = true;
+    if (c.status !== "hit") {
+      markPulse(c.entry, "dirty");
+      if (c.status === "missed" && c.entry.lap >= markedLap) {
+        practiceR.setTag(c.entry.i, "omitida", "miss"); pulseInfo = { cls: "miss", sub: "Omitiste una nota" }; refreshNext();
+        pulseError(c.entry, "omit", null, `No tocaste nada · Se esperaba ${names(c.entry.midi)}`);
+      } else if (c.status === "wrong" && c.entry.lap >= markedLap && !practiceR.hasError(c.entry.i)) pulseError(c.entry, "wrong", null, `Faltaron notas · Se esperaba ${names(c.entry.midi)}`);
+    }
+    if (c.lapDone && isLoop()) pulseLapDone(c.entry.lap);
+  }
+  if (changed) updatePracticeUi();
+  if (pulse.finished) finishPulse();
+}
+/** Marca el error en el lugar donde ocurrió (✕ nota equivocada, ○ omitida) y lo anota para la lista. entry = { i, measure, midi, lap }. */
+function pulseError(entry, kind, played, text) {
+  if (entry.lap < markedLap) return;
+  markPulse(entry, "dirty");
+  practiceR.markError(entry.i, { kind, played, expected: entry.midi, text });
+  logError({ measure: entry.measure, kind, text });
+  announceError(text, entry.measure);
+}
+function pulseLapDone(lap) {
+  const r = pulse.lapResult(lap).summary;
+  pulseRun.laps.push({ clean: r.pctCorrect === 100 && r.pctOnTime === 100 && r.wrongNotes === 0, pct: r.pctCorrect });
+  laps = pulseRun.laps; renderLapLine();
+}
+function finishPulse() {
+  stopPulse(); metro.stop(); syncMetroUi();
+  clearTimeout(finishTimer); finishTimer = setTimeout(showResult, 500);
+}
+const FB_CLS = { ontime: "ontime", early: "early", late: "late" };
+function pulseNote(m, ts) {
+  if (!pulse || !pulseRun || pulseRun.take0 == null || paused || listening) return;
+  const r = pulse.noteOn(m, ts - pulseRun.take0);
+  if (r.kind === "ignored") return;
+  practiceR.follow();
+  if (r.kind === "hit") {
+    kb.flash(m, "ok");
+    if (r.done) {
+      const tm = r.meanTiming;
+      markPulse(r.entry, tm === "ontime" ? "clean" : tm);
+      practiceR.setTag(r.entry.i, TIMING_ES[tm], FB_CLS[tm]);
+      pulseInfo = { cls: FB_CLS[tm], sub: `${TIMING_ES[tm][0].toUpperCase()}${TIMING_ES[tm].slice(1)} ${devText(r.meanDev)}` };
+    }
+  } else {
+    kb.flash(m, "bad");
+    const where = r.entry || (steps[pulseRun.k] ? { ...steps[pulseRun.k], lap: Math.max(0, pulseRun.lap) } : null);   // nota suelta: se marca en el paso que estaba sonando
+    if (r.entry) { markPulse(r.entry, "dirty"); practiceR.setTag(r.entry.i, "otra nota", "miss"); }
+    if (where) pulseError(where, "wrong", m, errMsg(m, where.midi));
+    pulseInfo = { cls: "miss", sub: `Tocaste ${midiName(m)}` };
+  }
+  refreshNext(); updatePracticeUi();
+}
+function pulseNext() {
+  if (!pulseRun) { setNext("Sin notas", "No hay notas para esta selección de manos", "", ""); return; }
+  if (paused) { setNext("En pausa", "Tocá Continuar", "", "Al continuar empezamos de nuevo, con la cuenta"); return; }
+  if (pulseRun.phase === "count") { setNext("Cuenta de entrada", String(Math.max(1, pulseRun.countN || 1)), "", "Empezá en el primer tiempo fuerte"); return; }
+  const guide = settings.guide !== false, st = steps[pulseRun.k];
+  setNext("A pulso", guide && st ? names(st.midi) : "Seguí el pulso", pulseInfo ? pulseInfo.cls : "", pulseInfo ? pulseInfo.sub : "");
+}
+
+/* ----- comentarios por compás, en Práctica ----- */
+let lastNoteMeasure = -1, mNoteTimer = 0;
+function commentBadges(sc) {
+  return Object.keys((sc && sc.comments) || {}).map((k) => ({ measure: +k, type: "comment", label: `Comentario del compás ${+k + 1}: ${sc.comments[k]}` }));
+}
+function showMeasureNote(m, text) {
+  const n = $("measure-note");
+  n.innerHTML = `<b>Compás ${m + 1}</b><span>${esc(text)}</span>`; n.hidden = false;
+  clearTimeout(mNoteTimer); mNoteTimer = setTimeout(hideMeasureNote, 6000);
+}
+function hideMeasureNote() { clearTimeout(mNoteTimer); $("measure-note").hidden = true; }
+$("measure-note").addEventListener("click", hideMeasureNote);
+/** Al llegar a un compás con comentario, se muestra un momento. */
+function trackMeasureNote(m) {
+  if (m === lastNoteMeasure) return;
+  lastNoteMeasure = m;
+  const c = current && current.comments && current.comments[m];
+  if (c) showMeasureNote(m, c); else hideMeasureNote();
+}
+practiceR.onBadgeTap(({ measure, type }) => { if (type === "comment" && current && current.comments && current.comments[measure]) showMeasureNote(measure, current.comments[measure]); });
+
+/* ----- consigna de la tarea ----- */
+let activeTask = null, taskBannerOff = false;
+function renderTaskBanner() {
+  const t = activeTask;
+  $("task-banner").hidden = !t || taskBannerOff;
+  if (!t) return;
+  $("task-banner-h").textContent = "Tarea · " + describeTask(t, N());
+  $("task-banner-t").textContent = t.text || "";
+  $("task-banner-t").hidden = !t.text;
+}
+$("task-banner-x").addEventListener("click", () => { taskBannerOff = true; renderTaskBanner(); requestAnimationFrame(() => practiceR.redraw()); });
 
 /* ----- texto de "Próxima nota" ----- */
 const names = (arr) => (arr || []).map(midiName).join(" + ");
@@ -1066,6 +1560,26 @@ function expectedNow() {
   return step ? step.midi.filter((m) => !st.pressed.includes(m)) : [];
 }
 let nextOverride = null;   // { label, name } temporal (p. ej. "Vuelta 2 limpia")
+let errDetail = null, errDetailT = 0;   // detalle de una marca de error que se tocó: { kind, measure, text }
+let errLog = [];                          // errores de la toma (para la lista de Resultado)
+const errMsg = (played, expected) => `Tocaste ${played == null ? "otra nota" : midiName(played)} · Se esperaba ${names(expected)}`;
+/** Anuncia (aria-live polite) y muestra el detalle de un error. */
+function announceError(text, measure) {
+  const el = $("err-live"); el.textContent = "";
+  requestAnimationFrame(() => { el.textContent = `${text}. Compás ${measure + 1}.`; });
+}
+function logError(e) {
+  const l = errLog[errLog.length - 1];
+  if (l && l.measure === e.measure && l.text === e.text && l.kind === e.kind) return;
+  errLog.push(e);
+  if (errLog.length > 60) errLog.shift();
+}
+function showErrDetail(d) {
+  errDetail = d; clearTimeout(errDetailT);
+  errDetailT = setTimeout(() => { errDetail = null; refreshNext(); }, 6000);
+  announceError(d.text, d.measure); refreshNext();
+}
+practiceR.onErrorTap((d) => showErrDetail({ kind: d.kind, measure: d.measure, text: d.text }));
 function setNext(labelHtml, name, cls, sub) {
   const box = $("next-info");
   box.className = "next-info" + (cls ? " " + cls : "");
@@ -1075,17 +1589,16 @@ function setNext(labelHtml, name, cls, sub) {
 function refreshNext() {
   const guide = settings.guide !== false;
   if (listening) return;   // lo maneja la reproducción
+  if (annoP.isActive() && screen === "practice") { setNext("Anotando", "En pausa", "", "La evaluación sigue al tocar «Listo»"); return; }
+  if (errDetail) { setNext(`<span class="n-bad">${errDetail.kind === "omit" ? "○" : "✕"} Compás ${errDetail.measure + 1}</span>`, errDetail.text, "bad err", ""); return; }
+  if (isPulso()) { pulseNext(); return; }
   if (!session) { setNext("Sin notas", "No hay notas para esta selección de manos", "", ""); return; }
   const st = session.state;
   if (countingIn) { setNext("Cuenta de entrada", String(Math.max(1, countBeats + 1)), "", "Empezá cuando termine el compás"); return; }
   if (paused) { setNext("En pausa", "Tocá Continuar", "", ""); return; }
   if (nextOverride) { setNext(nextOverride.label, nextOverride.name, nextOverride.cls || "", nextOverride.sub); return; }
   if (st.status === "finished") { setNext("", "¡Terminaste!", "", ""); return; }
-  if (missView) {
-    if (guide) setNext(`<span class="n-bad">Tocaste ${esc(missView.played)}</span> · Próxima: `, missView.next, "bad", missView.sub);
-    else setNext(`<span class="n-bad">Tocaste ${esc(missView.played)}</span> · `, "Probá de nuevo", "bad", "");
-    return;
-  }
+  if (missView) { setNext(`<span class="n-bad">✕ Nota equivocada · compás ${missView.measure + 1}</span>`, missView.msg, "bad err", guide ? missView.sub : "Probá de nuevo"); return; }
   if (!guide) { setNext("Guía apagada", "Seguí la partitura", "", ""); return; }
   const exp = expectedNow();
   const partial = st.pressed.length > 0;
@@ -1098,6 +1611,7 @@ function setPaused(v, silent) {
   b.querySelector("use").setAttribute("href", paused ? "#i-play" : "#i-pause");
   $("pause-t").textContent = paused ? "Continuar" : "Pausar";
   if (silent) return;
+  if (isPulso()) { if (paused) { stopPulse(); metro.stop(); syncMetroUi(); refreshNext(); } else resetSession(); return; }   // A pulso: al continuar se arranca otra toma con cuenta
   if (paused) { countWasPaused = metro.isRunning; endCountIn(); metro.stop(); }
   else { if (countWasPaused) metro.start(); beginCountIn(); }
   syncMetroUi(); refreshNext();
@@ -1105,6 +1619,7 @@ function setPaused(v, silent) {
 let countWasPaused = false;
 $("practice-pause").addEventListener("click", () => {
   if (listening) { stopListening(); return; }
+  if (isPulso()) { if (pulse) setPaused(!paused); return; }
   if (!session || session.state.status !== "playing") return;
   setPaused(!paused);
 });
@@ -1117,6 +1632,12 @@ function updateHeader() {
   $("hands-link").setAttribute("aria-label", `${handsText()}, compás ${Math.min(n, m + 1)} de ${n}. Tocá para cambiar la mano, reiniciar o terminar`);
 }
 function updatePracticeUi() {
+  if (isPulso()) {
+    const total = steps.length, closed = pulse ? (isLoop() ? (pulseRun ? pulseRun.k + 1 : 0) : Math.min(pulse.closed, total)) : 0;
+    $("practice-progress-txt").textContent = `${closed} / ${total}`;
+    $("practice-progress").style.width = (total ? (closed / total) * 100 : 0) + "%";
+    updateHeader(); return;
+  }
   const st = session ? session.state : { index: 0, total: steps.length, streak: 0 };
   const sk = $("practice-streak");
   sk.setAttribute("aria-label", `Errores seguidos: ${st.streak} de ${MAX_STREAK}`);
@@ -1138,12 +1659,13 @@ function syncLoopButton() {
 }
 function renderLapLine() {
   const el = $("lap-line");
+  if (isPulso() && !isLoop()) { el.hidden = false; el.setAttribute("aria-label", `A pulso, margen más o menos ${pulseWin()} milisegundos`); el.innerHTML = `<b>A pulso</b><span>a tiempo = ±${pulseWin()} ms</span>`; return; }
   if (!isLoop()) { el.hidden = true; el.innerHTML = ""; return; }
   const chips = laps.slice(-6).map((l, i, arr) => { const no = laps.length - arr.length + i + 1; return `<span class="lap ${l.clean ? "clean" : "dirty"}" aria-label="Vuelta ${no}: ${l.clean ? "limpia" : "con errores"}">${l.clean ? "✓" : "✕"} ${no}</span>`; }).join("");
   const clean = laps.filter((l) => l.clean).length;
   el.hidden = false;
   el.setAttribute("aria-label", `Vuelta ${laps.length + 1}. ${laps.length ? `${clean} de ${laps.length} vueltas limpias` : "Todavía no completaste ninguna vuelta"}`);
-  el.innerHTML = `<b>Vuelta ${laps.length + 1}</b>${chips}`;
+  el.innerHTML = `<b>Vuelta ${laps.length + 1}</b>${chips}${isPulso() ? `<span>a tiempo = ±${pulseWin()} ms</span>` : ""}`;
 }
 let draft = null, listenHands = "both", listenSlow = false;
 function initLoopSheet() {
@@ -1230,6 +1752,7 @@ function startListening({ range, hands: hs, slow }) {
   const byStep = new Map();
   events.forEach((e) => { (byStep.get(e.step) || byStep.set(e.step, []).get(e.step)).push(e); });
   hideStuck(); setPaused(false, true); kb.setHint(null); missView = null;
+  if (isPulso()) { stopPulse(); metro.stop(); syncMetroUi(); }
   if (mic && mic.running) { micPaused = true; stopMic(); }
   listening = true; endCountIn();
   if (metro.isRunning) { metro.stop(); syncMetroUi(); }
@@ -1259,6 +1782,7 @@ function stopListening(silent) {
   if (s && session) practiceR.setCursor(s.i);
   kb.setTargets([]); syncKeyboard(true); refreshNext();
   if (sheetName === "loop" && !silent) syncLoopSheet();
+  if (isPulso() && !silent && screen === "practice") resetSession();   // A pulso: después de escuchar se vuelve a empezar la toma
 }
 
 /* ----- cambiar de mano / reiniciar / terminar ----- */
@@ -1273,6 +1797,12 @@ document.querySelectorAll("#hands-seg button").forEach((b) => b.addEventListener
 const doRestart = () => { clearTimeout(finishTimer); closePSheet(true); resetSession(); };
 const doStop = () => {
   clearTimeout(finishTimer); closePSheet(true); stopListening(true);
+  if (isPulso()) {
+    stopPulse(); metro.stop(); syncMetroUi();
+    if (pulse && pulseRun && pulseRun.take0 != null) pulse.tick(performance.now() - pulseRun.take0);
+    if (!pulse || (!pulse.events.length && !pulse.closed)) { goLibrary(); return; }
+    showResult(); return;
+  }
   const st = session && session.state;
   const idle = !st || (!laps.length && st.status === "playing" && st.cleanSteps + st.dirtySteps === 0 && st.wrongNotes === 0);
   if (idle) { goLibrary(); return; }
@@ -1284,8 +1814,10 @@ $("practice-stop").addEventListener("click", doStop); $("menu-stop").addEventLis
 $("practice-back").addEventListener("click", () => goLibrary());
 
 /* ----- entrada de notas ----- */
-function handleNoteOn(m) {
+function handleNoteOn(m, ts) {
   if (screen === "theory") { theory.noteOn(m); return; }
+  if (screen === "practice" && annoP.isActive()) return;   // anotando: la evaluación está en pausa
+  if (screen === "practice" && isPulso()) { const now = performance.now(); pulseNote(m, Number.isFinite(ts) && Math.abs(ts - now) < 2000 ? ts : now); return; }
   if (screen !== "practice" || !session || paused || listening || countingIn) return;
   const ev = session.noteOn(m);
   if (ev.type === "ignored") return;
@@ -1295,8 +1827,8 @@ function handleNoteOn(m) {
     case "partial": kb.setHint(null); kb.flash(m, "ok"); missView = null; syncKeyboard(false); break;
     case "step":
       kb.setHint(null); kb.flash(m, "ok"); missView = null; hideStuck();
-      practiceR.markStep(gi, ev.result); practiceR.setCursor(steps[session.state.index].i);
-      syncKeyboard(true); if (settings.guide === false) kb.focus([m]); trackPhrase(); rememberPractice(); break;
+      practiceR.markStep(gi, ev.result); practiceR.resolveError(gi); practiceR.setCursor(steps[session.state.index].i);
+      syncKeyboard(true); if (settings.guide === false) kb.focus([m]); trackPhrase(); trackMeasureNote(steps[session.state.index] ? steps[session.state.index].measure : steps[ev.step].measure); rememberPractice(); break;
     case "miss": case "stopped": {
       practiceR.markStep(gi, "dirty");
       const t = nearestMissing(m, ev.expected);
@@ -1305,14 +1837,18 @@ function handleNoteOn(m) {
       if (guide && t != null) kb.setHint({ fromMidi: m, toMidi: t });
       if (!guide) kb.focus([m]);
       const mv = t == null ? null : describeMove(m, t);
-      missView = { played: midiName(m), next: names(ev.expected), sub: guide && mv ? mv.text : "" };
+      const msg = errMsg(m, ev.expected), meas = steps[ev.step].measure;
+      missView = { played: midiName(m), next: names(ev.expected), sub: guide && mv ? mv.text : "", msg, measure: meas };
+      practiceR.markError(gi, { kind: "wrong", played: m, expected: ev.expected, text: msg });
+      logError({ measure: meas, kind: "wrong", text: msg });
+      announceError(msg, meas);
       const hm = stepHands(steps[ev.step]);
       new Set(ev.expected.map((x) => hm.get(x) || "rh")).forEach((h) => { handMiss[h]++; });
       if (isLoop() && ev.type === "miss" && ev.streak > MAX_STREAK) { session.resetStreak(); showStuck(); }
       break;
     }
     case "finished":
-      kb.setHint(null); kb.flash(m, "ok"); missView = null; practiceR.markStep(gi, ev.result); syncKeyboard(false);
+      kb.setHint(null); kb.flash(m, "ok"); missView = null; practiceR.markStep(gi, ev.result); practiceR.resolveError(gi); syncKeyboard(false);
       if (isLoop()) completeLap(); else { setNext("", "¡Terminaste!", "", ""); }
       break;
   }
@@ -1348,19 +1884,17 @@ function collectRun() {
   return { st, results, errors, clean, dirty, wrong, traversed, accuracy: traversed ? Math.round((clean / traversed) * 100) : 0, fin, done, status: fin ? "finished" : st.status };
 }
 async function showResult() {
+  if (isPulso()) { await showPulseResult(); return; }
   if (!session || screen !== "practice") return;
   const run = collectRun();
   const n = N(), range = passage && !isWholeRange(passage, n) ? { from: passage.from, to: passage.to } : null;
   const cov = coverage(steps, run.done);
-  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal };
-  let prev = [];
-  if (rec.scoreId && !attemptSaved) {
-    attemptSaved = true;
-    try { prev = await store.attempts(rec.scoreId); await store.addAttempt(rec); } catch (e) { console.warn("Historial:", e.message); }
-  }
+  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal, mode: "espera", weak: hardestMeasures(run.results, steps, run.errors).slice(0, 3).map((h) => ({ measure: h.measure, errors: h.errors })) };
+  const { prev, saved } = await saveAttempt(rec);
   if (screen !== "practice") return;
-  lastRun = { passage: passage ? { ...passage } : null, hands, bpm: metroBpm };
-  show("result");
+  lastRun = { passage: passage ? { ...passage } : null, hands, bpm: metroBpm, mode: "espera" };
+  show("result"); setResultMode("espera");
+  lastResult = { rec: saved, attempts: [...prev, saved], n, title: current && current.title };
   const fin = run.status === "finished", stp = run.st.status === "stopped" && !isLoop();
   const acc = run.accuracy, cls = acc >= 90 ? "good" : acc >= 60 ? "mid" : "low";
 
@@ -1376,27 +1910,16 @@ async function showResult() {
   $("res-acc-sub").textContent = `${run.clean} ${run.clean === 1 ? "paso limpio" : "pasos limpios"} de ${run.traversed} ${run.traversed === 1 ? "recorrido" : "recorridos"}`;
   $("res-cov").innerHTML = `${cov.measuresDone} de ${cov.measuresTotal}<small> ${cov.measuresTotal === 1 ? "compás" : "compases"}</small>`;
   $("res-prog-sub").textContent = isLoop() && laps.length ? `${run.traversed} pasos tocados en ${laps.length} ${laps.length === 1 ? "vuelta" : "vueltas"}` : `${run.done} de ${steps.length} pasos`;
-  const bar = (id, v) => { const e = $(id); e.style.transition = "none"; e.style.width = "0"; void e.offsetWidth; e.style.transition = ""; requestAnimationFrame(() => requestAnimationFrame(() => { e.style.width = v + "%"; })); };
+  const bar = animBar;
   bar("res-acc-bar", run.traversed ? acc : 0); bar("res-cov-bar", cov.measuresTotal ? (cov.measuresDone / cov.measuresTotal) * 100 : 0);
   $("res-cov-bar").parentNode.setAttribute("aria-hidden", "true");
   const sc = $("result-scope");
   sc.hidden = !range;
   if (range) sc.textContent = `${isLoop() ? "Bucle" : "Desde el compás " + (range.from + 1)}: compases ${rangeText(range)} de ${n} · ${handsText().toLowerCase()}`;
   $("res-clean").textContent = run.clean; $("res-dirty").textContent = run.dirty; $("res-wrong").textContent = run.wrong;
-  $("res-laps-box").hidden = !isLoop(); $("res-laps").textContent = laps.length; $("screen-result").style.setProperty("--cols", isLoop() ? 4 : 3);
+  $("res-laps").textContent = laps.length;
 
-  // comparación sólo con intentos equivalentes (mismo rango, mano y modo)
-  const eq = equivalentAttempts(prev, rec, n);
-  const bestPrev = bestEquivalent(prev, rec, n);
-  const record = fin && bestPrev !== null && acc > bestPrev;
-  const first = fin && eq.length === 0 && acc > 0;
-  $("result-badge").hidden = !(record || first);
-  $("result-badge-t").textContent = record ? "¡Nuevo récord!" : "Primer resultado guardado";
-  const cmp = $("result-compare");
-  const kind = [range ? `compases ${rangeText(range)}` : "pieza entera", handsText().toLowerCase(), isLoop() ? "en bucle" : ""].filter(Boolean).join(" · ");
-  cmp.hidden = !rec.scoreId || (!eq.length && !prev.length);
-  if (!cmp.hidden) cmp.textContent = bestPrev !== null ? (record ? `Superaste tu mejor intento anterior de este tipo (${bestPrev}%).` : acc === bestPrev && fin ? `Igualaste tu mejor intento de este tipo (${bestPrev}%).` : `Tu mejor intento completo de este tipo es ${bestPrev}%.`)
-    : eq.length ? "Todavía no completaste un intento de este tipo para compararlo." : `Es tu primer intento de este tipo (${kind}): no se compara con los anteriores.`;
+  renderCompare(rec, prev, fin, acc, range, n);
 
   // la UNA acción principal
   const act = nextAction({ stepResults: run.results, steps, stepErrors: run.errors, done: run.done, status: run.status, hands, bpm: metroBpm, measures: n, range, loop: isLoop() });
@@ -1409,23 +1932,166 @@ async function showResult() {
     btn.onclick = () => runAction(act);
   }
   resultMeasure = null; $("strip-offer").hidden = true;
+  renderErrList();
   renderStrip(measureSummary(run.results, steps, n), run.errors);
   $((act.type === "none" ? "result-retry" : "result-action-btn")).focus();
 }
 let resultMeasure = null;
+/** Lista de errores de la toma («Tocaste X · Se esperaba Y»), accesible con lector de pantalla. */
+function renderErrList() {
+  const box = $("res-errors"); box.hidden = !errLog.length; box.open = false;
+  $("res-errors-t").textContent = `Errores de esta toma (${errLog.length})`;
+  $("res-errors-list").innerHTML = errLog.map((e) => `<li><span class="sym" aria-hidden="true">${e.kind === "omit" ? "○" : "✕"}</span><b>Compás ${e.measure + 1}</b><span>${esc(e.text)}</span></li>`).join("");
+}
+/* ---------- Resultado: textos según el modo, comparación, resumen para el profe y toma de audio ---------- */
+let lastResult = null;   // { rec (intento guardado), attempts, n, title }
+function setResultMode(mode) {
+  const p = mode === "pulso";
+  $("res-acc-l").textContent = p ? "Notas correctas" : "Precisión";
+  $("res-cov-l").textContent = p ? "A tiempo" : "Avance";
+  $("st-l1").textContent = p ? "A tiempo" : "Pasos limpios";
+  $("st-l2").textContent = p ? "Adelantados" : "Pasos con error";
+  $("st-l3").textContent = p ? "Atrasados" : "Notas erradas";
+  $("st-l4").textContent = p ? "Omitidos" : "Vueltas";
+  $("legend-espera").hidden = p; $("legend-pulso").hidden = !p;
+  $("result-trend").hidden = true;
+  $("res-laps-box").hidden = !p && !isLoop();
+  $("screen-result").style.setProperty("--cols", (p || isLoop()) ? 4 : 3);
+  discardTake();
+  $("share-summary-t").textContent = "Compartir resumen";
+  $("rec-start").hidden = !recorderSupported();
+  $("rec-hint").hidden = !recorderSupported();
+}
+/** Insignia de récord + comparación con intentos equivalentes (mismo pasaje, mano, bucle y modo). */
+function renderCompare(rec, prev, fin, acc, range, n) {
+  const eq = equivalentAttempts(prev, rec, n);
+  const bestPrev = bestEquivalent(prev, rec, n);
+  const record = fin && bestPrev !== null && acc > bestPrev;
+  const first = fin && eq.length === 0 && acc > 0;
+  $("result-badge").hidden = !(record || first);
+  $("result-badge-t").textContent = record ? "¡Nuevo récord!" : "Primer resultado guardado";
+  const cmp = $("result-compare");
+  const kind = [range ? `compases ${rangeText(range)}` : "pieza entera", handsText().toLowerCase(), isLoop() ? "en bucle" : "", isPulso() ? "a pulso" : ""].filter(Boolean).join(" · ");
+  cmp.hidden = !rec.scoreId || (!eq.length && !prev.length);
+  if (!cmp.hidden) cmp.textContent = bestPrev !== null ? (record ? `Superaste tu mejor intento anterior de este tipo (${bestPrev}%).` : acc === bestPrev && fin ? `Igualaste tu mejor intento de este tipo (${bestPrev}%).` : `Tu mejor intento completo de este tipo es ${bestPrev}%.`)
+    : eq.length ? "Todavía no completaste un intento de este tipo para compararlo." : `Es tu primer intento de este tipo (${kind}): no se compara con los anteriores.`;
+}
+async function saveAttempt(rec) {
+  let prev = [], saved = rec;
+  if (rec.scoreId && !attemptSaved) {
+    attemptSaved = true;
+    try { prev = await store.attempts(rec.scoreId); saved = await store.addAttempt(rec); } catch (e) { console.warn("Historial:", e.message); }
+  }
+  return { prev, saved };
+}
+const animBar = (id, v) => { const e = $(id); e.style.transition = "none"; e.style.width = "0"; void e.offsetWidth; e.style.transition = ""; requestAnimationFrame(() => requestAnimationFrame(() => { e.style.width = v + "%"; })); };
+
+async function showPulseResult() {
+  if (!pulse || screen !== "practice") return;
+  stopPulse(); metro.stop(); syncMetroUi();
+  if (pulseRun && pulseRun.take0 != null) pulse.tick(performance.now() - pulseRun.take0);
+  const res = pulse.result(), sum = res.summary, n = N(), loop = isLoop();
+  const fin = loop ? res.laps > 0 : sum.total >= steps.length && steps.length > 0;
+  const range = passage && !isWholeRange(passage, n) ? { from: passage.from, to: passage.to } : null;
+  const cov = coverage(steps, loop ? (res.laps > 0 ? steps.length : sum.total) : sum.total);
+  const rec = {
+    scoreId: current && current.id, accuracy: sum.pctCorrect, status: fin ? "finished" : "playing", total: steps.length, index: Math.min(steps.length, sum.total),
+    clean: sum.ontime, dirty: sum.total - sum.ontime, wrong: sum.wrongNotes, hands, range, loop, bpm: metroBpm, laps: res.laps, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal,
+    mode: "pulso", onTimePct: sum.pctOnTime, trendMs: sum.trendMs, hits: sum.hit, omitted: sum.missed, winMs: sum.win, weak: sum.weak.map((w) => ({ measure: w.measure, errors: w.bad })),
+  };
+  const { prev, saved } = await saveAttempt(rec);
+  if (screen !== "practice") return;
+  lastRun = { passage: passage ? { ...passage } : null, hands, bpm: metroBpm, mode: "pulso" };
+  show("result"); setResultMode("pulso");
+  lastResult = { rec: saved, attempts: [...prev, saved], n, title: current && current.title };
+  const acc = sum.pctCorrect, cls = acc >= 90 ? "good" : acc >= 60 ? "mid" : "low";
+  $("result-head").textContent = loop ? (res.laps ? `${res.laps} ${res.laps === 1 ? "vuelta" : "vueltas"} a pulso` : "Bucle sin completar") : fin ? (sum.pctCorrect === 100 && sum.pctOnTime === 100 ? "¡Pulso perfecto!" : "¡Terminaste a pulso!") : "Toma terminada antes del final";
+  $("result-sub").textContent = sum.total === 0 ? "Todavía no se cerró ningún paso."
+    : sum.pctCorrect === 100 && sum.pctOnTime === 100 ? "Tocaste todo a tiempo con el metrónomo."
+    : sum.pctOnTime != null && sum.pctOnTime < 60 ? "Las notas están: ahora hay que ajustar el pulso." : "Seguí el metrónomo y se va afinando.";
+  $("res-acc").textContent = sum.total ? acc + "%" : "—"; $("res-acc").className = sum.total ? cls : "";
+  $("res-acc-sub").textContent = `${sum.hit} de ${sum.total} ${sum.total === 1 ? "paso" : "pasos"}${sum.missed ? ` · ${sum.missed} ${sum.missed === 1 ? "omitido" : "omitidos"}` : ""}${sum.wrongNotes ? ` · ${sum.wrongNotes} ${sum.wrongNotes === 1 ? "nota de más" : "notas de más"}` : ""}`;
+  $("res-cov").textContent = sum.pctOnTime == null ? "—" : sum.pctOnTime + "%"; $("res-cov").className = sum.pctOnTime == null ? "" : sum.pctOnTime >= 85 ? "good" : sum.pctOnTime >= 55 ? "mid" : "low";
+  $("res-prog-sub").textContent = `de los pasos correctos · margen ±${sum.win} ms`;
+  animBar("res-acc-bar", sum.total ? acc : 0); animBar("res-cov-bar", sum.pctOnTime || 0);
+  const tt = trendText(sum);
+  $("result-trend").hidden = !tt; $("result-trend").textContent = tt || "";
+  const sc = $("result-scope");
+  sc.hidden = !range;
+  if (range) sc.textContent = `${loop ? "Bucle" : "Desde el compás " + (range.from + 1)}: compases ${rangeText(range)} de ${n} · ${handsText().toLowerCase()}`;
+  $("res-clean").textContent = sum.ontime; $("res-dirty").textContent = sum.early; $("res-wrong").textContent = sum.late; $("res-laps").textContent = sum.missed + sum.wrong;
+  $("st-l4").textContent = sum.wrong ? "Omitidos o errados" : "Omitidos";
+  renderCompare(rec, prev, fin, acc, range, n);
+  const act = timingAction(sum, { bpm: metroBpm, measures: n });
+  const box = $("result-action"), btn = $("result-action-btn");
+  box.hidden = sum.total === 0;
+  $("result-retry").classList.toggle("primary", sum.total === 0);
+  $("result-retry-t").textContent = loop ? "Repetir el bucle" : "Reintentar";
+  if (sum.total) { $("result-action-t").textContent = act.title; btn.textContent = act.cta; btn.dataset.type = act.type; btn.onclick = () => runAction(act); }
+  resultMeasure = null; $("strip-offer").hidden = true;
+  renderErrList();
+  renderStrip(measureStates(res.scored, steps, n));
+  $((sum.total === 0 ? "result-retry" : "result-action-btn")).focus();
+}
+
+/* compartir resumen */
+$("share-summary").addEventListener("click", async () => {
+  if (!lastResult) return;
+  const { rec, attempts, n, title } = lastResult;
+  const text = buildSummary({ title, n, att: rec, attempts, task: activeTask });
+  let file = null;
+  if (takeBlob) file = new File([takeBlob.blob], `toma-${taskFileName(title).replace(/^Tarea-|\.pianocheck$/g, "")}.${extFor(takeBlob.mime)}`, { type: takeBlob.mime.split(";")[0] || "audio/webm" });
+  await shareText(text, file);
+});
+
+/* toma de audio voluntaria */
+let recorder = null, takeBlob = null, takeUrl = "";
+function showRec(state) {   // "idle" | "live" | "done"
+  $("rec-live").hidden = state !== "live"; $("rec-done").hidden = state !== "done";
+  $("rec-start").disabled = state === "live";
+  $("share-summary-t").textContent = state === "done" ? "Compartir resumen y toma" : "Compartir resumen";
+}
+function discardTake() {
+  if (recorder) { recorder.cancel(); recorder = null; }
+  if (takeUrl) { URL.revokeObjectURL(takeUrl); takeUrl = ""; }
+  takeBlob = null;
+  const a = $("rec-audio"); if (a) { a.pause(); a.removeAttribute("src"); a.load && a.load(); }
+  showRec("idle");
+}
+function takeFinished(out) {
+  recorder = null;
+  if (!out || !out.blob.size) { showRec("idle"); toast("No se grabó nada.", 3000); return; }
+  takeBlob = out; takeUrl = URL.createObjectURL(out.blob);
+  $("rec-audio").src = takeUrl;
+  showRec("done"); toast(`Toma de ${clock(out.ms)} lista para escuchar.`, 3200);
+}
+$("rec-start").addEventListener("click", async () => {
+  if (recorder) return;
+  if (!(await confirmDialog({ title: "¿Grabar una toma?", text: "Se usa el micrófono hasta 1 minuto. La grabación queda sólo en este dispositivo: se comparte o se descarga únicamente si vos lo decidís.", yes: "Grabar", no: "Ahora no", danger: false }))) return;
+  discardTake();
+  recorder = createRecorder({ maxMs: MAX_RECORD_MS, onTick: (ms) => { $("rec-time").textContent = `${clock(ms)} / ${clock(MAX_RECORD_MS)}`; }, onAutoStop: takeFinished });
+  try { await recorder.start(); }
+  catch (e) { recorder = null; showRec("idle"); toast(e && e.name === "NotAllowedError" ? "No hay permiso para usar el micrófono." : "No se pudo usar el micrófono: " + (e && e.message || e), 4600); return; }
+  $("rec-time").textContent = `0:00 / ${clock(MAX_RECORD_MS)}`; showRec("live"); $("rec-stop").focus();
+});
+$("rec-stop").addEventListener("click", async () => { if (recorder) takeFinished(await recorder.stop()); });
+$("rec-discard").addEventListener("click", () => { discardTake(); toast("Toma descartada.", 2200); });
+$("rec-save").addEventListener("click", () => { if (takeBlob) downloadFile(new File([takeBlob.blob], `toma.${extFor(takeBlob.mime)}`, { type: takeBlob.mime }), `toma.${extFor(takeBlob.mime)}`); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && recorder && recorder.recording) recorder.stop().then(takeFinished); });
+
 function renderStrip(sum, errors) {
   const el = $("measure-strip");
   el.innerHTML = sum.map((s, m) => {
-    const lbl = s === "clean" ? "limpio" : s === "dirty" ? "con error" : s === "none" ? "no tocado" : "sin notas";
-    const glyph = s === "clean" ? "✓" : s === "dirty" ? "✕" : s === "none" ? "·" : "–";
+    const lbl = s === "clean" ? (isPulso() ? "a tiempo" : "limpio") : s === "dirty" ? (isPulso() ? "errado u omitido" : "con error") : s === "off" ? "fuera de tiempo" : s === "none" ? "no tocado" : "sin notas";
+    const glyph = s === "clean" ? "✓" : s === "dirty" ? "✕" : s === "off" ? "≈" : s === "none" ? "·" : "–";
     return `<button class="ms ${s}" data-m="${m}" ${s === "empty" ? "disabled" : ""} aria-label="Compás ${m + 1}: ${lbl}${s === "empty" ? "" : ". Tocá para practicarlo"}"><span>${m + 1}</span><i aria-hidden="true">${glyph}</i></button>`;
   }).join("");
-  el.setAttribute("aria-label", `Resumen por compás: ${sum.filter((s) => s === "clean").length} limpios, ${sum.filter((s) => s === "dirty").length} con error, ${sum.filter((s) => s === "none").length} sin tocar`);
+  el.setAttribute("aria-label", `Resumen por compás: ${sum.filter((s) => s === "clean").length} limpios, ${sum.filter((s) => s === "dirty").length} con error, ${sum.filter((s) => s === "none").length} sin tocar${sum.some((s) => s === "off") ? `, ${sum.filter((s) => s === "off").length} fuera de tiempo` : ""}`);
 }
 $("measure-strip").addEventListener("click", (e) => {
   const b = e.target.closest(".ms"); if (!b || b.disabled) return;
   const m = +b.dataset.m; resultMeasure = m;
-  const st = b.classList.contains("dirty") ? "tuvo errores" : b.classList.contains("clean") ? "salió limpio" : "no lo tocaste completo";
+  const st = b.classList.contains("dirty") ? "tuvo errores" : b.classList.contains("clean") ? (isPulso() ? "salió a tiempo" : "salió limpio") : b.classList.contains("off") ? "salió fuera de tiempo" : "no lo tocaste completo";
   $("strip-offer-t").textContent = `Compás ${m + 1}: ${st}.`;
   $("strip-offer-go").textContent = `Practicar compás ${m + 1}`;
   $("strip-offer").hidden = false;
@@ -1434,10 +2100,11 @@ $("strip-offer-go").addEventListener("click", () => { if (resultMeasure != null)
 /** Vuelve a Práctica desde Resultado con otro pasaje / mano / tempo. */
 function returnToPractice(o = {}) {
   if (!current) return;
-  const base = lastRun || { passage: null, hands, bpm: metroBpm };
+  const base = lastRun || { passage: null, hands, bpm: metroBpm, mode: practiceMode };
+  practiceMode = normMode(base.mode || practiceMode);
   passage = "passage" in o ? (o.passage ? normalizePassage(o.passage) : null) : base.passage;
   hands = o.hands || base.hands || hands;
-  if (o.bpm) setMetroBpm(o.bpm);
+  if (o.bpm) setMetroBpm(o.bpm, true);
   show("practice", false); history.replaceState({ s: "practice" }, "");
   syncHandsUi(); resetSession(); rememberPractice(); requestWake();
 }
@@ -1447,7 +2114,7 @@ function runAction(act) {
   else if (act.type === "continue" && act.loop) returnToPractice();
   else if (act.type === "continue") returnToPractice({ passage: { from: act.measure, to: N() - 1, loop: false } });
   else if (act.type === "both-hands") returnToPractice({ hands: "both" });
-  else if (act.type === "faster") returnToPractice({ bpm: act.bpm });
+  else if (act.type === "faster" || act.type === "slower") returnToPractice({ bpm: act.bpm });
 }
 $("result-retry").addEventListener("click", () => returnToPractice());
 $("result-lib").addEventListener("click", () => { show("library", false); });
@@ -1462,3 +2129,22 @@ $("result-lib").addEventListener("click", () => { show("library", false); });
     navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW:", e.message));
   }
 })();
+
+/* Gancho de verificación: sólo existe con ?debug en la URL (no altera nada en uso normal). */
+if (new URLSearchParams(location.search).has("debug")) {
+  window.__pc = {
+    take0: () => (pulseRun ? pulseRun.take0 : null),
+    phase: () => (pulseRun ? pulseRun.phase : null),
+    inject: (m, rel) => pulseNote(m, pulseRun.take0 + rel),
+    handle: (m) => handleNoteOn(m, performance.now()),
+    state: () => ({ screen, mode: practiceMode, bpm: metroBpm, steps: steps.length, next: $("next-title") ? $("next-title").textContent : "" }),
+    show: (n) => show(n),
+    tap: (ref) => { if (editState) { editState.selected = ref; updateEditUi(); } },
+    review: () => (editState ? { score: editState.score, sel: editState.selected, issues: editState.issues, idx: editState.issueIdx } : null),
+    anno: () => ({ layout: practiceR.getLayout(), marks: annoP.store.marks(), active: annoP.isActive() }),
+    scroll: () => practiceR.scrollPos(),
+    pruneReview: (n) => annoR.prune(n),
+    annoReview: () => ({ layout: reviewR.getLayout(), marks: annoR.store.marks(), active: annoR.isActive() }),
+    practiceStep: () => (typeof curStep === "function" ? curStep() : null),
+  };
+}
