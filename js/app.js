@@ -13,6 +13,9 @@ import { sameKind, normRange, isWholeRange, rangeText, passageSteps, currentPair
 import { buildEvents, createPlayer } from "./playback.js";
 import { createTheory } from "./teoria.js";
 import { parseMusicLink, resolveSong } from "./links.js";
+import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from "./catalog.js";
+import { PIECES, getPieceScore } from "./pieces.js";
+import { analyzeScore, melodyOnly, addAccompaniment } from "./arrange.js";
 import { windowFor, DEFAULT_WINDOW, measureStarts, measureStates, createPulse, beatMs, normMode, TIMING_ES, devText, trendText, timingAction, MODE_NAMES } from "./timing.js";
 import { setDuration, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
 import { detectIssues, needsImportCheck } from "./issues.js";
@@ -41,7 +44,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -78,7 +81,7 @@ function confirmDialog({ title, text, yes = "Eliminar", no = "Cancelar", danger 
 }
 
 /* ---------- navegación ---------- */
-const screens = ["library", "review", "practice", "result", "settings", "theory"];
+const screens = ["library", "search", "review", "practice", "result", "settings", "theory"];
 function show(name, push = true) {
   const prev = screen;
   screen = name;
@@ -88,6 +91,8 @@ function show(name, push = true) {
   if (prev === "review" && name !== "review") annoR.exit(true);
   if (prev === "settings" && name !== "settings") { hideShareQr(); stopScan(); }
   if (prev === "theory" && name !== "theory") leaveTheory();
+  if (prev === "search" && name === "library" && srch && srch.ctl) srch.ctl.abort();
+  if (prev === "settings" && name === "search") resumeSearchAfterSettings();
   if (prev === "result" && name !== "result") discardTake();
   if (push && name !== "library" && prev !== name) history.pushState({ s: name }, "", "");
   if (name === "library") refreshLibrary();
@@ -103,6 +108,8 @@ window.addEventListener("popstate", () => {
   if (screen === "settings" && prevBeforeSettings && prevBeforeSettings !== "library") { show(prevBeforeSettings, false); return; }
   if (!$("busy").hidden) { cancelImport(); return; }
   if (!$("sheet-new").hidden) { closeSheet(); return; }
+  if (!$("sheet-arrange").hidden) { closeArrange(); return; }
+  if (history.state && history.state.s === "search" && srch) { show("search", false); refreshSearchLocal(); return; }
   show("library", false);
 });
 let prevBeforeSettings = "library";
@@ -167,8 +174,9 @@ function fmtDate(ts) {
 }
 function cardHtml(s, demo, sum) {
   const n = (s.measures || []).length;
-  const tags = s.measures ? [`${n} ${n === 1 ? "compás" : "compases"}`, `♩ ${s.bpm || 80}`, (s.timeSig || [4, 4]).join("/"), demo ? "" : fmtDate(s.updatedAt || s.createdAt)].filter(Boolean).map((t) => `<span class="tag">${esc(t)}</span>`).join("") : "";
-  const lvl = LEVEL_ES[s.level] ? `<span class="tag level">${LEVEL_ES[s.level]}</span>` : "";
+  const ver = s.derivedFrom ? `<span class="tag ver">Versión de «${esc(s.derivedFrom.title || "otra partitura")}»</span>` : "";
+  const tags = s.measures ? [`${n} ${n === 1 ? "compás" : "compases"}`, `♩ ${s.bpm || 80}`, (s.timeSig || [4, 4]).join("/"), demo ? "" : fmtDate(s.updatedAt || s.createdAt)].filter(Boolean).map((t) => `<span class="tag">${esc(t)}</span>`).join("") + ver : ver;
+  const lvl = LEVEL_ES[s.level] ? `<span class="tag level">${LEVEL_ES[s.level]}</span>` : "";   // sólo partituras viejas: las nuevas (modo auto) no llevan nivel
   const res = sum && sum.count
     ? `<div class="scores"><div class="sc best"><span>Mejor</span><b>${sum.best == null ? "—" : sum.best + "%"}</b></div><div class="sc"><span>Último</span><b>${sum.last}%</b></div></div><div class="mini" aria-hidden="true"><i style="width:${sum.best || 0}%"></i></div>`
     : `<div class="sc-none">Sin intentos todavía</div>`;
@@ -176,7 +184,7 @@ function cardHtml(s, demo, sum) {
   return `<li class="card" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${lvl}</div><div class="tags">${tags}</div>${res}
     <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("play", "sm")}Practicar</button>
     ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
-    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
+    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
 }
 let continueInfo = null;
 const id2score = (id, list) => (id === demoScore.id ? demoScore : (list || []).find((x) => x.id === id));
@@ -198,6 +206,7 @@ async function refreshLibrary() {
     $("continue-sub").textContent = [where, c.hands === "rh" ? "Mano derecha" : c.hands === "lh" ? "Mano izquierda" : "Ambas manos", c.bpm ? `♩ ${c.bpm}` : ""].filter(Boolean).join(" · ");
     $("continue-go").setAttribute("aria-label", `Continuar práctica de ${(sc && sc.title) || "la pieza"}: ${$("continue-sub").textContent}`);
   }
+  renderSearchCard();
   refreshTheoryCard();
   const tk = settings.tasks || {}, tIds = Object.keys(tk).filter((id) => list.some((x) => x.id === id)).sort((p, q) => (tk[q].at || 0) - (tk[p].at || 0));
   const tHtml = [];
@@ -225,6 +234,7 @@ async function onCardClick(e) {
     else if (act === "demokb") await startOnscreen(await resolveScore(id));
     else if (act === "edit") openReview(await resolveScore(id), false);
     else if (act === "task") openTaskSheet(await resolveScore(id));
+    else if (act === "arrange") openArrange(await resolveScore(id), "library");
     else if (act === "del") {
       const name = card.querySelector(".t").textContent;
       if (await confirmDialog({ title: "¿Eliminar esta partitura?", text: `«${name}» se borra de tu biblioteca junto con su historial de resultados. No se puede deshacer.`, yes: "Eliminar" })) { await store.del(id); if (settings.tasks && settings.tasks[id]) { delete settings.tasks[id]; await saveTasks(); } refreshLibrary(); toast("Partitura eliminada"); }
@@ -251,32 +261,40 @@ $("continue-go").addEventListener("click", async () => {
 });
 
 /* ---------- hoja "Nueva partitura" ---------- */
-const LEVEL_DESC = {
-  principiante: "Melodía de una nota en la derecha, notas largas y una nota o quinta en la izquierda. Tempo lento.",
-  intermedio: "Melodía completa con su ritmo y acompañamiento con acordes quebrados. Algunas notas dobles.",
-  pro: "Arreglo completo en la tonalidad original, con acordes u octavas y acompañamiento con movimiento.",
+// "Ajustar arreglo" (opcional): el nivel NO se elige; sólo se le puede pedir a la IA que deje la melodía, que agregue acompañamiento o, avanzado, algo más elaborado.
+const ARRANGE_MODES = {
+  auto: { level: "auto", style: "auto", name: "Automático", desc: "La IA elige la complejidad según lo que pide la pieza (registro, saltos, ritmo y armonía) y arranca de lo más sencillo que siga sonando a la canción." },
+  melodia: { level: "auto", style: "melodia", name: "Solo melodía", desc: "Sólo la mano derecha, con el ritmo de la canción." },
+  acomp: { level: "auto", style: "acompanamiento", name: "Agregar acompañamiento", desc: "La melodía en la derecha y un acompañamiento sencillo en la izquierda." },
+  elaborado: { level: "pro", style: "acompanamiento", name: "Más elaborado", desc: "Arreglo completo, con acordes y un acompañamiento con movimiento. Es más difícil de tocar." },
 };
-let composeLevel = "principiante", composeHands = "dos-manos", sheetOpener = null;
-function setComposeLevel(l) {
-  composeLevel = l;
-  document.querySelectorAll("#compose-level button").forEach((b) => b.classList.toggle("on", b.dataset.level === l));
-  $("compose-level-desc").textContent = LEVEL_DESC[l];
+let composeArrange = "auto", sheetOpener = null, importCtx = null;
+const arrangeSegHtml = () => Object.entries(ARRANGE_MODES).map(([k, m]) => `<button type="button" data-arrange="${k}" class="${k === composeArrange ? "on" : ""}" aria-pressed="${k === composeArrange}">${m.name}</button>`).join("");
+function setArrange(k) {
+  if (!ARRANGE_MODES[k]) return;
+  composeArrange = k;
+  document.querySelectorAll("#adjust-seg button").forEach((b) => { const on = b.dataset.arrange === k; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  $("adjust-now").textContent = ARRANGE_MODES[k].name; $("adjust-desc").textContent = ARRANGE_MODES[k].desc;
+  document.querySelectorAll("#search-body [data-arrange]").forEach((b) => { const on = b.dataset.arrange === k; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  const d = document.querySelector("#search-body .gen-desc"); if (d) d.textContent = ARRANGE_MODES[k].desc;
 }
-document.querySelectorAll("#compose-level button").forEach((b) => b.addEventListener("click", () => setComposeLevel(b.dataset.level)));
-document.querySelectorAll("#compose-hands button").forEach((b) => b.addEventListener("click", () => {
-  composeHands = b.dataset.hands;
-  document.querySelectorAll("#compose-hands button").forEach((x) => x.classList.toggle("on", x === b));
-}));
-setComposeLevel("principiante");
+$("adjust-seg").addEventListener("click", (e) => { const b = e.target.closest("button[data-arrange]"); if (b) setArrange(b.dataset.arrange); });
+setArrange("auto");
 function setSheetPath(p) {
   document.querySelectorAll("#sheet-paths button").forEach((b) => { const on = b.dataset.path === p; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   $("path-ai").hidden = p !== "ai"; $("path-import").hidden = p !== "import";
 }
 document.querySelectorAll("#sheet-paths button").forEach((b) => b.addEventListener("click", () => setSheetPath(b.dataset.path)));
+/** o.path "ai"|"import"; o.query texto inicial; o.importFor {title, artist, sourceUrl}: lo importado se guarda con esos datos. */
 function openSheet(o = {}) {
-  sheetOpener = document.activeElement; setSheetPath("ai");
+  sheetOpener = document.activeElement;
+  importCtx = o.importFor || null;
+  setSheetPath(o.path || "ai");
   if (typeof o.query === "string") { $("compose-query").value = o.query; }
-  $("sheet-new").hidden = false; $("compose-query").focus();
+  const c = $("import-ctx"); c.hidden = !importCtx;
+  if (importCtx) c.innerHTML = `Para <b>«${esc(importCtx.title)}»</b>${importCtx.artist ? ` de ${esc(importCtx.artist)}` : ""}. La partitura que importes conserva ese título, el artista y el enlace de la búsqueda.`;
+  $("sheet-new").hidden = false;
+  ($("path-import").hidden ? $("compose-query") : $("imp-pdf")).focus();
 }
 function closeSheet() { $("sheet-new").hidden = true; sheetOpener && sheetOpener.focus && screen === "library" && sheetOpener.focus(); }
 $("btn-new").addEventListener("click", () => openSheet());
@@ -285,6 +303,7 @@ $("sheet-close").addEventListener("click", closeSheet);
 $("sheet-new").addEventListener("click", (e) => { if (e.target === $("sheet-new")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet-new").hidden && $("confirm").hidden && $("busy").hidden) closeSheet(); });
 $("compose-query").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("compose-go").click(); } });
+$("compose-artist").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("compose-go").click(); } });
 
 /* ---------- pedir una canción con enlace ---------- */
 // El enlace sólo sirve para saber qué canción es: no se descarga ni se escucha audio.
@@ -296,6 +315,7 @@ function renderLink() {
   $("link-confirm").hidden = !(link && link.phase === "confirm");
   const w = $("link-warn"); w.hidden = !(link && link.phase === "album"); w.textContent = link && link.phase === "album" ? "Ese enlace es de un álbum o lista: pegá el de una canción puntual." : "";
   $("compose-go").disabled = !!link && (link.phase === "busy" || link.phase === "album");
+  $("compose-artist-wrap").hidden = !!link;
 }
 function resetLink() { if (linkCtl) { linkCtl.abort(); linkCtl = null; } link = null; renderLink(); }
 function showConfirm(title, artist, msg, focus) {
@@ -346,14 +366,16 @@ $("compose-paste").addEventListener("click", async () => {
 });
 async function onComposeGo() {
   const raw = $("compose-query").value.trim();
-  if (!raw) { toast("Escribí qué canción querés tocar o pegá un enlace."); $("compose-query").focus(); return; }
+  if (!raw) { toast("Escribí el título de una canción o pegá un enlace."); $("compose-query").focus(); return; }
   const parsed = parseMusicLink(raw);
-  if (!parsed) { runCompose({ query: raw }); return; }
+  if (!parsed) { const artist = $("compose-artist").value.trim(); closeSheet(); $("compose-query").value = ""; $("compose-artist").value = ""; openSearch({ title: raw, artist }); return; }
   if (!link || link.url !== parsed.url) { startResolve(raw); return; }   // primero confirmar qué canción es
   if (link.phase !== "confirm") return;
   const title = $("link-title").value.trim();
   if (!title) { toast("Escribí el título de la canción."); $("link-title").focus(); return; }
-  runCompose({ query: title, artist: $("link-artist").value.trim(), sourceUrl: parsed.url });
+  const artist = $("link-artist").value.trim();
+  closeSheet(); $("compose-query").value = ""; resetLink();
+  openSearch({ title, artist, sourceUrl: parsed.url });
 }
 /** Compartir desde otras apps (Android, share_target GET): ?title=…&text=…&url=… abre "Pedir una canción" con el enlace. */
 function handleIncomingShare() {
@@ -380,43 +402,18 @@ const busy = { open(title) { $("busy-title").textContent = title; $("busy-log").
   close() { $("busy").hidden = true; } };
 let lastImportKind = "";
 function cancelImport() { if (composeAbort) { try { composeAbort.abort(); } catch (e) { /* nada */ } }
-  const reopen = lastImportKind === "compose" && !$("busy-err").hidden; importToken++; busy.close(); if (reopen && screen === "library") openSheet(); }
+  importToken++; busy.close(); }
 $("busy-close").addEventListener("click", cancelImport);
 $("busy-settings").addEventListener("click", () => { cancelImport(); openSettings(); });
 
-async function runCompose({ query, artist = "", sourceUrl = "" } = {}) {
-  query = String(query || "").trim();
-  if (!query) { toast("Escribí qué canción querés tocar."); $("compose-query").focus(); return; }
-  lastImportKind = "compose";
-  const token = ++importToken; const alive = () => token === importToken;
-  closeSheet();
-  busy.open("Armando la partitura");
-  if (!settings.apiKey) { busy.error("Falta la API key. Cargala en Ajustes para pedir canciones a la IA.", true); return; }
-  if (!navigator.onLine) { busy.error("Sin conexión a internet: pedir una canción la necesita."); return; }
-  const ctl = new AbortController(); composeAbort = ctl;
-  try {
-    const cm = await lazy("compose"), omr = await lazy("omr");
-    const prov = settings.provider || "anthropic";
-    const score = await cm.composeScore({ query, artist, sourceUrl, level: composeLevel, hands: composeHands, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (m) => alive() && busy.log(m), signal: ctl.signal });
-    if (!alive()) return;
-    score.id = score.id || newId();
-    score.origin = "ia";
-    busy.close();
-    $("compose-query").value = ""; resetLink();
-    openReview(score, true, null, "Partitura armada por IA de memoria: puede tener diferencias con la original. Revisala antes de practicar.");
-  } catch (err) {
-    if (!alive()) return;
-    if (!(err && err.name === "OmrError")) console.error(err);
-    busy.error(err && err.message ? err.message : String(err), !!err && err.kind === "auth");
-  } finally { composeAbort = null; }
-}
 let composeAbort = null;
 $("compose-go").addEventListener("click", onComposeGo);
 
 const ORIGIN_OF = { photo: "foto", images: "imagenes", pdf: "pdf" };
-async function runImport(kind, files) {
+async function runImport(kind, files, ctxOverride) {
   files = Array.from(files || []); if (!files.length) return;
   if (kind === "task") { await runImportTask(files[0]); return; }
+  const ctx = ctxOverride || importCtx; importCtx = null;   // datos de la búsqueda que originó la importación (título, artista, enlace)
   lastImportKind = kind;
   const token = ++importToken;
   const alive = () => token === importToken;
@@ -453,8 +450,14 @@ async function runImport(kind, files) {
     if (!v.ok || !v.score.measures.length) { busy.error("No se pudo leer ninguna nota de la partitura. " + (v.errors || []).slice(0, 2).join(" ")); return; }
     v.score.id = v.score.id || newId();
     if (ORIGIN_OF[kind]) v.score.origin = ORIGIN_OF[kind];   // foto / imágenes / PDF: se le buscan avisos de importación en Revisión
+    if (ctx) {
+      if (ctx.title) v.score.title = ctx.title;
+      if (ctx.artist) v.score.artist = ctx.artist;
+      if (/^https?:\/\/\S+$/i.test(ctx.sourceUrl || "")) v.score.sourceUrl = ctx.sourceUrl;
+    }
     busy.close();
-    openReview(v.score, true, v.errors);
+    openReview(v.score, true, v.errors, ctx ? `Importada para «${ctx.title}»${ctx.artist ? " de " + ctx.artist : ""}. Revisá las notas antes de practicar.` : undefined);
+    if (ctx && editState) editState.fromSearch = true;
   } catch (err) {
     if (!alive()) return;
     console.error(err);
@@ -466,6 +469,367 @@ for (const [btn, [inp, kind]] of Object.entries(importMap)) {
   $(btn).addEventListener("click", () => { closeSheet(); $(inp).click(); });
   $(inp).addEventListener("change", (e) => { const f = e.target.files; runImport(kind, f); e.target.value = ""; });
 }
+
+/* ---------- buscar una canción: resultados ---------- */
+// Orden: tu biblioteca → incluidas en PianoCheck → ediciones encontradas (IA con búsqueda web) → catálogos → "Generar de memoria" (secundario).
+// srch = { title, artist, sourceUrl, library, local, ai: "idle"|"loading"|"nokey"|"skipped"|"done", res, gen, edit, directFail, ctl, token }
+let srch = null, srchToken = 0;
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
+const SEARCH_TTL = 14 * 86400000;
+
+function persistSearch() {
+  if (!srch) return;
+  const ls = { title: srch.title, artist: srch.artist, sourceUrl: srch.sourceUrl, at: Date.now() };
+  if (srch.res && srch.res.editions && srch.res.editions.length) { ls.editions = srch.res.editions; ls.kind = srch.res.identified && srch.res.identified.kind; }
+  settings.lastSearch = ls;
+  store.saveSettings({ lastSearch: ls }).catch(() => {});
+}
+function clearLastSearch() {
+  if (!settings.lastSearch) return;
+  settings.lastSearch = null;
+  store.saveSettings({ lastSearch: null }).catch(() => {});
+  renderSearchCard();
+}
+function renderSearchCard() {
+  const ls = settings.lastSearch, on = !!(ls && ls.title && Date.now() - (ls.at || 0) < SEARCH_TTL);
+  $("search-card").hidden = !on;
+  if (!on) return;
+  $("search-card-title").textContent = ls.artist ? `«${ls.title}» — ${ls.artist}` : `«${ls.title}»`;
+  $("search-card-sub").textContent = "Volvé a tus resultados para importar la edición que conseguiste.";
+  const go = $("search-card-go"); go.textContent = `Seguir con «${ls.title}»`; go.setAttribute("aria-label", `Seguir con «${ls.title}»`);
+}
+$("search-card-go").addEventListener("click", () => { const ls = settings.lastSearch; if (ls) openSearch(ls, { cached: true }); });
+$("search-card-x").addEventListener("click", clearLastSearch);
+
+/** Abre la pantalla de resultados y lanza la búsqueda. q = {title, artist?, sourceUrl?, editions?}; o.cached reutiliza las ediciones ya encontradas. */
+function openSearch(q, o = {}) {
+  if (srch && srch.ctl) srch.ctl.abort();
+  const s = srch = {
+    title: String(q.title || "").trim(), artist: String(q.artist || "").trim(), sourceUrl: String(q.sourceUrl || "").trim(),
+    library: [], local: null, ai: "idle", res: null, gen: null, edit: false, directFail: {}, ctl: null, token: ++srchToken,
+  };
+  if (!s.title) { toast("Escribí el título de la canción."); return; }
+  if (o.cached && Array.isArray(q.editions) && q.editions.length) {
+    s.res = { editions: q.editions, errors: [], retryable: false, rejected: 0, identified: { title: s.title, artist: s.artist, kind: q.kind || "unknown" }, cached: true };
+    s.ai = "done";
+  }
+  if (!o.cached) persistSearch();
+  show("search");
+  renderSearch();
+  $("search-body").scrollTop = 0;
+  runSearch(s);
+}
+async function runSearchLocal(s) {
+  let lib = [];
+  try { lib = (await store.list()) || []; } catch (e) { lib = []; }
+  const r = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: lib });   // sin IA: sólo biblioteca, incluidas y enlaces
+  if (s !== srch) return;
+  s.library = lib; s.local = r;
+  renderSearch();
+}
+async function runSearch(s) {
+  await runSearchLocal(s);
+  if (s !== srch || s.ai === "done") return;
+  await runSearchAi(s, false);
+}
+function refreshSearchLocal() { if (srch) runSearchLocal(srch); }
+function resumeSearchAfterSettings() {
+  const s = srch; if (!s || !settings.apiKey) return;
+  if (s.ai === "nokey" || (s.res && s.res.errors.some((e) => e.kind === "auth"))) runSearchAi(s, true);
+  else if (s.gen && s.gen.kind === "auth") { s.gen = null; renderSearch(); }
+}
+async function runSearchAi(s, force) {
+  if (!settings.apiKey) { s.ai = "nokey"; renderSearch(); return; }
+  if (s.local && (s.local.inLibrary.length || s.local.included.length) && !force) { s.ai = "skipped"; renderSearch(); return; }
+  if (s.ctl) s.ctl.abort();
+  const ctl = new AbortController(); s.ctl = ctl; s.ai = "loading"; s.res = null; renderSearch();
+  const res = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: s.library, ai: { provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model || undefined }, signal: ctl.signal, skipAiIfLocal: false });
+  if (s !== srch || ctl.signal.aborted) return;
+  s.ctl = null; s.res = res; s.ai = "done";
+  persistSearch();
+  renderSearch();
+}
+
+const SCOPE_ES = { song: "Canción", album: "Cancionero o álbum que la incluye", collection: "Cancionero o álbum que la incluye" };
+const FORMAT_ES = { musicxml: "MusicXML", midi: "MIDI", pdf: "PDF", web: "Página web" };
+const spin = (t) => `<div class="srch-load" role="status"><span class="spinner sm" aria-hidden="true"></span><span>${t}</span></div>`;
+
+function editionHtml(ed, i, s) {
+  const fail = s.directFail[ed.url];
+  return `<li class="ed" data-i="${i}">
+    <div class="ed-top"><b class="ed-t">${esc(ed.title)}</b>${ed.artist ? `<span class="ed-a">${esc(ed.artist)}</span>` : ""}</div>
+    <div class="ed-src">Fuente: <b>${esc(ed.publisher)}</b>${hostOf(ed.url) && hostOf(ed.url) !== String(ed.publisher).toLowerCase() ? ` · ${esc(hostOf(ed.url))}` : ""}</div>
+    <div class="tags"><span class="tag scope ${ed.scope === "song" ? "song" : "album"}">${SCOPE_ES[ed.scope] || "Canción"}</span><span class="tag">${FORMAT_ES[ed.format] || "Página web"}</span></div>
+    ${ed.note ? `<p class="ed-note">${esc(ed.note)}</p>` : ""}
+    ${fail ? `<p class="ed-fail" role="status">${ic("warn", "sm")}<span>${esc(fail)}</span></p>` : ""}
+    <div class="row wrap">
+      ${ed.importable ? `<button class="btn primary" data-act="direct" aria-label="Importar directo ${esc(ed.title)}">${ic("share", "sm")}Importar directo</button>` : ""}
+      <a class="btn${ed.importable ? "" : " primary"}" href="${esc(ed.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir partitura de ${esc(ed.title)} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir partitura</a>
+      <button class="btn" data-act="import-ed" aria-label="Importar mi copia de ${esc(ed.title)}">${ic("pdf", "sm")}Importar mi copia</button>
+    </div></li>`;
+}
+function editionsSection(s) {
+  const h = `<h3 class="srch-h">Ediciones encontradas</h3>`;
+  if (s.ai === "nokey") return `<section class="srch-sec" aria-label="Ediciones encontradas">${h}<div class="srch-note">${ic("info")}<div><p>Para buscar ediciones necesito tu API key de IA.</p><span>Lo de arriba y los enlaces de abajo funcionan sin ella.</span></div><button class="btn" data-act="settings">Ir a Ajustes</button></div></section>`;
+  if (s.ai === "loading" || s.ai === "idle") return `<section class="srch-sec" aria-label="Ediciones encontradas" aria-busy="true">${h}${spin("Buscando ediciones en la web…")}<div class="skel" aria-hidden="true"></div></section>`;
+  if (s.ai === "skipped") return `<section class="srch-sec" aria-label="Ediciones encontradas">${h}<div class="srch-note">${ic("info")}<div><p>Ya hay una versión para tocar, así que no busqué ediciones.</p></div><button class="btn" data-act="search-ai">Buscar ediciones igual</button></div></section>`;
+  const r = s.res || { editions: [], errors: [] };
+  const eds = r.editions || [];
+  const errs = (r.errors || []).filter((e) => e.source === "ai");
+  let out = `<section class="srch-sec" aria-label="Ediciones encontradas">${h}`;
+  if (eds.length) {
+    if (eds.some((e) => e.scope !== "song")) out += `<p class="hint srch-hint">«${esc(s.title)}» puede ser también el nombre de un álbum. Las ediciones marcadas como cancionero o álbum incluyen la canción junto con otras.</p>`;
+    out += `<ul class="eds">${eds.map((e, i) => editionHtml(e, i, s)).join("")}</ul>`;
+  }
+  if (errs.length) {
+    const auth = errs.some((e) => e.kind === "auth");
+    out += `<div class="srch-note warn" role="alert">${ic("warn")}<div><p>${esc(errs[0].message)}</p></div><div class="srch-btns">${auth ? `<button class="btn" data-act="settings">Ir a Ajustes</button>` : ""}${r.retryable ? `<button class="btn primary" data-act="retry-ai">${ic("restart", "sm")}Reintentar</button>` : ""}</div></div>`;
+  } else if (!eds.length) {
+    out += `<div class="srch-note">${ic("info")}<div><p>No encontré ediciones verificables de esta canción.</p><span>Probá los catálogos de abajo o editá la búsqueda.</span></div></div>`;
+  } else {
+    out += `<div class="row srch-again"><button class="btn sm ghost" data-act="search-ai">${ic("restart", "sm")}Buscar de nuevo</button></div>`;
+  }
+  return out + "</section>";
+}
+function genFailText(err) {
+  const k = err && err.kind;
+  if (k === "compose" || k === "refusal") return "La IA no pudo reconstruir esta canción.";
+  if (k === "parse") return "La respuesta de la IA no se pudo leer.";
+  const c = classifyFailure(err);
+  if (c === "network") return "No se pudo conectar con la IA. Revisá tu conexión.";
+  if (c === "rate") return "La IA llegó a su límite de uso por ahora.";
+  if (c === "auth") return "Falta una API key válida para pedirle la canción a la IA.";
+  return "La IA no pudo armar esta canción.";
+}
+function renderSearch() {
+  const s = srch; if (!s) return;
+  const body = $("search-body");
+  if (s.edit) { const t = $("se-title"), a = $("se-artist"); if (t) s.editTitle = t.value; if (a) s.editArtist = a.value; }
+  const st = body.scrollTop, local = s.local;
+  const lk = s.sourceUrl ? `<p class="srch-link">${ic("ext", "sm")}<a href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer">Enlace: ${esc(hostOf(s.sourceUrl) || s.sourceUrl)}</a></p>` : "";
+  let h = `<section class="srch-head" aria-label="Canción buscada">
+    <div class="srch-id"><span class="srch-k">Partitura de</span><h2 class="srch-title">${esc(s.title)}</h2>${s.artist ? `<p class="srch-artist">${esc(s.artist)}</p>` : ""}${lk}</div>
+    ${s.edit ? `<div class="srch-edit"><label class="field-s">Título<input id="se-title" type="text" maxlength="120" autocomplete="off" value="${esc(s.editTitle ?? s.title)}"></label><label class="field-s">Artista (opcional)<input id="se-artist" type="text" maxlength="120" autocomplete="off" value="${esc(s.editArtist ?? s.artist)}"></label><div class="row wrap"><button class="btn primary" data-act="edit-go">${ic("search", "sm")}Buscar de nuevo</button><button class="btn" data-act="edit-cancel">Cancelar</button></div></div>`
+      : `<div class="row wrap"><button class="btn" data-act="edit">${ic("pencil", "sm")}Editar búsqueda</button><button class="btn" data-act="import-mine">${ic("pdf", "sm")}Importar mi copia</button></div>`}
+  </section>`;
+  if (s.gen && s.gen.status === "failed") {
+    const g = s.gen, none = !(s.res && s.res.editions && s.res.editions.length);
+    h += `<div class="srch-fail" role="alert">${ic("warn")}<div class="sf-t"><b>${esc(g.msg)}</b><span>No perdí tu búsqueda: seguís con «${esc(s.title)}»${s.artist ? " de " + esc(s.artist) : ""}${s.sourceUrl ? " y su enlace" : ""}.</span></div>
+      <div class="sf-btns">${none ? `<button class="btn primary" data-act="search-ai">${ic("search", "sm")}Buscar una edición</button>` : ""}<button class="btn${none ? "" : " primary"}" data-act="import-mine">${ic("pdf", "sm")}Importar una partitura</button><button class="btn" data-act="edit">${ic("pencil", "sm")}Editar la búsqueda</button>${g.kind === "auth" ? `<button class="btn" data-act="settings">Ir a Ajustes</button>` : ""}${g.retryable ? `<button class="btn" data-act="gen">${ic("restart", "sm")}Reintentar</button>` : ""}</div></div>`;
+  }
+  // 1) tu biblioteca
+  if (!local) h += `<section class="srch-sec" aria-label="En tu biblioteca" aria-busy="true"><h3 class="srch-h">En tu biblioteca</h3>${spin("Mirando tu biblioteca…")}</section>`;
+  else if (local.inLibrary.length) {
+    h += `<section class="srch-sec" aria-label="En tu biblioteca"><h3 class="srch-h">En tu biblioteca</h3><ul class="eds">${local.inLibrary.map((m) => {
+      const sc = s.library.find((x) => x.id === m.scoreId) || {};
+      const meta = [sc.derivedFrom ? "Versión de «" + (sc.derivedFrom.title || "otra") + "»" : "", sc.measures ? `${sc.measures.length} compases` : ""].filter(Boolean).join(" · ");
+      return `<li class="ed lib" data-id="${esc(m.scoreId)}"><div class="ed-top"><b class="ed-t">${esc(m.title)}</b></div>${meta ? `<div class="ed-src">${esc(meta)}</div>` : ""}<div class="row"><button class="btn primary" data-act="play-lib" aria-label="Tocar ${esc(m.title)}">${ic("play", "sm")}Tocar</button></div></li>`;
+    }).join("")}</ul></section>`;
+  }
+  // 2) incluidas en PianoCheck
+  if (local && local.included.length) {
+    const byPiece = [];
+    for (const m of local.included) { let g = byPiece.find((x) => x.id === m.pieceId); if (!g) byPiece.push(g = { id: m.pieceId, vs: [] }); g.vs.push(m); }
+    h += `<section class="srch-sec" aria-label="Incluidas en PianoCheck"><h3 class="srch-h">Incluidas en PianoCheck</h3><ul class="eds">${byPiece.map((g) => {
+      const pc = PIECES.find((x) => x.id === g.id) || { title: g.vs[0].title, composer: "" };
+      const [main, ...more] = g.vs;
+      return `<li class="ed inc" data-p="${esc(g.id)}"><div class="ed-top"><b class="ed-t">${esc(pc.title)}</b>${pc.composer ? `<span class="ed-a">${esc(pc.composer)}</span>` : ""}</div>
+        <div class="ed-src">${esc(main.label === "Solo melodía" ? "Melodía sencilla" : main.label)}${more.length ? " · hay una versión con acompañamiento" : ""} · dominio público</div>
+        <div class="row wrap"><button class="btn primary" data-act="play-piece" data-v="${esc(main.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(main.label)}">${ic("play", "sm")}Tocar</button>${more.map((v) => `<button class="btn" data-act="play-piece" data-v="${esc(v.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(v.label)}">${esc(v.label)}</button>`).join("")}</div></li>`;
+    }).join("")}</ul></section>`;
+  }
+  if (local && !local.inLibrary.length && !local.included.length) h += `<p class="srch-none">No está en tu biblioteca ni entre las partituras incluidas.</p>`;
+  // 3) ediciones
+  h += editionsSection(s);
+  // 4) catálogos
+  const links = local ? local.searchLinks : buildSearchLinks({ title: s.title, artist: s.artist });
+  if (links.length) h += `<section class="srch-sec" aria-label="Buscar en catálogos"><h3 class="srch-h">Buscar en catálogos</h3><ul class="cat-links">${links.map((l) => `<li><a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${ic("ext", "sm")}${esc(l.label)}</a></li>`).join("")}</ul></section>`;
+  // 5) generar de memoria (secundario)
+  h += `<section class="srch-sec gen" aria-label="Generar de memoria"><h3 class="srch-h">Si no hay una versión para tocar</h3>
+    <p class="hint">La IA puede armar la canción de memoria. Puede diferir de la original: revisala antes de practicar.</p>
+    <details class="adjust"><summary>Ajustar arreglo <span class="adjust-now">${ARRANGE_MODES[composeArrange].name}</span></summary>
+      <div class="seg wide opts adjust-seg" role="group" aria-label="Ajustar arreglo">${arrangeSegHtml()}</div><p class="hint gen-desc">${ARRANGE_MODES[composeArrange].desc}</p></details>
+    <button class="btn" data-act="gen">${ic("sparkle", "sm")}Generar de memoria</button></section>`;
+  body.innerHTML = h;
+  body.scrollTop = st;
+  if (s.edit && !s.editFocused) { s.editFocused = true; const t = $("se-title"); if (t) t.focus(); }
+}
+
+async function playLocalScore(sc) {
+  clearLastSearch();
+  startPractice(validateScore(sc).score);
+}
+async function playPiece(pieceId, versionId) {
+  const base = getPieceScore(pieceId, versionId);
+  if (!base) { toast("No encontré esa versión."); return; }
+  let sc = null;
+  try { sc = await store.get(base.id); if (!sc) sc = await store.save(base); } catch (e) { toast("No se pudo guardar en tu biblioteca: " + e.message, 4500); sc = base; }
+  playLocalScore(sc);
+}
+function importFromSearch(ed) {
+  const s = srch; if (!s) return;
+  openSheet({ path: "import", importFor: { title: s.title, artist: s.artist, sourceUrl: ed ? ed.url : s.sourceUrl } });
+}
+async function importDirect(ed) {
+  const s = srch; if (!s) return;
+  const token = ++importToken; const alive = () => token === importToken;
+  lastImportKind = "direct";
+  busy.open("Descargando la edición");
+  const ctl = new AbortController(); composeAbort = ctl;
+  const r = await fetchEditionFile(ed, { signal: ctl.signal });
+  composeAbort = null;
+  if (!alive()) return;
+  busy.close();
+  if (r.error) {
+    s.directFail[ed.url] = ["network", "http", "format", "unsupported"].includes(r.kind) ? "No pude bajar el archivo desde la app. Abrí la partitura, descargala y usá «Importar mi copia»." : r.error;
+    renderSearch(); return;
+  }
+  delete s.directFail[ed.url];
+  const kind = ed.format === "musicxml" ? "xml" : ed.format === "midi" ? "midi" : "pdf";
+  const file = new File([r.blob], r.filename, { type: r.blob.type });
+  runImport(kind, [file], { title: s.title, artist: s.artist, sourceUrl: ed.url });
+}
+/** "Generar de memoria": si falla, no hay diálogo con sólo «Cerrar»: se vuelve a los resultados con la búsqueda intacta. */
+async function doGenerate() {
+  const s = srch; if (!s) return;
+  s.gen = null;
+  const token = ++importToken; const alive = () => token === importToken && s === srch;
+  lastImportKind = "compose";
+  const fail = (err, kind) => {
+    const c = kind || classifyFailure(err);
+    s.gen = { status: "failed", msg: genFailText(err), kind: c, retryable: c === "network" || c === "rate" };
+    renderSearch(); $("search-body").scrollTop = 0;
+    const b = $("search-body").querySelector(".srch-fail .btn"); if (b) b.focus({ preventScroll: true });
+  };
+  if (!settings.apiKey) { fail({ kind: "auth" }, "auth"); return; }
+  busy.open("Armando la partitura");
+  const ctl = new AbortController(); composeAbort = ctl;
+  const m = ARRANGE_MODES[composeArrange] || ARRANGE_MODES.auto;
+  try {
+    const cm = await lazy("compose"), omr = await lazy("omr");
+    const prov = settings.provider || "anthropic";
+    const score = await cm.composeScore({ query: s.title, artist: s.artist, sourceUrl: s.sourceUrl, level: m.level, style: m.style, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (t) => alive() && busy.log(t), signal: ctl.signal });
+    if (!alive()) return;
+    score.id = score.id || newId();
+    score.origin = "ia";
+    if (s.artist) score.artist = s.artist;
+    busy.close();
+    openReview(score, true, null, "Partitura armada por IA de memoria: puede tener diferencias con la original. Revisala antes de practicar.");
+    if (editState) editState.fromSearch = true;
+  } catch (err) {
+    if (!alive()) return;
+    if (!(err && err.name === "OmrError")) console.error(err);
+    busy.close();
+    fail(err);
+  } finally { if (composeAbort === ctl) composeAbort = null; }
+}
+$("search-body").addEventListener("click", async (e) => {
+  const sa = e.target.closest("[data-arrange]"); if (sa) { setArrange(sa.dataset.arrange); return; }
+  const btn = e.target.closest("button[data-act]"); if (!btn || !srch) return;
+  const s = srch, act = btn.dataset.act, li = btn.closest("li");
+  try {
+    if (act === "edit") { s.edit = true; s.editTitle = s.title; s.editArtist = s.artist; s.editFocused = false; renderSearch(); $("search-body").scrollTop = 0; }
+    else if (act === "edit-cancel") { s.edit = false; renderSearch(); }
+    else if (act === "edit-go") {
+      const t = $("se-title").value.trim(); if (!t) { toast("Escribí el título de la canción."); $("se-title").focus(); return; }
+      openSearch({ title: t, artist: $("se-artist").value.trim(), sourceUrl: s.sourceUrl });
+    }
+    else if (act === "import-mine") importFromSearch(null);
+    else if (act === "import-ed") importFromSearch(s.res.editions[+li.dataset.i]);
+    else if (act === "direct") await importDirect(s.res.editions[+li.dataset.i]);
+    else if (act === "search-ai" || act === "retry-ai") { s.gen = s.gen && s.gen.status === "failed" ? s.gen : null; await runSearchAi(s, true); }
+    else if (act === "gen") await doGenerate();
+    else if (act === "settings") openSettings();
+    else if (act === "play-lib") playLocalScore(await resolveScore(li.dataset.id));
+    else if (act === "play-piece") await playPiece(li.dataset.p, btn.dataset.v);
+  } catch (err) { toast("Error: " + err.message, 4000); }
+});
+$("search-back").addEventListener("click", goLibrary);
+$("lib-search").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = $("lib-search-q").value.trim();
+  if (!q) { $("lib-search-q").focus(); return; }
+  $("lib-search-q").value = "";
+  if (parseMusicLink(q)) { link = null; renderLink(); openSheet({ query: q }); startResolve(q); }
+  else openSearch({ title: q });
+});
+
+/* ---------- arreglo: "Solo melodía" y "Agregar acompañamiento" sin IA, siempre como versión nueva ---------- */
+const EST_ES = { sencilla: "Arreglo sencillo", media: "Arreglo medio", elaborada: "Arreglo elaborado" };
+const SUFFIX_RE = /\s*\((solo melodía|con acompañamiento|más elaborado)\)\s*$/i;
+const baseTitle = (t) => String(t || "Sin título").replace(SUFFIX_RE, "").trim() || "Sin título";
+function describeEstimate(score) {
+  const a = analyzeScore(score);
+  const hands = a.hands === "rh" ? "sólo mano derecha" : a.hands === "lh" ? "sólo mano izquierda" : a.hands === "both" ? "ambas manos" : "sin notas";
+  const range = a.range.min != null ? ` · de ${midiName(a.range.min)} a ${midiName(a.range.max)}` : "";
+  return { label: EST_ES[a.estimated], text: `${EST_ES[a.estimated]} · ${hands}${range}`, a };
+}
+/** Versión nueva (otro id, título con sufijo, vínculo a la original). kind "melodia" | "acomp". Devuelve null si no cambia nada. */
+function makeArrangement(score, kind) {
+  const out = kind === "melodia" ? melodyOnly(score) : addAccompaniment(score);
+  if (JSON.stringify(out.measures) === JSON.stringify(score.measures)) return null;
+  out.id = newId();
+  out.title = `${baseTitle(score.title)} (${kind === "melodia" ? "solo melodía" : "con acompañamiento"})`;
+  out.derivedFrom = { id: score.id, title: baseTitle(score.title) };
+  delete out.level; delete out.updatedAt; delete out.createdAt;
+  return out;
+}
+let arrCtx = null, arrOpener = null;
+function openArrange(score, from) {
+  arrCtx = { score: clone(score), from };
+  arrOpener = document.activeElement;
+  $("arr-piece").textContent = score.title || "Sin título";
+  $("arr-est").innerHTML = `Ahora: <b>${esc(describeEstimate(score).text)}</b>`;
+  $("arr-ai").disabled = false;
+  $("sheet-arrange").hidden = false;
+  $("arr-melody").focus();
+}
+function closeArrange() { $("sheet-arrange").hidden = true; arrCtx = null; arrOpener && arrOpener.focus && arrOpener.focus({ preventScroll: true }); }
+$("arr-close").addEventListener("click", closeArrange);
+$("sheet-arrange").addEventListener("click", (e) => { if (e.target === $("sheet-arrange")) closeArrange(); });
+async function applyArrange(kind) {
+  if (!arrCtx) return;
+  let base = arrCtx.score; const from = arrCtx.from;
+  try {
+    if (from === "review") { base = await saveReview(); if (!base) return; }   // la original (con sus correcciones) queda guardada tal cual
+    const out = makeArrangement(base, kind);
+    if (!out) { toast(kind === "melodia" ? "Esta partitura ya es sólo melodía." : "Ya tiene ese acompañamiento.", 3200); return; }
+    const saved = await store.save(validateScore(out).score);
+    const est = describeEstimate(saved).label;
+    closeArrange();
+    if (from === "review") openReview(saved, false, null, `Versión nueva de «${base.title}» · ${est}. La original quedó guardada sin cambios.`);
+    else { await refreshLibrary(); toast(`Creé «${saved.title}» · ${est}`, 3600); const c = document.querySelector(`#library-list .card[data-id="${CSS.escape(saved.id)}"]`); if (c) { c.classList.add("flash"); c.scrollIntoView({ block: "nearest" }); } }
+  } catch (err) { toast("No se pudo crear la versión: " + err.message, 4500); }
+}
+$("arr-melody").addEventListener("click", () => applyArrange("melodia"));
+$("arr-acc").addEventListener("click", () => applyArrange("acomp"));
+$("review-arrange").addEventListener("click", () => { const v = validateScore(editState.score); if (!v.ok) { toast("Primero tiene que haber alguna nota."); return; } v.score.title = $("review-title").value.trim() || v.score.title; openArrange(v.score, "review"); });
+/** Avanzado: arreglo más elaborado pedido a la IA, usando las notas de la partitura como base (sourceScore). */
+$("arr-ai").addEventListener("click", async () => {
+  if (!arrCtx) return;
+  let base = arrCtx.score; const from = arrCtx.from;
+  if (!settings.apiKey) { closeArrange(); toast("Necesitás tu API key de IA en Ajustes.", 3800); openSettings(); return; }
+  if (from === "review") { base = await saveReview(); if (!base) return; }
+  closeArrange();
+  lastImportKind = "arrange";
+  const token = ++importToken; const alive = () => token === importToken;
+  busy.open("Armando un arreglo más elaborado");
+  const ctl = new AbortController(); composeAbort = ctl;
+  try {
+    const cm = await lazy("compose"), omr = await lazy("omr");
+    const prov = settings.provider || "anthropic";
+    const score = await cm.composeScore({ query: baseTitle(base.title), artist: base.artist, sourceUrl: base.sourceUrl, level: "pro", style: "acompanamiento", sourceScore: base, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (t) => alive() && busy.log(t), signal: ctl.signal });
+    if (!alive()) return;
+    delete score.level;
+    score.id = newId(); score.origin = "ia"; score.title = `${baseTitle(base.title)} (más elaborado)`; score.derivedFrom = { id: base.id, title: baseTitle(base.title) };
+    if (base.artist) score.artist = base.artist;
+    busy.close();
+    openReview(score, true, null, `Arreglo armado por IA a partir de las notas de «${baseTitle(base.title)}». Revisalo antes de practicar.`);
+  } catch (err) {
+    if (!alive()) return;
+    busy.close(); toast((err && err.message) || "No se pudo armar el arreglo.", 5000);
+  } finally { if (composeAbort === ctl) composeAbort = null; }
+});
 
 /* ---------- revisión / edición ---------- */
 const DUR_NAME = { w: "redonda", h: "blanca", q: "negra", "8": "corchea", "16": "semicorchea", "32": "fusa" };
@@ -631,6 +995,7 @@ async function saveReview() {
   v.score.id = sc.id || newId();
   try { await store.save(v.score); } catch (e) { toast("No se pudo guardar: " + e.message, 4500); return null; }
   editState.isNew = false;
+  if (editState.fromSearch) clearLastSearch();   // ya conseguiste la partitura de esa búsqueda
   return v.score;
 }
 $("review-save").addEventListener("click", async () => { if (await saveReview()) { toast("Partitura guardada"); history.state && history.state.s ? history.back() : show("library", false); } });

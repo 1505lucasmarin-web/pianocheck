@@ -16,6 +16,7 @@
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <defs>
     <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#2a2018"/><rect x="5" y="6" width="6" height="20" rx="1.6" fill="#f4ead6"/><rect x="13" y="9" width="6" height="17" rx="1.6" fill="#e9b44c"/><rect x="21" y="6" width="6" height="20" rx="1.6" fill="#f4ead6"/><rect x="9" y="6" width="4" height="11" rx="1" fill="#15110d"/><rect x="17" y="6" width="4" height="11" rx="1" fill="#15110d"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5.5 5.5"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M10 3.5l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
     <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z"/><circle cx="12" cy="13.5" r="3.5"/></symbol>
     <symbol id="i-images" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M21 16l-5-5-9 8"/></symbol>
@@ -75,6 +76,15 @@
       <button class="btn icon ghost" id="btn-open-settings" aria-label="Ajustes"><svg class="ic"><use href="#i-sliders"/></svg></button>
     </header>
     <main class="content wide">
+      <form id="lib-search" class="lib-search" role="search" aria-label="Buscar una canción">
+        <label class="sr" for="lib-search-q">Buscar una canción o pegar un enlace</label>
+        <div class="ls-field"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="lib-search-q" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Canción o enlace"></div>
+        <button class="btn primary" type="submit">Buscar</button>
+      </form>
+      <section id="search-card" class="continue sc-resume" hidden aria-labelledby="search-card-h">
+        <div class="continue-t"><span class="continue-k" id="search-card-h">Búsqueda pendiente</span><b id="search-card-title"></b><span id="search-card-sub" class="continue-sub"></span></div>
+        <div class="row"><button class="btn primary big" id="search-card-go"></button><button class="btn icon ghost" id="search-card-x" aria-label="Descartar la búsqueda pendiente"><svg class="ic"><use href="#i-x"/></svg></button></div>
+      </section>
       <section id="continue-card" class="continue" hidden aria-labelledby="continue-h">
         <div class="continue-t"><span class="continue-k" id="continue-h">Continuar práctica</span><b id="continue-title"></b><span id="continue-sub" class="continue-sub"></span></div>
         <button class="btn primary big" id="continue-go"><svg class="ic"><use href="#i-play"/></svg>Continuar</button>
@@ -83,7 +93,7 @@
         <h2 class="hero-title">Tu piano te escucha y te corrige</h2>
         <p class="hero-sub">Tocá una partitura nota por nota. Si te equivocás, te lo marca al instante.</p>
         <ol class="steps">
-          <li><span class="step-ic"><svg class="ic"><use href="#i-images"/></svg></span><div><b>Cargá una partitura</b><span>Pedí una canción, sacale una foto o importá un archivo.</span></div></li>
+          <li><span class="step-ic"><svg class="ic"><use href="#i-images"/></svg></span><div><b>Cargá una partitura</b><span>Buscá una canción, sacale una foto o importá un archivo.</span></div></li>
           <li><span class="step-ic"><svg class="ic"><use href="#i-plug"/></svg></span><div><b>Conectá tu piano</b><span>Por USB, Bluetooth o con el micrófono.</span></div></li>
           <li><span class="step-ic"><svg class="ic"><use href="#i-play"/></svg></span><div><b>Tocá</b><span>Avanzás a tu ritmo y ves cada acierto.</span></div></li>
         </ol>
@@ -119,6 +129,15 @@
         <ul id="demo-list" class="cards"></ul>
       </section>
     </main>
+  </section>
+
+  <!-- 1b. Buscar una canción: resultados -->
+  <section id="screen-search" class="screen" hidden aria-label="Buscar una canción">
+    <header class="bar compact">
+      <button class="btn icon ghost" id="search-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
+      <div class="bar-title">Buscar una canción</div>
+    </header>
+    <main class="content" id="search-body"></main>
   </section>
 
   <!-- 2. Revisión -->
@@ -189,6 +208,7 @@
       <div class="row wrap ed-save">
         <button class="btn" id="review-save">Guardar</button>
         <button class="btn" id="review-task"><svg class="ic sm"><use href="#i-clip"/></svg>Crear tarea</button>
+        <button class="btn" id="review-arrange"><svg class="ic sm"><use href="#i-sliders"/></svg>Arreglo</button>
         <button class="btn" id="review-annotate" aria-pressed="false"><svg class="ic sm"><use href="#i-pen"/></svg>Anotar</button>
         <button class="btn primary grow" id="review-save-practice"><svg class="ic"><use href="#i-play"/></svg>Guardar y practicar</button>
       </div>
@@ -532,19 +552,20 @@
         <h3 id="sheet-title">Nueva partitura</h3>
         <button class="btn icon ghost" id="sheet-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
-      <div class="seg wide paths" role="group" aria-label="Cómo crear la partitura" id="sheet-paths">
-        <button data-path="ai" class="on" aria-pressed="true" aria-controls="path-ai">Crear con IA</button>
+      <div class="seg wide paths" role="group" aria-label="Cómo cargar la partitura" id="sheet-paths">
+        <button data-path="ai" class="on" aria-pressed="true" aria-controls="path-ai">Buscar una canción</button>
         <button data-path="import" aria-pressed="false" aria-controls="path-import">Importar partitura</button>
       </div>
 
       <section class="opt featured" id="path-ai" aria-labelledby="compose-h">
-        <div class="opt-head"><span class="opt-ic"><svg class="ic"><use href="#i-sparkle"/></svg></span><div><b id="compose-h">Pedir una canción</b><span>Escribí el nombre o pegá un enlace y la IA arma la partitura.</span></div></div>
-        <label class="sr" for="compose-query">Nombre de la canción o enlace</label>
+        <div class="opt-head"><span class="opt-ic"><svg class="ic"><use href="#i-search"/></svg></span><div><b id="compose-h">Buscar una canción</b><span>Escribí el título o pegá un enlace. Busco una versión para tocar antes de generar nada.</span></div></div>
+        <label class="sr" for="compose-query">Título de la canción o enlace</label>
         <div class="row query-row">
-          <input id="compose-query" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Nombre de la canción o enlace de YouTube, Spotify, Apple Music…">
+          <input id="compose-query" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Título o enlace">
           <button class="btn" id="compose-paste" type="button"><svg class="ic sm"><use href="#i-clip"/></svg>Pegar</button>
         </div>
-        <p class="link-note" id="compose-link-note">Uso el enlace para saber qué canción es; la partitura la arma la IA de memoria, no a partir del audio.</p>
+        <label class="field-s" id="compose-artist-wrap">Artista (opcional)<input id="compose-artist" type="text" autocomplete="off" maxlength="120" placeholder="Ej.: Taylor Swift"></label>
+        <p class="link-note" id="compose-link-note">Uso el enlace sólo para saber qué canción es; después busco una partitura para tocarla.</p>
         <div id="link-box" class="link-box" hidden>
           <div id="link-busy" class="link-busy" role="status" hidden><span class="spinner sm" aria-hidden="true"></span><span>Buscando qué canción es…</span><button class="btn sm" id="link-cancel" type="button">Cancelar</button></div>
           <div id="link-confirm" class="link-confirm" hidden>
@@ -556,23 +577,24 @@
           </div>
           <p id="link-warn" class="link-warn" role="alert" hidden></p>
         </div>
-        <div class="seg wide" role="group" aria-label="Nivel" id="compose-level">
-          <button data-level="principiante" class="on">Principiante</button>
-          <button data-level="intermedio">Intermedio</button>
-          <button data-level="pro">Pro</button>
-        </div>
-        <p class="level-desc" id="compose-level-desc"></p>
-        <div class="seg wide" role="group" aria-label="Manos" id="compose-hands">
-          <button data-hands="melodia">Sólo melodía</button>
-          <button data-hands="dos-manos" class="on">Dos manos</button>
-        </div>
-        <button class="btn primary big" id="compose-go"><svg class="ic"><use href="#i-sparkle"/></svg><span id="compose-go-t">Armar partitura</span></button>
-        <p class="hint">Necesita tu API key de IA en Ajustes.</p>
+        <details class="adjust" id="adjust-box">
+          <summary>Ajustar arreglo <span id="adjust-now" class="adjust-now">Automático</span></summary>
+          <div class="seg wide opts adjust-seg" role="group" aria-label="Ajustar arreglo" id="adjust-seg">
+            <button data-arrange="auto" class="on" aria-pressed="true">Automático</button>
+            <button data-arrange="melodia" aria-pressed="false">Solo melodía</button>
+            <button data-arrange="acomp" aria-pressed="false">Agregar acompañamiento</button>
+            <button data-arrange="elaborado" aria-pressed="false">Más elaborado</button>
+          </div>
+          <p class="hint" id="adjust-desc"></p>
+        </details>
+        <button class="btn primary big" id="compose-go"><svg class="ic"><use href="#i-search"/></svg><span id="compose-go-t">Buscar partitura</span></button>
+        <p class="hint">Lo que ya tenés en tu biblioteca y las partituras incluidas no necesitan API key. Buscar ediciones y generar de memoria sí (Ajustes).</p>
       </section>
 
       <section id="path-import" aria-labelledby="import-h" hidden>
         <h4 class="import-h" id="import-h">Importar partitura</h4>
         <p class="hint import-sub">Ya tenés la partitura: sacale una foto o abrí el archivo.</p>
+        <p class="import-ctx" id="import-ctx" role="note" hidden></p>
         <div class="opt-grid">
           <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span>Fotografiá una hoja de tu partitura.</span></span></button>
           <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
@@ -589,6 +611,27 @@
       <input type="file" id="file-xml" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml,application/xml,text/xml" hidden>
       <input type="file" id="file-task" hidden>
       <input type="file" id="file-midi" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+    </div>
+  </div>
+
+  <div id="sheet-arrange" class="overlay sheet" hidden role="dialog" aria-modal="true" aria-labelledby="arr-h">
+    <div class="dialog sheet-box arr-box">
+      <div class="sheet-head">
+        <h3 id="arr-h">Arreglo</h3>
+        <button class="btn icon ghost" id="arr-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="arr-piece" id="arr-piece"></p>
+      <p class="arr-est" id="arr-est" role="status"></p>
+      <div class="arr-actions">
+        <button class="btn arr-btn" id="arr-melody"><b>Solo melodía</b><span>Deja la melodía en la derecha y la izquierda en silencio.</span></button>
+        <button class="btn arr-btn" id="arr-acc"><b>Agregar acompañamiento</b><span>Suma una mano izquierda sencilla según la armonía.</span></button>
+      </div>
+      <p class="hint">Se crea una versión nueva; tu partitura original queda como está. No usa IA.</p>
+      <details class="adjust arr-adv">
+        <summary>Más elaborado (avanzado)</summary>
+        <p class="hint">Le pido a la IA un arreglo más trabajado a partir de las notas de esta partitura. Conserva la melodía y el ritmo. Necesita tu API key.</p>
+        <button class="btn" id="arr-ai"><svg class="ic sm"><use href="#i-sparkle"/></svg>Pedir arreglo más elaborado</button>
+      </details>
     </div>
   </div>
 

@@ -1,5 +1,5 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v9";
+const VERSION = "pianocheck-v10";
 const SHELL = [
   "./",
   "index.html",
@@ -8,6 +8,8 @@ const SHELL = [
   "js/app.js",
   "js/annotate-ui.js",
   "js/annotations.js",
+  "js/arrange.js",
+  "js/catalog.js",
   "js/compose.js",
   "js/demo.js",
   "js/engine.js",
@@ -24,6 +26,7 @@ const SHELL = [
   "js/omr.js",
   "js/phrases.js",
   "js/passage.js",
+  "js/pieces.js",
   "js/recorder.js",
   "js/review.js",
   "js/summary.js",
@@ -45,7 +48,8 @@ const SHELL = [
   "vendor/pdf.worker.min.mjs",
   "vendor/vexflow/vexflow-bravura.js"
 ];
-// Nunca se cachean: IA, oEmbed y APIs de búsqueda de canciones (identificar un enlace). Cualquier pedido a otro origen pasa de largo.
+// Nunca se cachean: IA (incluida su búsqueda web), oEmbed y APIs de búsqueda de canciones (identificar un enlace), catálogos y descargas de ediciones.
+// Cualquier pedido a otro origen pasa de largo (ver el filtro del "fetch"); sólo se sirve del caché el shell de esta app.
 const AI_HOSTS = ["api.anthropic.com", "generativelanguage.googleapis.com"];
 const LOOKUP_HOSTS = ["www.youtube.com", "youtube.com", "open.spotify.com", "soundcloud.com", "api.deezer.com", "itunes.apple.com"];
 

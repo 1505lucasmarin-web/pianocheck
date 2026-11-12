@@ -121,6 +121,11 @@ export function validateScore(obj) {
     score.keySig = normKeySig(obj.keySig);
     const su = typeof obj.sourceUrl === 'string' ? obj.sourceUrl.trim() : '';
     if (su && su.length <= 2000 && /^https?:\/\/\S+$/i.test(su)) score.sourceUrl = su;   // enlace de la canción original (sólo http/https)
+    const art = typeof obj.artist === 'string' ? obj.artist.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    if (art) score.artist = art;                                                          // artista de la canción (búsqueda)
+    if (obj.derivedFrom && typeof obj.derivedFrom === 'object' && typeof obj.derivedFrom.id === 'string' && obj.derivedFrom.id) {
+      score.derivedFrom = { id: obj.derivedFrom.id.slice(0, 80), title: String(obj.derivedFrom.title || '').trim().slice(0, 120) };   // versión creada a partir de otra
+    }
     if (obj.level === 'principiante' || obj.level === 'intermedio' || obj.level === 'pro') score.level = obj.level;
     if (ORIGINS.includes(obj.origin)) score.origin = obj.origin;
 
