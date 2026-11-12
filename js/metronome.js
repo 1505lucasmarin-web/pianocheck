@@ -8,6 +8,7 @@ const SCHEDULE_AHEAD_S = 0.12;
 export function createMetronome() {
   let bpm = 80;
   let beats = 4;
+  let unit = 1;
   let running = false;
   let ctx = null;
   let timer = null;
@@ -54,21 +55,21 @@ export function createMetronome() {
       const idx = beatIdx % beats;
       click(nextTime, idx === 0);
       emit(idx, nextTime, beatNo++);
-      nextTime += 60 / bpm;
+      nextTime += unit * 60 / bpm;
       beatIdx = (beatIdx + 1) % beats;
     }
   }
 
   return {
-    start() {
+    start({ delay = 0.05, beat = 0 } = {}) {
       if (running) return;
       const AC = typeof globalThis !== 'undefined' && (globalThis.AudioContext || globalThis.webkitAudioContext);
       if (!AC) return;
       if (!ctx) ctx = new AC();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
       running = true;
-      beatIdx = 0; beatNo = 0;
-      nextTime = ctx.currentTime + 0.05;
+      beatIdx = beat % beats; beatNo = 0;
+      nextTime = ctx.currentTime + delay;
       tick();
       timer = setInterval(tick, LOOKAHEAD_MS);
     },
@@ -88,6 +89,9 @@ export function createMetronome() {
       if (!Number.isFinite(v) || v < 1) return;
       beats = Math.min(32, v);
       if (beatIdx >= beats) beatIdx = 0;
+    },
+    setUnit(value) {
+      if (Number.isFinite(value) && value > 0) unit = value;
     },
     get isRunning() { return running; },
     get bpm() { return bpm; },

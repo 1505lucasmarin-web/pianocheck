@@ -1,7 +1,7 @@
 // Sostener las notas largas (tipo Guitar Hero): lógica pura, sin DOM ni audio.
 // 1) holdInfo(score, steps): duración en negras de cada nota de cada paso (con ligaduras, la misma cuenta que usa el reproductor).
 // 2) createHoldTracker({ bpm, now }): sigue las notas que se están sosteniendo y dice cuánto falta, si se completó o se soltó antes.
-import { keyToMidi, durBeats } from "./model.js";
+import { keyToMidi, durBeats, isTied } from "./model.js";
 
 export const HOLD_MIN_BEATS = 1;     // sólo se evalúan notas de 1 tiempo o más
 export const HOLD_TOL_FRAC = 0.15;   // soltar hasta 15 % antes cuenta como completa…
@@ -23,7 +23,7 @@ function chain(score, mi, hand, idx, key) {
     let list = get(m);
     if (i >= list.length) { m++; i = 0; if (m >= score.measures.length) return { beats, next: null }; list = get(m); }
     const ev = list[i];
-    if (!ev || !ev.tie || !Array.isArray(ev.k) || !ev.k.includes(key)) return { beats, next: ev ? { measure: m, idx: i } : { measure: m, idx: 0 } };
+    if (!isTied(ev, key) || !ev.k.includes(key)) return { beats, next: ev ? { measure: m, idx: i } : { measure: m, idx: 0 } };
     beats += durBeats(ev); i++;
   }
 }

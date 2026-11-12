@@ -43,6 +43,44 @@ function eventsForSpan(k, beats, firstTie) {
   return splitBeats(beats).map((s, i) => mkEvent(s, k, k.length ? (i === 0 ? firstTie : true) : false));
 }
 
+/** Aplana voces simultáneas en intervalos, ligando sólo las notas que ya sonaban. */
+export function timedNotesToEvents(notes, length) {
+  const byTime = new Map();
+  const at = (time) => {
+    const tick = Math.round(time * 1e6);
+    if (!byTime.has(tick)) byTime.set(tick, { starts: [], ends: [] });
+    return byTime.get(tick);
+  };
+  at(0); at(length);
+  for (const note of notes) {
+    if (!Number.isFinite(note.start) || !Number.isFinite(note.dur) || note.start < 0 || note.dur <= 0 || note.start >= length) continue;
+    at(note.start).starts.push(note);
+    at(Math.min(length, note.start + note.dur)).ends.push(note);
+  }
+  const times = [...byTime.keys()].sort((a, b) => a - b);
+  const active = new Map(), events = [];
+  for (let i = 0; i < times.length - 1; i++) {
+    const { starts, ends } = byTime.get(times[i]);
+    for (const n of ends) if (active.get(n.key) === n) active.delete(n.key);
+    const attacks = new Map();
+    for (const n of starts) {
+      active.set(n.key, n);
+      if (!n.tie) attacks.set(n.key, n.finger || 0);
+    }
+    const keys = [...active.keys()].sort((a, b) => keyToMidi(a) - keyToMidi(b));
+    const span = (times[i + 1] - times[i]) / 1e6;
+    for (const [j, shape] of splitBeats(span).entries()) {
+      const held = keys.filter((k) => j > 0 || !attacks.has(k));
+      const ev = mkEvent(shape, keys, held.length > 0 && held.length === keys.length);
+      if (held.length && !ev.tie) ev.ties = held;
+      const fingers = keys.map((k) => j === 0 ? attacks.get(k) || 0 : 0);
+      if (fingers.some(Boolean)) ev.f = fingers;
+      events.push(ev);
+    }
+  }
+  return events;
+}
+
 function newId() {
   return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
@@ -233,6 +271,7 @@ export function musicXmlToScore(root, fallbackTitle = '') {
           const n = {
             start: start / divisions, dur: dur / divisions, staff, voice, rest, tie: tieStop,
             keys: pitch ? [stepKey(pitch)] : [], type: TYPE_TO_D[type], dots: Math.min(2, kids(el, 'dot').length),
+            finger: num(kid(kid(el, 'notations'), 'technical'), 'fingering'),
             measureRest: rest && kid(el, 'rest').attrs.measure === 'yes',
           };
           if (!rest && !pitch) continue; // unpitched: ignorar
@@ -289,12 +328,15 @@ export function musicXmlToScore(root, fallbackTitle = '') {
   };
 }
 
-/** Elige la voz principal, fusiona voces simultáneas de igual inicio/duración y rellena con silencios. */
+/** Conserva el formato simple para una voz; combina varias voces mediante ligaduras por nota. */
 function voiceToEvents(notes, len) {
   const sounding = notes.filter((n) => !n.rest);
   if (!sounding.length) return eventsForSpan([], len, false);
   // voz principal = la de menor número presente (la voz 1 suele ser la melodía / voz superior)
   const voices = [...new Set(sounding.map((n) => n.voice))];
+  if (voices.length > 1 || sounding.some((n) => n.finger)) {
+    return timedNotesToEvents(sounding.flatMap((n) => n.keys.map((key) => ({ ...n, key }))), len);
+  }
   const main = voices.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))[0];
 
   // eventos de la voz principal agrupados por inicio
@@ -307,12 +349,6 @@ function voiceToEvents(notes, len) {
     n.keys.forEach((k) => { if (!s.keys.includes(k)) s.keys.push(k); });
     s.dur = Math.min(s.dur, n.dur);
   });
-  // fusionar notas de otras voces que coinciden en inicio y duración
-  sounding.filter((n) => n.voice !== main).forEach((n) => {
-    const s = byStart.get(n.start.toFixed(5));
-    if (s && Math.abs(s.dur - n.dur) < EPS) n.keys.forEach((k) => { if (!s.keys.includes(k)) s.keys.push(k); });
-  });
-
   const evs = [];
   let cursor = 0;
   slots.sort((a, b) => a.start - b.start).forEach((s) => {
@@ -593,28 +629,73 @@ function makeCanvas(w, h) {
   const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
 }
 
-/** Renderiza cada página del PDF a JPEG. `scale` ≈ 2 por defecto (se limita a ~2000px de lado mayor). */
-export async function pdfToImages(file, { scale = 2, maxPages = 30 } = {}) {
+/** Páginas de un PDF, numeradas desde 1. Vacío significa todas las páginas. */
+export function pdfPageNumbers(range, total, maxPages = 30) {
+  const pages = new Set();
+  for (const part of String(range || `1-${total}`).trim().split(",")) {
+    const match = /^\s*(\d+)\s*(?:-\s*(\d+)\s*)?$/.exec(part);
+    const first = Number(match?.[1]), last = Number(match?.[2] || first);
+    if (!match || first < 1 || last < first || last > total) {
+      throw new Error(`Este PDF tiene ${total} páginas. Indicá páginas válidas, por ejemplo 1-2,4.`);
+    }
+    for (let n = first; n <= last; n++) {
+      pages.add(n);
+      if (pages.size > maxPages) throw new Error(`Elegí hasta ${maxPages} páginas por importación.`);
+    }
+  }
+  return [...pages].sort((a, b) => a - b);
+}
+
+function hasInk(ctx, width, height) {
+  const data = ctx.getImageData(0, 0, width, height).data;
+  let dark = 0;
+  for (let i = 0; i < data.length; i += 12) {
+    if (data[i] + data[i + 1] + data[i + 2] < 555 && ++dark >= 30) return true;
+  }
+  return false;
+}
+
+/** Renderiza el rango seleccionado a imágenes, incluidas las páginas escaneadas con JBIG2. */
+export async function pdfToImages(file, { scale = 2.5, maxPages = 30, range = "", signal, onPage = () => {} } = {}) {
   const pdfjs = await loadPdfjs();
   const data = await readBytes(file);
+  const task = pdfjs.getDocument({
+    data,
+    wasmUrl: new URL('../vendor/wasm/', import.meta.url).href,
+  });
   let doc;
-  try { doc = await pdfjs.getDocument({ data }).promise; } catch (e) { throw new Error('No se pudo abrir el PDF.'); }
-  const blobs = [];
-  const n = Math.min(doc.numPages, maxPages);
-  for (let i = 1; i <= n; i++) {
-    const page = await doc.getPage(i);
-    const v1 = page.getViewport({ scale: 1 });
-    const s = Math.min(scale, 2000 / Math.max(v1.width, v1.height));
-    const vp = page.getViewport({ scale: s });
-    const canvas = makeCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    await page.render({ canvasContext: ctx, viewport: vp, canvas }).promise;
-    blobs.push(await canvasToBlob(canvas));
-    page.cleanup();
+  try {
+    try { doc = await task.promise; }
+    catch (e) { throw new Error(e?.name === 'PasswordException' ? 'El PDF está protegido. Abrí una copia sin contraseña.' : 'No se pudo abrir el PDF.', { cause: e }); }
+    const pages = pdfPageNumbers(range, doc.numPages, maxPages);
+    const blobs = [];
+    const blank = [];
+    for (const i of pages) {
+      signal?.throwIfAborted();
+      onPage(i, doc.numPages);
+      const page = await doc.getPage(i);
+      const v1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(scale, 2600 / Math.max(v1.width, v1.height)) });
+      const canvas = makeCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
+      try {
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const render = page.render({ canvasContext: ctx, viewport: vp, canvas, background: '#fff' });
+        const cancel = () => render.cancel();
+        signal?.addEventListener('abort', cancel, { once: true });
+        try { await render.promise; }
+        finally { signal?.removeEventListener('abort', cancel); }
+        if (hasInk(ctx, canvas.width, canvas.height)) blobs.push({ blob: await canvasToBlob(canvas, 'image/jpeg', 0.94), page: i });
+        else blank.push(i);
+      } finally {
+        page.cleanup();
+        canvas.width = canvas.height = 1;
+      }
+    }
+    if (!blobs.length) throw new Error('El lector no encontró contenido visible en las páginas elegidas. No se envió ninguna página a la IA.');
+    return Object.assign(blobs.map(({ blob }) => blob), { pageNumbers: blobs.map(({ page }) => page), totalPages: doc.numPages, blank });
+  } finally {
+    await task.destroy();
   }
-  if (doc.destroy) doc.destroy();
-  return blobs;
 }
 
 /** Corrige orientación EXIF, reduce a ~2000px y devuelve JPEG. */

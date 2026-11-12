@@ -157,6 +157,8 @@ function piece(id, title, composer, aliases, meta, rh, lh, extra = {}) {
 }
 
 /** Catálogo de piezas incluidas. Cada pieza: {id, title, composer, aliases, versions:[{id, label, pickupBeats?, score}]}. */
+import { bachPrelude } from './bach-prelude.js';
+
 export const PIECES = [
   piece('oda-a-la-alegria', 'Oda a la Alegría', 'Ludwig van Beethoven',
     ['oda a la alegria', 'himno a la alegria', 'himno de la alegria', 'ode to joy', 'ode an die freude', 'novena sinfonia',
@@ -187,6 +189,7 @@ export const PIECES = [
   piece('greensleeves', 'Greensleeves', 'Tradicional inglesa (s. XVI)',
     ['greensleeves', 'green sleeves', 'mangas verdes', 'what child is this', 'alas my love'],
     { bpm: 100, timeSig: [3, 4], keySig: 'Am', pickupBeats: 1 }, GS_RH, GS_LH),
+  bachPrelude,
 ];
 
 /* ------------------------------------------------------------------ búsqueda */

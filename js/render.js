@@ -4,7 +4,7 @@
 // Dos vistas: "page" (sistemas apilados, con scroll vertical) y "cont" (toda la pieza en una sola fila que se desplaza).
 // Los colores salen de variables CSS por tema (data-sheet="hoja|sepia|oscuro" en el contenedor): cambiar de tema no redibuja.
 import { phraseCaption, baseLetter } from "./phrases.js";
-import { midiToKey } from "./model.js";
+import { keyToMidi, midiToKey, isTied } from "./model.js";
 const VF = () => window.VexFlow;
 
 // Un color por letra de frase para la interfaz oscura (leyenda). En la partitura se usan --ph0..--ph7 según el tema.
@@ -174,10 +174,17 @@ export function createRenderer(container, opts = {}) {
       beams.forEach((b) => b.setContext(ctx).draw());
       [["rh", rhN], ["lh", lhN]].forEach(([hand, ns]) => {
         (m[hand] || []).forEach((e, idx) => {
-          if (!e.tie || !e.k || !e.k.length || idx === 0) return;
+          if ((!e.tie && !e.ties?.length) || idx === 0) return;
           try {
             const prev = ns[idx - 1];
-            if (prev && !prev.isRest()) new V.StaveTie({ first_note: prev, last_note: ns[idx], first_indices: prev.getKeys().map((_, i) => i), last_indices: ns[idx].getKeys().map((_, i) => i) }).setContext(ctx).draw();
+            if (!prev || prev.isRest()) return;
+            const first = [], last = [];
+            ns[idx].getKeys().forEach((key, j) => {
+              if (!e.k.some((k) => keyToMidi(k) === keyToMidi(key) && isTied(e, k))) return;
+              const i = prev.getKeys().findIndex((k) => keyToMidi(k) === keyToMidi(key));
+              if (i >= 0) { first.push(i); last.push(j); }
+            });
+            if (first.length) new V.StaveTie({ first_note: prev, last_note: ns[idx], first_indices: first, last_indices: last }).setContext(ctx).draw();
           } catch (err) { /* sin ligadura */ }
         });
       });
@@ -511,6 +518,7 @@ export function createRenderer(container, opts = {}) {
   }
 
   /* ---------------------------- digitación ---------------------------- */
+  function setFingerScore(next) { score = next; drawFingers(); }
   /** Números de dedo: sobre la nota en la mano derecha, bajo la nota en la izquierda (apilados en acordes). */
   function drawFingers() {
     systems.forEach((s) => s && s.svg.querySelectorAll(".fing-g").forEach((e) => e.remove()));
@@ -705,18 +713,34 @@ export function createRenderer(container, opts = {}) {
   }
 
   // arrastre con el dedo para mirar adelante / atrás
-  root.addEventListener("pointerdown", (ev) => {
-    if (annotating || mode !== "cont" || !cs || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+  container.addEventListener("pointerdown", (ev) => {
+    if (annotating || drag || ev.target.closest("button") || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+    if (mode === "page") {
+      if (ev.pointerType === "mouse") drag = { id: ev.pointerId, y: ev.clientY, top: container.scrollTop, page: true, moved: false };
+      return;
+    }
+    if (!cs) return;
     cancelAnimationFrame(inertia);
     drag = { id: ev.pointerId, x: ev.clientX, off: currentRenderedOffset(), moved: false, samples: [[performance.now(), ev.clientX]] };
   });
-  root.addEventListener("pointermove", (ev) => {
-    if (!drag || ev.pointerId !== drag.id || !cs) return;
+  container.addEventListener("pointermove", (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    if (drag.page) {
+      const dy = ev.clientY - drag.y;
+      if (!drag.moved && Math.abs(dy) < 5) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        try { container.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+      }
+      container.scrollTop = drag.top - dy;
+      return;
+    }
+    if (!cs) return;
     const dx = ev.clientX - drag.x;
     if (!drag.moved) {
       if (Math.abs(dx) < 5) return;
       drag.moved = true; cs.view.classList.add("cs-dragging");
-      try { root.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+      try { container.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
     }
     drag.samples.push([performance.now(), ev.clientX]); if (drag.samples.length > 6) drag.samples.shift();
     lookAt(drag.off - dx, false);
@@ -725,7 +749,7 @@ export function createRenderer(container, opts = {}) {
     if (!drag || ev.pointerId !== drag.id) return;
     const d = drag; drag = null;
     if (d.moved) { wasDrag = true; setTimeout(() => { wasDrag = false; }, 60); }
-    if (!d.moved || !cs) return;
+    if (!d.moved || d.page || !cs) return;
     cs.view.classList.remove("cs-dragging");
     const s = d.samples, a = s[0], b = s[s.length - 1];
     let v = b[0] > a[0] ? -(b[1] - a[1]) / (b[0] - a[0]) : 0;   // px/ms (positivo = hacia adelante)
@@ -741,8 +765,10 @@ export function createRenderer(container, opts = {}) {
     };
     inertia = requestAnimationFrame(step);
   };
-  root.addEventListener("pointerup", endDrag);
-  root.addEventListener("pointercancel", endDrag);
+  container.addEventListener("pointerup", endDrag);
+  container.addEventListener("pointercancel", endDrag);
+  container.addEventListener("lostpointercapture", endDrag);
+  container.addEventListener("pointerleave", (ev) => { if (!drag?.moved) endDrag(ev); });
 
   function scrollToMeasure(m) {
     if (mode === "cont" && cs) {
@@ -759,29 +785,35 @@ export function createRenderer(container, opts = {}) {
   function setCls(infos, cls, on) { infos.forEach((n) => n.el && n.el.classList.toggle(cls, on)); }
   /** Marca no cromática: ✓ (limpio) o ✕ (con error) debajo del pentagrama, además del color. */
   const FLAG_PATH = { clean: "M-4 0L-1 3.5L5 -4", dirty: "M-3.6 -3.6L3.6 3.6M3.6 -3.6L-3.6 3.6", early: "M2.6 -4.2L-2.6 0L2.6 4.2", late: "M-2.6 -4.2L2.6 0L-2.6 4.2", dur: "M-5.5 0H1.5M4.5 -4.5V4.5" };
-  function setFlag(i, kind) {
-    const old = flagEls.get(i); if (old) { old.remove(); flagEls.delete(i); }
+  function setFlag(i, kind, hand = "") {
+    const key = `${i}:${hand}`;
+    const old = flagEls.get(key); if (old) { old.remove(); flagEls.delete(key); }
     if (!kind) return;
-    const infos = stepEls[i]; if (!infos || !infos.length) return;
+    const infos = (stepEls[i] || []).filter((n) => !hand || n.hand === hand);
+    if (!infos.length) return;
     const s = systems[infos[0].sys]; if (!s) return;
     const xs = infos.map((n) => { try { return n.note.getAbsoluteX(); } catch (e) { return NaN; } }).filter(Number.isFinite);
     if (!xs.length) return;
     const cx = (Math.min(...xs) + Math.max(...xs)) / 2 + 5, u = s.u || 1;
     const p = document.createElementNS(SVGNS, "path");
     p.setAttribute("class", "step-flag " + kind);
+    if (hand) p.dataset.hand = hand;
     p.setAttribute("d", FLAG_PATH[kind] || FLAG_PATH.dirty);
-    p.setAttribute("transform", `translate(${cx} ${flagY}) scale(${u})`);
+    const y = hand === "rh" ? TOP_Y + 9.6 * SPACE : flagY;
+    p.setAttribute("transform", `translate(${cx} ${y}) scale(${u})`);
     p.setAttribute("stroke-width", 2.2);
-    s.svg.appendChild(p); flagEls.set(i, p);
+    s.svg.appendChild(p); flagEls.set(key, p);
   }
   function applyMark(i, kind) {
     const infos = stepEls[i]; if (!infos) return;
-    setCls(infos, "pc-clean", kind === "clean");
-    setCls(infos, "pc-dirty", kind === "dirty");
-    setCls(infos, "pc-early", kind === "early");
-    setCls(infos, "pc-late", kind === "late");
-    setCls(infos, "pc-dur", kind === "dur");
-    setFlag(i, kind);
+    const byHand = kind && typeof kind === "object";
+    for (const hand of ["rh", "lh"]) {
+      const list = infos.filter((n) => n.hand === hand);
+      const mark = byHand ? kind[hand] : kind;
+      for (const name of ["clean", "dirty", "early", "late", "dur"]) setCls(list, "pc-" + name, mark === name);
+      setFlag(i, byHand ? mark : null, hand);
+    }
+    setFlag(i, byHand ? null : kind);
   }
   /** Rótulo breve junto a la nota ("adelantado", "atrasado", "a tiempo"…); desaparece solo. Sólo hay uno a la vez. */
   function setTag(i, text, cls) {
@@ -832,14 +864,25 @@ export function createRenderer(container, opts = {}) {
   const stepLetters = (midi) => { const k = midiToKey(midi); const m = /^([a-g])(#?)\/(-?\d+)$/.exec(k || ""); return m ? { d: parseInt(m[3], 10) * 7 + LETTER[m[1]], sharp: !!m[2] } : null; };
   function drawErrors() {
     systems.forEach((s) => s && s.svg.querySelectorAll(".err-g").forEach((e) => e.remove()));
-    errs.forEach((e, i) => drawErr(i, e));
+    errs.forEach((e) => drawErr(e.step, e));
   }
   function drawErr(i, e) {
-    const infos = stepEls[i]; if (!infos || !infos.length) return;
+    const infos = (stepEls[i] || []).filter((n) => !e.hand || n.hand === e.hand);
+    if (!infos.length) return;
     const s = systems[infos[0].sys]; if (!s) return;
     let anchor = null, ay = Infinity;
+    let distance = Infinity;
     for (const n of infos) {
-      try { const ys = n.note.getYs(); const y = Math.min(...ys); if (y < ay) { ay = y; anchor = n; } } catch (er) { /* sin posición */ }
+      try {
+        const pitches = score.measures[n.measure][n.hand][n.idx].k;
+        const ys = n.note.getYs();
+        (n.k2 || []).forEach((orig, j) => {
+          const midi = keyToMidi(pitches[orig]);
+          if (e.expected.length && !e.expected.includes(midi)) return;
+          const gap = e.played == null ? 0 : Math.abs(e.played - midi);
+          if (gap < distance) { distance = gap; ay = ys[j]; anchor = n; }
+        });
+      } catch (er) { /* sin posición */ }
     }
     if (!anchor) return;
     let ax; try { ax = anchor.note.getAbsoluteX(); } catch (er) { return; }
@@ -847,6 +890,8 @@ export function createRenderer(container, opts = {}) {
     const g = document.createElementNS(SVGNS, "g");
     g.setAttribute("class", `err-g ${e.kind}${e.resolved ? " resolved" : ""}`);
     g.dataset.step = i; g.dataset.measure = anchor.measure; g.dataset.kind = e.kind;
+    if (e.hand) g.dataset.hand = e.hand;
+    g.dataset.error = e.id;
     g.setAttribute("role", "img"); g.setAttribute("aria-label", `Compás ${anchor.measure + 1}: ${e.text}`);
     const el = (tag, at, parent) => { const x = document.createElementNS(SVGNS, tag); for (const kk in at) x.setAttribute(kk, at[kk]); (parent || g).appendChild(x); return x; };
     el("circle", { class: "err-hit", cx: ax + 24, cy: ay, r: 20 * k });
@@ -882,16 +927,27 @@ export function createRenderer(container, opts = {}) {
   /** Marca un error junto a la nota esperada del paso: { kind: "wrong"|"omit", played?, expected[], text }. Queda hasta clearMarks(). */
   function markError(i, info) {
     if (!info) return;
-    errs.set(i, { kind: info.kind === "omit" ? "omit" : "wrong", played: Number.isInteger(info.played) ? info.played : null, expected: info.expected || [], text: String(info.text || ""), resolved: false });
+    const id = `${i}:${info.hand || ""}`;
+    errs.set(id, { id, step: i, hand: info.hand, kind: info.kind === "omit" ? "omit" : "wrong", played: Number.isInteger(info.played) ? info.played : null, expected: info.expected || [], text: String(info.text || ""), resolved: false });
     drawErrors();
   }
   /** El usuario corrigió: la marca queda como historial discreto. */
-  function resolveError(i) { const e = errs.get(i); if (!e || e.resolved) return; e.resolved = true; drawErrors(); }
+  function hasError(i, hand) { return hand ? errs.has(`${i}:${hand}`) : [...errs.values()].some((e) => e.step === i); }
+  function resolveError(i, hand) {
+    let changed = false;
+    for (const e of errs.values()) if (e.step === i && (!hand || e.hand === hand) && !e.resolved) { e.resolved = true; changed = true; }
+    if (changed) drawErrors();
+  }
+  function clearStepErrors(i) {
+    let changed = false;
+    for (const [id, e] of errs) if (e.step === i) { errs.delete(id); changed = true; }
+    if (changed) drawErrors();
+  }
   root.addEventListener("click", (ev) => {
     const g = ev.target.closest && ev.target.closest(".err-g");
     if (!g || !errCb) return;
     ev.stopPropagation();
-    const i = +g.dataset.step, e = errs.get(i);
+    const i = +g.dataset.step, e = errs.get(g.dataset.error);
     if (e) errCb({ step: i, measure: +g.dataset.measure, kind: e.kind, text: e.text });
   }, true);
 
@@ -1101,7 +1157,8 @@ export function createRenderer(container, opts = {}) {
   ro.observe(container);
 
   return {
-    draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError: (i) => errs.has(i), onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag, setHolds, setCursorWait,
+    draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError, clearStepErrors, onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag, setHolds, setCursorWait,
+    setFingerScore,
     onNoteTap(cb) { tapCb = cb; },
     onMeasureTap(cb) { measureCb = cb; },
     onBadgeTap(cb) { badgeCb = cb; },

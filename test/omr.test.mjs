@@ -100,3 +100,14 @@ test('recognizeScore: errores claros', async () => {
 test('textFromResponse gemini bloqueada', () => {
   assert.throws(() => textFromResponse('gemini', { promptFeedback: { blockReason: 'SAFETY' } }), /bloque/);
 });
+
+test('OMR: conserva la digitación impresa y liga el bajo sin eliminar el ataque de la voz interna', async () => {
+  const output = {
+    timeSig: [4, 4],
+    measures: [{ rh: [], lhTimed: [{ t: 0, b: 2, k: 'c/4', f: 5 }, { t: .25, b: 1.75, k: 'e/4', f: 3 }] }],
+  };
+  const fetchImpl = async () => resp(200, { content: [{ type: 'text', text: JSON.stringify(output) }] });
+  const s = await recognizeScore([blob()], { apiKey: 'fake', fetchImpl });
+  assert.deepEqual(s.measures[0].lh[0], { k: ['c/4'], d: '16', f: [5] });
+  assert.deepEqual(s.measures[0].lh[1], { k: ['c/4', 'e/4'], d: 'q', dots: 2, ties: ['c/4'], f: [0, 3] });
+});

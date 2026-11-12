@@ -46,6 +46,9 @@ export function durBeats(ev) {
   return base * (2 - Math.pow(0.5, dots));
 }
 
+/** Una ligadura puede continuar todo el acorde (`tie`) o sólo algunas alturas (`ties`). */
+export const isTied = (ev, key) => !!ev && (ev.tie === true || (Array.isArray(ev.ties) && ev.ties.includes(key)));
+
 function normKeySig(v) {
   if (typeof v !== 'string') return 'C';
   const s = v.trim();
@@ -91,6 +94,11 @@ function normEvent(raw, where, errors) {
   const dots = Number(raw.dots);
   if (dots === 1 || dots === 2) ev.dots = dots;
   if (raw.tie === true || raw.tie === 'true') ev.tie = true;
+  else if (Array.isArray(raw.ties)) {
+    const ties = k.filter((key) => raw.ties.includes(key));
+    if (ties.length === k.length && ties.length) ev.tie = true;
+    else if (ties.length) ev.ties = ties;
+  }
   return ev;
 }
 
@@ -144,7 +152,7 @@ export function validateScore(obj) {
             const ev = normEvent(raw, `Compás ${mi + 1} ${hand}[${ei}]`, errors);
             if (ev) {
               out[hand].push(ev);
-              if (ev.k.length && !ev.tie) notes++;
+              if (ev.k.some((key) => !isTied(ev, key))) notes++;
             }
           });
         }
@@ -191,7 +199,8 @@ export function buildSteps(score, hands = 'both') {
       const evs = (m && Array.isArray(m[hand])) ? m[hand] : [];
       let t = 0;
       evs.forEach((ev, idx) => {
-        if (ev && !ev.tie && Array.isArray(ev.k) && ev.k.length > 0) {
+        const attacks = ev?.k?.filter((key) => !isTied(ev, key));
+        if (attacks?.length) {
           const abs = Math.round((base + t) * 1e6) / 1e6;
           let st = byT.get(abs);
           if (!st) {
@@ -199,6 +208,7 @@ export function buildSteps(score, hands = 'both') {
             byT.set(abs, st);
           }
           ev.k.forEach((key, keyIdx) => {
+            if (isTied(ev, key)) return;
             const mid = keyToMidi(key);
             if (mid === null) return;
             st.set.add(mid);

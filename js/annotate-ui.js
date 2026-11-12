@@ -8,6 +8,10 @@ export const HL = ["#ffcd28", "#50c882", "#ff78be"];       // resaltador (--an-h
 export const TEXT_MAX = 60;
 const COLOR_NAMES = ["violeta", "azul", "magenta"];
 const HL_NAMES = ["amarillo", "verde", "rosa"];
+const QUICK_MARKS = [
+  ["1", "Pulgar"], ["2", "Índice"], ["3", "Mayor"], ["4", "Anular"], ["5", "Meñique"],
+  ["*", "Asterisco"], ["↑", "Flecha arriba"], ["↓", "Flecha abajo"], ["✓", "Marca de revisión"],
+];
 const ic = (n, cls = "sm") => `<svg class="ic ${cls}" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 const wrapText = (t, n = 22) => {
   const out = []; let line = "";
@@ -21,7 +25,8 @@ const wrapText = (t, n = 22) => {
 
 export function createAnnotateUI({ renderer, host, area, persist, toast = () => {}, hint = "", onActive = () => {}, getHidden = () => false, setHidden = () => {} }) {
   let store = createStore(), unsub = null, scoreId = null, saveT = 0;
-  let active = false, tool = "pen", color = 0, pending = null, nMeasures = 0;
+  let active = false, tool = "pen", color = 0, pending = null, stamp = "", nMeasures = 0;
+  let scoreLoad = 0;
   let svg = null, layout = null;
   let stroke = null, pan = null, penSeenAt = 0;
   const ptrs = new Map();
@@ -47,9 +52,13 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
       <button class="tb" data-act="prev" aria-label="Desplazar hacia atrás" title="Desplazar atrás">‹</button>
       <button class="tb" data-act="next" aria-label="Desplazar hacia adelante" title="Desplazar adelante">›</button>
     </div>
+    <div class="grp anno-quick" role="group" aria-label="Marcas rápidas">
+      ${QUICK_MARKS.map(([mark, label]) => `<button type="button" class="tb" data-stamp="${mark}" aria-label="${mark} · ${label}" aria-pressed="false">${mark}</button>`).join("")}
+    </div>
     <div class="anno-text" hidden>
-      <input type="text" maxlength="${TEXT_MAX}" autocomplete="off" aria-label="Nota breve (hasta ${TEXT_MAX} caracteres)" placeholder="Nota breve (hasta ${TEXT_MAX} caracteres)">
-      <button class="tb" data-act="text-ok">Poner</button><button class="tb" data-act="text-no" aria-label="Cancelar la nota">${ic("x")}</button>
+      <button type="button" class="tb" data-act="text-open">Escribir texto</button>
+      <input type="text" maxlength="${TEXT_MAX}" autocomplete="off" aria-label="Nota breve (hasta ${TEXT_MAX} caracteres)" placeholder="Nota breve (hasta ${TEXT_MAX} caracteres)" hidden>
+      <button class="tb" data-act="text-ok" hidden>Poner</button><button class="tb" data-act="text-no" aria-label="Cancelar la nota">${ic("x")}</button>
     </div>
     <p class="anno-note" role="status"></p>`;
   host.appendChild(bar);
@@ -70,16 +79,19 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
 
   /** Carga las marcas de una partitura; las de compases que ya no existen se descartan (con aviso). */
   async function setScore(id, n) {
+    const load = ++scoreLoad;
     flush(); exit(true);
     scoreId = id || null; nMeasures = n || 0; pending = null;
     let s = createStore();
+    bind(s);
     if (scoreId) {
       try {
         const raw = await persist.get(scoreId);
         if (raw) { const r = fromJSON(raw); s = r.store; }
       } catch (e) { /* sin anotaciones */ }
     }
-    bind(s);
+    if (load !== scoreLoad) return;
+    if (!store.count()) bind(s);
     prune(n);
     syncUi(); draw();
   }
@@ -133,6 +145,7 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
   /* ---------- barra ---------- */
   function syncUi() {
     bar.querySelectorAll("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === tool)));
+    bar.querySelectorAll("[data-stamp]").forEach((b) => b.setAttribute("aria-pressed", String(tool === "stamp" && b.dataset.stamp === stamp)));
     bar.querySelectorAll(".sw").forEach((b) => {
       const i = +b.dataset.color; b.setAttribute("aria-pressed", String(i === color));
       b.style.setProperty("--c", `var(--an-${tool === "hl" ? "h" : "c"}${i}, ${(tool === "hl" ? HL : PEN)[i]})`);
@@ -141,9 +154,12 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
     });
     q('[data-act="undo"]').disabled = !store.canUndo(); q('[data-act="redo"]').disabled = !store.canRedo();
     q(".anno-text").hidden = !pending;
+    q(".anno-text input").hidden = !pending?.editing;
+    q('[data-act="text-ok"]').hidden = !pending?.editing;
+    q('[data-act="text-open"]').hidden = !!pending?.editing;
     const mode = layout && layout.mode;
     q('[data-act="prev"]').textContent = mode === "page" ? "▴" : "‹"; q('[data-act="next"]').textContent = mode === "page" ? "▾" : "›";
-    q(".anno-note").textContent = pending ? "Escribí la nota y tocá «Poner»." : tool === "text" ? "Tocá un punto de la partitura para escribir una nota." : tool === "eraser" ? "Pasá el dedo por una marca para borrarla." : (hint || "Dibujá sobre la partitura. Para moverte, usá dos dedos o los botones de desplazamiento.");
+    q(".anno-note").textContent = pending ? "Elegí una marca rápida o tocá «Escribir texto»." : tool === "stamp" ? `Tocá la partitura para colocar «${stamp}».` : tool === "text" ? "Tocá dónde querés poner la nota." : tool === "eraser" ? "Pasá el dedo por una marca para borrarla." : (hint || "Dibujá sobre la partitura. Para moverte, usá dos dedos o los botones de desplazamiento.");
     syncEye();
   }
   function syncEye() {
@@ -157,20 +173,27 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
   eye.addEventListener("click", () => { setHidden(!getHidden()); draw(); });
   bar.addEventListener("click", (e) => {
     const t = e.target.closest("[data-tool]"), c = e.target.closest(".sw"), a = e.target.closest("[data-act]");
-    if (t) { tool = t.dataset.tool; pending = null; syncUi(); draw(); }
+    const preset = e.target.closest("[data-stamp]");
+    if (preset) {
+      stamp = preset.dataset.stamp;
+      tool = "stamp";
+      if (pending) commitText(stamp); else syncUi();
+    } else if (t) { tool = t.dataset.tool; pending = null; syncUi(); draw(); }
     else if (c && !c.disabled) { color = +c.dataset.color; syncUi(); }
     else if (a) {
       const act = a.dataset.act;
       if (act === "undo") store.undo(); else if (act === "redo") store.redo();
       else if (act === "done") exit();
       else if (act === "prev" || act === "next") { const sgn = act === "next" ? 1 : -1; renderer.panBy(sgn * area.clientWidth * 0.6, sgn * area.clientHeight * 0.7); }
-      else if (act === "text-ok") commitText();
+      else if (act === "text-open" && pending) {
+        pending.editing = true; syncUi(); q(".anno-text input").focus({ preventScroll: true });
+      } else if (act === "text-ok") commitText();
       else if (act === "text-no") { pending = null; syncUi(); draw(); }
     }
   });
   q(".anno-text input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitText(); } if (e.key === "Escape") { e.stopPropagation(); pending = null; syncUi(); draw(); } });
-  function commitText() {
-    const v = q(".anno-text input").value.replace(/\s+/g, " ").trim().slice(0, TEXT_MAX);
+  function commitText(value = q(".anno-text input").value) {
+    const v = value.replace(/\s+/g, " ").trim().slice(0, TEXT_MAX);
     if (!pending) return;
     if (!v) { toast("Escribí la nota primero."); return; }
     const r = store.add({ type: "text", measure: pending.measure, staff: pending.staff, points: [{ x: pending.x, y: pending.y }], text: v.slice(0, MAX_TEXT), color: PEN[color] });
@@ -207,7 +230,7 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
     const p = local(ev);
     if (tool === "eraser") { stroke = { tool, id: ev.pointerId }; eraseAtPoint(p); return; }
     stroke = { tool, id: ev.pointerId, pts: [p], moved: 0, start: p, press: 0, n: 0 };
-    if (tool !== "text") previewStroke();
+    if (tool === "pen" || tool === "hl") previewStroke();
   }
   function onMove(ev) {
     if (!active || !ptrs.has(ev.pointerId)) return;
@@ -232,7 +255,7 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
       if (e.pointerType === "pen" && e.pressure > 0) { stroke.press = (stroke.press * stroke.n + 0.6 + 0.8 * e.pressure) / (stroke.n + 1); stroke.n++; }
     }
     if (stroke.tool === "eraser") return;
-    if (stroke.tool !== "text") previewStroke();
+    if (stroke.tool === "pen" || stroke.tool === "hl") previewStroke();
     else if (Math.hypot(stroke.pts[stroke.pts.length - 1].x - stroke.start.x, stroke.pts[stroke.pts.length - 1].y - stroke.start.y) > 8) stroke.moved = 1;
   }
   function onUp(ev) {
@@ -243,11 +266,12 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
     const s = stroke; stroke = null;
     if (s.tool === "eraser") return;
     if (s.el) s.el.remove();
-    if (s.tool === "text") {
+    if (s.tool === "text" || s.tool === "stamp") {
       if (s.moved) return;
       const a = pointToAnchor(s.start, layout.measures); if (!a) return;
       pending = { measure: a.measure, x: a.x, y: a.y, staff: a.staff };
-      syncUi(); draw(); q(".anno-text input").focus({ preventScroll: true });
+      q(".anno-text input").value = "";
+      if (s.tool === "stamp") commitText(stamp); else { syncUi(); draw(); }
       return;
     }
     let pts = s.pts;

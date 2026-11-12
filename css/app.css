@@ -920,6 +920,9 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .anno-bar .grp{display:flex;gap:6px;align-items:center}
 .anno-bar .sp{flex:1}
 .anno-bar .tb{min-width:44px;min-height:44px;padding:0 10px;border-radius:12px;border:1px solid var(--line);background:var(--bg3);color:var(--fg);font:700 .88rem var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;touch-action:manipulation}
+.anno-bar .anno-quick{flex-wrap:wrap}
+.anno-quick .tb{font-size:1rem}
+.anno-quick .tb[aria-pressed="true"]{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
 .anno-bar .tb:disabled{opacity:.4}
 .anno-bar .tb[aria-pressed=true]{border-color:var(--acc);color:var(--acc);background:#2a2216}
 .anno-bar .tb.done{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
@@ -1208,6 +1211,35 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .tag.paid{color:var(--warn);border-color:#7a5320}
 .tag.free{color:var(--ok);border-color:#3f6a49}
 .review-note-btn{margin-left:auto;flex:none}
+
+/* En pantallas grandes la hoja y las zonas de desplazamiento llegan a los bordes. */
+@media (min-width: 700px) {
+  #screen-library .content.wide,
+  #screen-mylib .content.wide,
+  #search-body,
+  #th-body,
+  .ps-box { max-width: none; }
+  #review-score, #practice-score { margin-inline: 0; border-radius: 0; }
+  .welcome { max-width: 1240px; margin-inline: auto; }
+  #screen-settings .content {
+    max-width: none;
+    padding-inline: max(16px, calc((100% - 760px) / 2));
+  }
+}
+@media (min-width: 900px) and (max-width: 1160px) {
+  .pr-head { grid-template-columns: auto minmax(132px, 1fr) auto auto auto; }
+  .pr-ctrls { gap: 5px; }
+  .pr-ctrls .ctl { min-width: 66px; padding-inline: 8px; }
+  .pr-ctrls .ctl.icon { min-width: 44px; }
+  .pr-ctrls .ctl.play { min-width: 100px; }
+  .pr-actions .btn { padding-inline: 8px; }
+}
+@media (min-width: 600px) and (max-width: 899px) and (max-height: 520px) {
+  .pr-head { grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "back title pill actions" "ctrls ctrls ctrls ctrls"; }
+  .pr-ctrls .ctl { flex: 1 1 0; min-width: 0; padding-inline: 6px; }
+  .pr-ctrls .ctl.icon { flex: 0 0 44px; }
+  .pr-ctrls .ctl.play { flex: 1 1 0; }
+}
 .notice .btn.sm{margin-left:auto;flex:none;min-height:36px;padding:4px 10px;background:#4a3a1f;border-color:#7a5f2c;color:#fbe9bd}
 
 /* ---- Transcribir / grabar melodía ---- */

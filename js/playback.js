@@ -1,6 +1,6 @@
 // Reproductor: agenda de eventos (PURA: compases, ligaduras, manos, rango, metrónomo), planificador con ventana de anticipación
 // sobre el reloj del AudioContext (pausa / seek / velocidad en caliente) y el reproductor Web Audio que une ambos con js/synth.js.
-import { keyToMidi, durBeats } from "./model.js";
+import { keyToMidi, durBeats, isTied } from "./model.js";
 import { createSynth } from "./synth.js";
 
 /** Duración en negras de la nota de un paso, sumando las ligaduras que la continúan en la misma mano. */
@@ -12,7 +12,7 @@ function tiedBeats(score, ref, key) {
     let list = (score.measures[m] || {})[ref.hand] || [];
     if (i >= list.length) { m++; i = 0; list = (score.measures[m] || {})[ref.hand] || []; if (m >= score.measures.length) break; }
     const ev = list[i];
-    if (!ev || !ev.tie || !Array.isArray(ev.k) || !ev.k.includes(key)) break;
+    if (!isTied(ev, key) || !ev.k.includes(key)) break;
     beats += durBeats(ev); i++;
   }
   return beats;
@@ -83,7 +83,7 @@ export function chainBeats(score, mi, hand, idx, key) {
     let list = (score.measures[m] || {})[hand] || [];
     if (i >= list.length) { m++; i = 0; if (m >= score.measures.length) break; list = (score.measures[m] || {})[hand] || []; }
     const ev = list[i];
-    if (!ev || !ev.tie || !Array.isArray(ev.k) || !ev.k.includes(key)) break;
+    if (!isTied(ev, key) || !ev.k.includes(key)) break;
     beats += durBeats(ev); i++;
   }
   return beats;
@@ -121,6 +121,7 @@ export function buildSchedule(score, opts = {}) {
         t += durBeats(ev);
         if (!ev || ev.tie || !Array.isArray(ev.k) || !ev.k.length) return;
         for (const key of ev.k) {
+          if (isTied(ev, key)) continue;
           const midi = keyToMidi(key); if (midi === null) continue;
           const dur = Math.min(chainBeats(score, mi, hand, idx, key), endBeat - beat);
           if (!(dur > 0)) continue;

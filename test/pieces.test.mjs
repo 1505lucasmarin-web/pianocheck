@@ -5,14 +5,16 @@ import { validateScore, durBeats, buildSteps } from '../js/model.js';
 
 const total = (evs) => evs.reduce((a, e) => a + durBeats(e), 0);
 
-test('hay al menos 8 piezas, la Oda a la Alegría es la primera y todas tienen melodía sencilla primero', () => {
+test('la Oda abre el catálogo y las versiones simplificadas ofrecen primero la melodía', () => {
   assert.ok(PIECES.length >= 8);
   assert.equal(PIECES[0].id, 'oda-a-la-alegria');
   assert.equal(new Set(PIECES.map((p) => p.id)).size, PIECES.length);
   for (const p of PIECES) {
     assert.ok(p.title && p.composer && Array.isArray(p.aliases) && p.aliases.length >= 3, p.id);
-    assert.equal(p.versions[0].label, 'Solo melodía', p.id);
-    for (const v of p.versions) assert.ok(['Solo melodía', 'Con acompañamiento'].includes(v.label));
+    if (p.versions.length > 1) {
+      assert.equal(p.versions[0].label, 'Solo melodía', p.id);
+      for (const v of p.versions) assert.ok(['Solo melodía', 'Con acompañamiento'].includes(v.label));
+    }
   }
   assert.ok(PIECES.filter((p) => p.versions.length === 2).length >= 8);
 });

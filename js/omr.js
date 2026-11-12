@@ -1,5 +1,6 @@
 // Lectura de partituras por IA (foto/PDF → Score). Llamada directa desde el navegador con la API key del usuario.
-import { validateScore } from './model.js';
+import { durBeats, keyToMidi, validateScore } from './model.js';
+import { timedNotesToEvents } from './importers.js';
 
 // Verificados en la documentación oficial (noviembre 2026):
 //  - Anthropic (platform.claude.com/docs/en/models/overview): claude-sonnet-5-5 (todos los modelos actuales aceptan imagen).
@@ -22,21 +23,22 @@ JSON schema:
   "bpm": number,              // tempo in quarter-note beats per minute (from a tempo marking; if absent, estimate from the Italian term: Adagio 70, Andante 90, Moderato 108, Allegro 130; default 90)
   "timeSig": [number, number],// e.g. [4,4], [3,4], [6,8]
   "keySig": string,           // key signature as major/minor key name: "C","G","D","A","E","B","F#","C#","F","Bb","Eb","Ab","Db","Gb","Cb", minor adds "m": "Am","Em","Dm"... Derive it from the number of sharps/flats printed after the clef.
-  "measures": [ { "rh": Event[], "lh": Event[] } ]
+  "measures": [ { "rh": Event[], "lh": Event[], "pickup": boolean (optional, only if genuinely shorter) } ]
 }
-Event = { "k": string[], "d": "w"|"h"|"q"|"8"|"16"|"32", "dots": 0|1|2 (optional), "tie": boolean (optional) }
+Event = { "k": string[], "d": "w"|"h"|"q"|"8"|"16"|"32", "dots": 0|1|2 (optional), "tie": boolean (optional), "f": number[] (optional, same order as k, 1–5 for printed finger numbers and 0 for unmarked notes) }
+For a staff with independent voices or notes of unequal duration that overlap, put an empty array in that staff's rh/lh and use "rhTimed" or "lhTimed" in that measure instead. Each item is { "t": number, "b": number, "k": string, "tie": boolean (optional), "f": number (optional) }. "t" is the onset in quarter-note beats from the start of this measure (first beat = 0), "b" is its sounding duration in quarter-note beats within this measure. Give each pitch a separate item. Include sustained bass and inner notes; they must not disappear under running sixteenths. Omit rests in a timed staff. A C held through a half measure starts at 0 with b=2; an E a sixteenth later starts at 0.25. Keep the printed staff and pitches, and indicate the printed fingering where clear.
 
 Rules (follow ALL of them):
 1. "rh" is the upper staff (treble clef) and "lh" is the lower staff (bass clef) of the grand staff. Every measure must have both "rh" and "lh" arrays, in left-to-right, top-to-bottom reading order (finish all measures of the first system, then the next system). Include every measure on the page, including a pickup measure and the final one.
 2. "k" lists the ACTUAL SOUNDING pitches in the form "<letter><accidental>/<octave>" using lowercase letters, "#" for sharp, "b" for flat, scientific pitch notation where middle C is "c/4". Examples: "c/4", "f#/4", "bb/3", "e/5".
 3. Apply the key signature and any accidentals within the measure: if the key signature has F# then every F is "f#" unless cancelled by a natural; an accidental (sharp, flat, natural) on a note affects the same pitch for the rest of that measure (and only that measure unless tied across the barline). Write the resulting real pitch, never the bare letter name.
 4. Get the octave right from the clef: treble clef: the bottom line is e/4, the first space above it is f/4, the top line is f/5; middle C (c/4) sits on a ledger line below the staff. Bass clef: the bottom line is g/2, the top line is a/3, the space above the top line is b/3, middle C (c/4) sits on a ledger line above the staff. Watch for ledger lines and for 8va/8vb marks and clef changes mid-piece; write the real sounding pitch.
-5. A chord (notes stacked on one stem or sharing the same beat and duration) is ONE event with several entries in "k" (any order). Never split a chord into several events. If two voices on one staff play at the same time with the same duration, merge them into one chord; otherwise write only the most prominent (top) voice for rh and the lowest voice for lh, so the events of a staff are sequential and never overlap.
+5. In a sequential staff a chord is ONE event with several entries in "k". Use the timed staff format to preserve independent voices; never discard an inner voice just because it overlaps another.
 6. A rest is an event with "k": [] and its duration.
 7. "d" is the base note value: w=whole, h=half, q=quarter, 8=eighth, 16=sixteenth, 32=thirty-second. Use "dots" for augmentation dots. Triplets: use the written note value of the triplet notes.
 8. A tie (curved line joining two notes of the SAME pitch) is written by setting "tie": true on the SECOND (continuation) event, which must repeat the same pitch(es). Slurs between different pitches are NOT ties; ignore slurs.
 9. Every measure on each staff must add up exactly to the time signature (e.g. 4/4 = four quarter-note beats). Check this per staff and per measure before answering; if your first reading does not add up, re-read the measure and fix durations and rests. A whole-measure rest is a rest event with duration equal to the measure (a whole-note rest "w" in 4/4; "h" with dots 1 in 3/4; etc.). The only exception is a pickup (anacrusis) first measure, which may be shorter.
-10. Ignore lyrics, chord symbols, fingerings, dynamics, pedal marks and page numbers. Do not invent notes that are not printed. If something is illegible, make your best guess rather than omitting the measure.
+10. Copy clear printed piano finger numbers 1–5 in "f", aligned with their pitches. Do not invent finger numbers. Ignore lyrics, chord symbols, dynamics, pedal marks and page numbers. Do not invent notes. The printed common-time symbol C means 4/4; a struck-through C means 2/2.
 11. Repeats: write the music once, as printed. Do not expand repeats.
 
 Example for a piece in G major, 3/4, whose first measure has a treble-clef quarter-note G chord (g/4 + b/4 + d/5), then a quarter rest and a quarter F#, tied into the next measure, with the bass clef playing a dotted half note G (g/2):
@@ -45,11 +47,12 @@ Example for a piece in G major, 3/4, whose first measure has a treble-clef quart
 Reply with the JSON object only.`;
 
 /** Texto del mensaje de usuario que acompaña a la imagen de una página. */
-export function buildUserPrompt(page, total) {
+export function buildUserPrompt(page, total, previous) {
   const extra = total > 1
-    ? ` This is page ${page} of ${total} of the same piece. Transcribe only the measures on this page. If this page does not print a title, tempo, time signature or key signature, still fill those fields with the values in effect from the previous pages (most likely the same ones).`
+    ? ` This is document page ${page} of ${total}. Transcribe only the music visible on this page. If a new movement begins, use its printed title and markings.`
     : '';
-  return `Transcribe this piano score page into the JSON schema described in the instructions.${extra} Remember: real sounding pitches with the key signature applied, correct octaves for each clef, chords as single events, ties as "tie": true, and every measure summing to the time signature. JSON only.`;
+  const context = previous ? ` If markings are absent and this continues the previous movement, use previous meter ${JSON.stringify(previous.timeSig || [4, 4])}, key ${previous.keySig || 'C'} and tempo ${previous.bpm || 90}.` : '';
+  return `Transcribe this piano score page into the JSON schema described in the instructions.${extra}${context} Remember: real sounding pitches with the key signature applied, correct octaves for each clef, chords as single events, ties as "tie": true, and every measure summing to the time signature. JSON only.`;
 }
 
 /* ------------------------------------------------------------------ JSON */
@@ -105,7 +108,20 @@ export function mergePages(pages) {
     if (!out.keySig && typeof p.keySig === 'string' && p.keySig) out.keySig = p.keySig;
     if (Array.isArray(p.measures)) {
       for (const m of p.measures) {
-        if (m && typeof m === 'object') out.measures.push({ rh: Array.isArray(m.rh) ? m.rh : [], lh: Array.isArray(m.lh) ? m.lh : [] });
+        if (!m || typeof m !== 'object') continue;
+        const [n, d] = out.timeSig || [4, 4];
+        const bar = n * 4 / d;
+        const hand = (name) => {
+          const sequential = Array.isArray(m[name]) ? m[name] : [];
+          const timed = m[name + 'Timed'];
+          if (!Array.isArray(timed) || !timed.length) return sequential;
+          const notes = timed.filter((x) => x && keyToMidi(x.k) != null && Number.isFinite(x.t) && Number.isFinite(x.b))
+            .map((x) => ({ key: x.k.trim().toLowerCase(), start: x.t, dur: x.b, tie: x.tie === true, finger: x.f }));
+          const implied = Object.values({ rh: m.rh, lh: m.lh }).map((v) => Array.isArray(v) ? v.reduce((a, e) => a + durBeats(e), 0) : 0);
+          const length = m.pickup === true ? Math.min(bar, Math.max(...implied, ...notes.map((x) => x.start + x.dur))) : bar;
+          return notes.length ? timedNotesToEvents(notes, length) : sequential;
+        };
+        out.measures.push({ rh: hand('rh'), lh: hand('lh') });
       }
     }
   }
@@ -138,7 +154,7 @@ export function mapHttpError(status, provider, body = '') {
   if (status === 401 || status === 403) return new OmrError(`La API key de ${who} no es válida o no tiene permiso. Revisala en Ajustes.`, 'auth');
   if (status === 400 && /api key|API_KEY_INVALID/i.test(body)) return new OmrError(`La API key de ${who} no es válida. Revisala en Ajustes.`, 'auth');
   if (status === 429) return new OmrError(`Se alcanzó el límite de uso de ${who} (demasiadas solicitudes o sin crédito). Esperá un momento y reintentá.`, 'rate');
-  if (status === 404) return new OmrError(`El modelo configurado no existe en ${who}. Cambialo en Ajustes.${detail ? ' (' + detail + ')' : ''}`, 'model');
+  if (status === 404 || (status === 400 && /model.+(not found|not supported|not available|does not exist)/i.test(detail))) return new OmrError(`El modelo configurado no está disponible en ${who}. Cambialo en Ajustes.${detail ? ' (' + detail + ')' : ''}`, 'model');
   if (status === 413) return new OmrError('La imagen es demasiado grande para enviar. Probá con una foto de menor resolución.', 'size');
   if (status === 400) return new OmrError(`${who} rechazó la solicitud${detail ? ': ' + detail : ''}.`, 'bad');
   if (status === 529 || status >= 500) return new OmrError(`${who} no está disponible en este momento (error ${status}). Reintentá en unos minutos.`, 'server');
@@ -177,9 +193,10 @@ export async function imageToBase64(blob, maxSide = 2000) {
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
       ctx.drawImage(bmp, 0, 0, w, h);
       if (bmp.close) bmp.close();
-      work = canvas.convertToBlob
+      const encoded = canvas.convertToBlob
         ? await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.9 })
         : await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.9));
+      if (encoded) work = encoded;
     } catch (e) { work = blob; }
   }
   const u8 = new Uint8Array(await work.arrayBuffer());
@@ -189,7 +206,7 @@ export async function imageToBase64(blob, maxSide = 2000) {
 
 /* ------------------------------------------------------------------ proveedores */
 
-export function buildAnthropicRequest({ apiKey, model, image, page, total }) {
+export function buildAnthropicRequest({ apiKey, model, image, page, total, previous }) {
   return {
     url: ANTHROPIC_URL,
     init: {
@@ -208,7 +225,7 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total }) {
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
-            { type: 'text', text: buildUserPrompt(page, total) },
+            { type: 'text', text: buildUserPrompt(page, total, previous) },
           ],
         }],
       }),
@@ -216,7 +233,7 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total }) {
   };
 }
 
-export function buildGeminiRequest({ apiKey, model, image, page, total }) {
+export function buildGeminiRequest({ apiKey, model, image, page, total, previous }) {
   return {
     url: `${GEMINI_BASE}${encodeURIComponent(model)}:generateContent`,
     init: {
@@ -228,7 +245,7 @@ export function buildGeminiRequest({ apiKey, model, image, page, total }) {
           role: 'user',
           parts: [
             { inline_data: { mime_type: image.mediaType, data: image.data } },
-            { text: buildUserPrompt(page, total) },
+            { text: buildUserPrompt(page, total, previous) },
           ],
         }],
         generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 32768 },
@@ -287,15 +304,24 @@ export async function recognizeScore(images, options = {}) {
 
   const pages = [];
   for (let i = 0; i < images.length; i++) {
-    const label = images.length > 1 ? ` (página ${i + 1} de ${images.length})` : '';
+    signal?.throwIfAborted();
+    const page = images.pageNumbers?.[i] || i + 1;
+    const total = images.totalPages || images.length;
+    const label = total > 1 ? ` (página ${page} de ${total})` : '';
     onProgress(`Preparando imagen${label}…`);
     const image = await imageToBase64(images[i]);
     onProgress(`Leyendo la partitura con IA${label}… puede tardar un minuto`);
-    const text = await callProvider(provider, { apiKey: key, model, image, page: i + 1, total: images.length }, fetchImpl, signal);
+    let text;
+    try {
+      text = await callProvider(provider, { apiKey: key, model, image, page, total, previous: pages.at(-1) }, fetchImpl, signal);
+    } catch (e) {
+      throw new OmrError(e.message + label, e.kind);
+    }
     let parsed;
     try { parsed = extractJson(text); } catch (e) {
       throw new OmrError(`No se pudo interpretar la respuesta de la IA${label}. Reintentá o probá con una foto más nítida.`, 'parse');
     }
+    if (!validateScore(mergePages([parsed])).ok) throw new OmrError(`La IA no encontró notas${label}. Verificá que la página tenga música o elegí otro rango.`, 'empty');
     pages.push(parsed);
   }
   onProgress('Armando la partitura…');

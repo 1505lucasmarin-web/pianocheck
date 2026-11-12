@@ -236,11 +236,12 @@ export function createPulse(steps, { bpm, win, origin = 0, lapBeats, loop = fals
     const got = [], extra = [];
     evs.forEach((e, ei) => { if (m.assign[ei] === idx) got.push(e); else if (m.assign[ei] < 0 && m.extraAt[ei] === idx) extra.push(e); });
     const missing = entry.midi.filter((x) => !got.some((e) => e.midi === x));
+    const hit = got.map((e) => e.midi);
     if (!missing.length) {
       const dev = Math.round(got.reduce((s, e) => s + (e.t - entry.at), 0) / got.length);
-      return { status: "hit", dev, timing: classify(dev, win) };
+      return { status: "hit", dev, timing: classify(dev, win), hit, missing };
     }
-    return { status: got.length || extra.length ? "wrong" : "missed", dev: null, timing: null };
+    return { status: got.length || extra.length ? "wrong" : "missed", dev: null, timing: null, hit, missing };
   }
 
   return {
@@ -266,10 +267,13 @@ export function createPulse(steps, { bpm, win, origin = 0, lapBeats, loop = fals
         const dev = Math.round(ev.t - entry.at);
         const done = entry.midi.every((x) => got.some((e) => e.midi === x));
         const mean = Math.round(got.reduce((s, e) => s + (e.t - entry.at), 0) / got.length);
-        return { kind: "hit", entry, dev, timing: classify(dev, win), done, meanDev: mean, meanTiming: classify(mean, win) };
+        return { kind: "hit", entry, dev, timing: classify(dev, win), done, meanDev: mean, meanTiming: classify(mean, win), hit: got.map((e) => e.midi) };
       }
       const ex = m.extraAt[ei];
-      if (ex >= 0) return { kind: "wrong", entry: sub[ex], midi };
+      if (ex >= 0) {
+        const hit = evs.filter((_, k) => m.assign[k] === ex).map((e) => e.midi);
+        return { kind: "wrong", entry: sub[ex], midi, hit };
+      }
       return { kind: "stray", midi };
     },
     /** Avanza el reloj hasta t: cierra los pasos cuyo plazo (instante ideal + reach) ya pasó. → [{ entry, status, dev, timing, lapDone }] */

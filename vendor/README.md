@@ -10,6 +10,7 @@ Copiado desde npm (sin modificar salvo renombrar), sin CDN en runtime.
 | pdfjs-LICENSE, fflate-LICENSE | licencias (Apache-2.0 / MIT) | |
 
 js/importers.js importa `../vendor/fflate.mjs` (estático) y `../vendor/pdf.min.mjs` (dinámico); el worker se carga desde `../vendor/pdf.worker.min.mjs`.
+Los decodificadores de `vendor/wasm/` (JBIG2, OpenJPEG y QCMS y sus licencias) provienen de `pdfjs-dist@6.5.438/wasm`. Se cargan sólo cuando PDF.js los necesita para abrir un archivo. JBIG2 se usa en escaneos monocromáticos.
 
 | Archivo | Origen | Versión |
 |---|---|---|

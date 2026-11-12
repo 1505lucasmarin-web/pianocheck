@@ -2,6 +2,8 @@
 import { validateScore, buildSteps, midiName, midiToKey, keyToMidi } from "./model.js";
 import { createSession } from "./engine.js";
 import { createMidiInput } from "./midi.js";
+import { suggestFingering } from "./fingering.js";
+import { errorHand, handMarks } from "./step-feedback.js";
 import { createMetronome } from "./metronome.js";
 import { createRenderer } from "./render.js";
 import { demoScore } from "./demo.js";
@@ -10,7 +12,7 @@ import { findPhrases, phraseAt, repeatNotice, measureRangeText } from "./phrases
 import { phraseColor } from "./render.js";
 import { buildShareUrl, decodeCfg, extractToken, maskKey, PROVIDER_NAMES } from "./share.js";
 import { sameKind, normRange, isWholeRange, rangeText, passageSteps, currentPair, hardestMeasures, coverage, measureSummary, harderHand, handsWithNotes, attemptKey, equivalentAttempts, bestEquivalent, nextAction, mergePractice, latestPractice } from "./passage.js";
-import { createPlayer } from "./playback.js";
+import { clickUnit, createPlayer } from "./playback.js";
 import { createListen } from "./listen.js";
 import { createTheory } from "./teoria.js";
 import { parseMusicLink, resolveSong } from "./links.js";
@@ -497,30 +499,41 @@ async function runImport(kind, files, ctxOverride) {
   if (kind === "task") { await runImportTask(files[0]); return; }
   const ctx = ctxOverride || importCtx; importCtx = null;   // datos de la búsqueda que originó la importación (título, artista, enlace)
   lastImportKind = kind;
+  const pdfRange = kind === "pdf" ? $("pdf-pages").value.trim() : "";
   const token = ++importToken;
   const alive = () => token === importToken;
   const needsAi = kind === "photo" || kind === "images" || kind === "pdf";
   busy.open(needsAi ? "Leyendo partitura con IA" : "Importando partitura");
   try {
     let score;
+    let importWarnings = [];
     if (needsAi) {
       if (!settings.apiKey) {
         busy.error("Falta la API key. Cargala en Ajustes para leer fotos y PDF con IA.", true); return;
       }
       if (!navigator.onLine) { busy.error("Sin conexión a internet: la lectura por IA la necesita."); return; }
       busy.log("Preparando imágenes…");
+      const ctl = new AbortController();
+      composeAbort = ctl;
       const imp = await lazy("importers"), omr = await lazy("omr");
       let blobs = [];
       if (kind === "pdf") {
         busy.log("Convirtiendo el PDF a imágenes…");
-        blobs = await imp.pdfToImages(files[0], { scale: 2 });
+        blobs = await imp.pdfToImages(files[0], {
+          range: pdfRange, signal: ctl.signal,
+          onPage: (page, total) => alive() && busy.log(`Preparando página ${page} de ${total}…`),
+        });
+        if (blobs.blank.length) importWarnings.push(`Páginas sin contenido visible: ${blobs.blank.join(", ")}.`);
       } else {
         for (let i = 0; i < files.length; i++) { busy.log(`Preparando imagen ${i + 1} de ${files.length}…`); blobs.push(await imp.prepareImage(files[i])); }
       }
       if (!alive()) return;
       if (!blobs.length) throw new Error("No se obtuvieron imágenes para leer.");
-      score = await omr.recognizeScore(blobs, { provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[settings.provider || "anthropic"], onProgress: (m) => alive() && busy.log(m) });
-      if (!score.title || /^$/.test(score.title)) score.title = files[0].name.replace(/\.[^.]+$/, "");
+      score = await omr.recognizeScore(blobs, {
+        provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model,
+        signal: ctl.signal, onProgress: (m) => alive() && busy.log(m),
+      });
+      if (!score.title || score.title === "Sin título") score.title = files[0].name.replace(/\.[^.]+$/, "");
     } else {
       busy.log("Leyendo el archivo…");
       const imp = await lazy("importers");
@@ -538,13 +551,13 @@ async function runImport(kind, files, ctxOverride) {
       if (/^https?:\/\/\S+$/i.test(ctx.sourceUrl || "")) v.score.sourceUrl = ctx.sourceUrl;
     }
     busy.close();
-    openReview(v.score, true, v.errors, ctx ? `Importada para «${ctx.title}»${ctx.artist ? " de " + ctx.artist : ""}. Revisá las notas antes de practicar.` : undefined);
+    openReview(v.score, true, [...importWarnings, ...v.errors], ctx ? `Importada para «${ctx.title}»${ctx.artist ? " de " + ctx.artist : ""}. Revisá las notas antes de practicar.` : (kind === "pdf" ? "Revisá las notas y la digitación antes de practicar, especialmente donde hay varias voces." : undefined));
     if (ctx && editState) editState.fromSearch = true;
   } catch (err) {
     if (!alive()) return;
     console.error(err);
-    busy.error(err && err.message ? err.message : String(err), /key|clave|401|403/i.test(String(err && err.message)));
-  }
+    busy.error(err && err.message ? err.message : String(err), ["auth", "model"].includes(err?.kind));
+  } finally { if (alive() && needsAi) composeAbort = null; }
 }
 const importMap = { "imp-photo": ["file-photo", "photo"], "imp-images": ["file-images", "images"], "imp-pdf": ["file-pdf", "pdf"], "imp-xml": ["file-xml", "xml"], "imp-midi": ["file-midi", "midi"], "imp-task": ["file-task", "task"] };
 for (const [btn, [inp, kind]] of Object.entries(importMap)) {
@@ -1112,6 +1125,27 @@ $("ed-dot").addEventListener("click", () => { const s = selNote(); if (s) doEdit
 $("ed-hand").addEventListener("click", () => doEdit(moveHand));
 $("ed-fing").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) doEdit(setFinger, +b.dataset.f); });
 $("ed-fing-0").addEventListener("click", () => doEdit(setFinger, 0));
+function fillFingering() {
+  const editing = screen === "review";
+  const source = editing ? editState?.score : current;
+  if (!source) return;
+  const { score, added, skipped } = suggestFingering(source);
+  if (!added) {
+    toast(skipped ? "Los acordes restantes necesitan digitación manual." : "La partitura ya tiene digitación.");
+    return;
+  }
+  if (editing) commit({ ok: true, score }, { keepSel: true });
+  else {
+    current = score;
+    practiceR.setFingerScore(score);
+    syncKeyboard(false);
+    toast(`Sugerí ${added} dedos para esta práctica. Para guardarlos, usá Revisión.`, 4500);
+    return;
+  }
+  toast(`Sugerí ${added} dedos. ${skipped ? "Algunos acordes requieren revisión manual." : "Podés ajustarlos en Dedo."}`, 4200);
+}
+$("review-fingering").addEventListener("click", fillFingering);
+$("practice-fingering").addEventListener("click", fillFingering);
 $("ins-before").addEventListener("click", () => doEdit(insertEvent, "before"));
 $("ins-after").addEventListener("click", () => doEdit(insertEvent, "after"));
 $("ins-chord").addEventListener("click", () => doEdit(insertEvent, "chord"));
@@ -1121,7 +1155,7 @@ function undoRedo(kind) {
   const cur = { score: editState.score, selected: editState.selected };
   const h = kind === "undo" ? editState.hist.undo(cur) : editState.hist.redo(cur);
   if (!h) return;
-  editState.score = h.score; editState.selected = h.selected; redrawReview();
+  editState.score = h.score; editState.selected = h.selected; scheduleDraftSave(); redrawReview();
 }
 $("ed-undo").addEventListener("click", () => undoRedo("undo"));
 $("ed-redo").addEventListener("click", () => undoRedo("redo"));
@@ -1320,6 +1354,7 @@ async function runImportTask(file) {
 async function loadSettings() {
   const s = await store.settings();
   settings = { ...DEFAULT_SETTINGS, ...s };
+  settings.midiTransport = s.midiTransport !== false;
   applyLook();
   applyKeyboardSetting();
   player.setTimbre(settings.timbre); player.setVolume(settings.listenVolume == null ? 0.8 : settings.listenVolume);
@@ -1339,6 +1374,7 @@ function openSettings() {
   $("set-key").value = settings.apiKey || ""; $("set-key").type = "password"; $("set-key-show").textContent = "Ver";
   $("set-model").value = settings.model || "";
   $("set-kb").checked = !!settings.onscreenKeyboard;
+  $("set-midi-transport").checked = settings.midiTransport;
   $("set-phrases").checked = settings.showPhrases !== false;
   $("set-paid").checked = !!settings.showPaid;
   setMicSensUi(settings.micSensitivity);
@@ -1354,6 +1390,7 @@ $("btn-open-settings").addEventListener("click", openSettings);
 $("settings-back").addEventListener("click", () => (history.state && history.state.s ? history.back() : show(prevBeforeSettings, false)));
 $("settings-save").addEventListener("click", async () => {
   settings = { ...settings, provider: $("set-provider").value, apiKey: $("set-key").value.trim(), model: $("set-model").value.trim(), onscreenKeyboard: $("set-kb").checked, showPhrases: $("set-phrases").checked, showPaid: $("set-paid").checked, micSensitivity: micSensFromUi() };
+  settings.midiTransport = $("set-midi-transport").checked;
   try { await store.saveSettings(settings); toast("Ajustes guardados"); } catch (e) { toast("No se pudo guardar: " + e.message, 4500); return; }
   applyKeyboardSetting();
   if (current) applyPhrases();
@@ -1506,6 +1543,28 @@ function stepHands(step) {
   }
   return map;
 }
+function stepHandNotes(step) {
+  const targets = { rh: [], lh: [] };
+  for (const ref of step?.refs || allSteps[step?.i]?.refs || []) {
+    const ev = current.measures[ref.measure][ref.hand][ref.idx];
+    const midi = keyToMidi(ev.k[ref.keyIdx]);
+    if (midi != null) targets[ref.hand].push(midi);
+  }
+  return targets;
+}
+const practiceHandMarks = new Map();
+const hasTwoHands = (target) => target.rh.length > 0 && target.lh.length > 0;
+const handText = (hand) => hand === "rh" ? "Mano derecha" : hand === "lh" ? "Mano izquierda" : "";
+const withHand = (text, hand) => hand ? `${handText(hand)} · ${text}` : text;
+function showHandFeedback(step, hit, wrongHand, kind) {
+  const target = stepHandNotes(step);
+  const dirty = practiceHandMarks.get(step.i) || new Set();
+  if (wrongHand) dirty.add(wrongHand);
+  practiceHandMarks.set(step.i, dirty);
+  const states = handMarks(target, hit, dirty, kind);
+  practiceR.markStep(step.i, states);
+  return states;
+}
 /** Con Guía: ilumina el paso actual (las ya tocadas en verde). Sin Guía: no anticipa nada. */
 function syncKeyboard(focus = true) {
   const st = session && session.state;
@@ -1638,7 +1697,7 @@ function openPSheet(name, opener) {
   Object.entries(SHEET_OPENERS).forEach(([k, id]) => $(id).setAttribute("aria-expanded", String(k === name)));
   $("th-pill").setAttribute("aria-expanded", String(name === "input" && screen === "theory"));
   if (name === "loop") initLoopSheet();
-  if (name === "tempo") { $("countin-toggle").checked = !!settings.countIn; syncModeUi(); }
+  if (name === "tempo") syncModeUi();
   if (name === "input") syncInputSheet();
   if (name === "hands") syncHandsUi();
   if (name === "listen") syncListenSheet();
@@ -1677,6 +1736,7 @@ function refreshInputPill() {
 }
 function syncInputSheet() {
   $("input-lead").textContent = midiConnected ? "Piano MIDI conectado." : mic && mic.running ? "El micrófono está escuchando." : settings.onscreenKeyboard ? "Estás usando el teclado de pantalla." : "Elegí cómo te escucha la app.";
+  $("midi-transport-hint").hidden = !midiConnected || settings.midiTransport === false;
 }
 $("kb-toggle").addEventListener("click", () => {
   settings.onscreenKeyboard = !settings.onscreenKeyboard;
@@ -1688,13 +1748,21 @@ $("kb-toggle").addEventListener("click", () => {
 const metro = createMetronome();
 let metroBpm = 80;
 function buildPips(n) { $("beat-pips").innerHTML = Array.from({ length: n }, () => "<i></i>").join(""); }
-let countingIn = false, countBeats = 0, countWasOn = false, countTimer = 0;
-metro.onBeat((i) => {
+let countingIn = false, countBeats = 0, countWasOn = false, countTimer = 0, countStart = null;
+metro.onBeat((i, info) => {
   const d = $("beat-dot"); d.className = "beat-dot on" + (i === 0 ? " accent" : "");
   const pips = $("beat-pips").children;
   for (let k = 0; k < pips.length; k++) pips[k].className = k === i ? "on" + (i === 0 ? " first" : "") : "";
   setTimeout(() => { d.className = "beat-dot"; for (const p of pips) p.className = ""; }, 140);
-  if (countingIn) { countBeats++; refreshNext(); if (countBeats >= (current && current.timeSig ? current.timeSig[0] : 4)) endCountIn(); }
+  if (countingIn && info) {
+    if (countStart == null && i === 0) countStart = info.n;
+    if (countStart == null) return;
+    countBeats = info.n - countStart + 1;
+    if (countBeats > entryBeats()) {
+      clearTimeout(countTimer);
+      countTimer = setTimeout(endCountIn, Math.max(0, info.perf - performance.now()));
+    } else refreshNext();
+  }
 });
 function syncMetroUi() {
   $("metro-toggle").checked = metro.isRunning;
@@ -1702,7 +1770,7 @@ function syncMetroUi() {
   updateMicNote();
 }
 function setMetroBpm(n, silent) {
-  metroBpm = Math.max(30, Math.min(240, Math.round(n))); metro.setBpm(metroBpm); holds.setBpm(metroBpm, performance.now());
+  metroBpm = Math.max(30, Math.min(240, Math.round(n))); syncMetroRate(); holds.setBpm(metroBpm, performance.now());
   $("bpm-val").textContent = metroBpm; $("tempo-t").textContent = `♩ ${metroBpm} BPM`;
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${isPulso() ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
   if (!silent) {
@@ -1713,14 +1781,25 @@ function setMetroBpm(n, silent) {
 $("bpm-down").addEventListener("click", () => setMetroBpm(metroBpm - 4));
 $("bpm-up").addEventListener("click", () => setMetroBpm(metroBpm + 4));
 $("metro-toggle").addEventListener("change", (e) => { if (e.target.checked) metro.start(); else metro.stop(); syncMetroUi(); });
-$("countin-toggle").addEventListener("change", (e) => { settings.countIn = e.target.checked; store.saveSettings({ countIn: settings.countIn }).catch(() => {}); });
+const startMode = () => settings.practiceStart || ((settings.countIn || isPulso()) ? "count" : "first");
+const entryUnit = () => clickUnit(current?.timeSig);
+const entryBeats = () => Math.max(1, Math.round(measureStarts(current).barLen / entryUnit()));
+function syncMetroRate() { metro.setBpm(metroBpm); metro.setUnit(entryUnit()); }
+$("practice-start").addEventListener("click", (e) => {
+  const mode = e.target.closest("button[data-start]")?.dataset.start;
+  if (!mode || mode === startMode()) return;
+  settings.practiceStart = mode;
+  store.saveSettings({ practiceStart: mode }).catch(() => {});
+  if (current && screen === "practice") resetSession();
+  syncModeUi();
+});
 /** Cuenta de entrada: un compás de clics; mientras tanto se ignoran las notas. */
 function beginCountIn() {
-  if (isPulso() || !settings.countIn || !current || !session) return;
+  if (isPulso() || startMode() !== "count" || !current || !session) return;
   countWasOn = metro.isRunning;
   if (!metro.isRunning) { metro.start(); syncMetroUi(); }
   if (!metro.isRunning) return;   // sin audio: no se espera
-  countingIn = true; countBeats = 0;
+  countingIn = true; countBeats = 0; countStart = null;
   clearTimeout(countTimer); countTimer = setTimeout(endCountIn, 60000 / metroBpm * 12 + 800);
   refreshNext();
 }
@@ -1732,11 +1811,12 @@ function endCountIn() {
 }
 
 const midi = createMidiInput({
-  onNoteOn: (m, vel, ts) => { if (tx.midiNoteOn(m, vel, ts)) return; handleNoteOn(m, ts); },
-  onNoteOff: (m, ts) => { if (tx.midiNoteOff(m, ts)) return; handleNoteOff(m, ts); },
+  onNoteOn: onMidiNoteOn,
+  onNoteOff: onMidiNoteOff,
   onPedal: (down, ts) => holdPedal(down, ts),
   onStatus: (s) => {
     midiConnected = !!s.connected;
+    if (!midiConnected) heldMidiCommands.clear();
     if (mic && mic.running) onMicStatus({ connected: true });
     $("midi-dot").classList.toggle("on", !!s.connected);
     $("midi-usb").classList.toggle("on", !!s.connected && s.via !== "ble");
@@ -1750,10 +1830,48 @@ const midi = createMidiInput({
     refreshInputPill(); syncInputSheet(); tx.midiChanged();
   },
 });
+
+const heldMidiCommands = new Set();
+const scoreUsesMidi = (score, midi) => score.measures.some((measure) =>
+  ["rh", "lh"].some((hand) => measure[hand]?.some((ev) => ev.k.some((key) => keyToMidi(key) === midi))));
+function handleMidiCommand(m) {
+  if (heldMidiCommands.has(m)) return true;
+  if (settings.midiTransport === false || (m !== 21 && m !== 108)) return false;
+  if (screen === "review" && editState && !annoR.isActive() && !scoreUsesMidi(editState.score, m)) {
+    heldMidiCommands.add(m);
+    if (m === 21) lcR.pause();
+    else if (lcR.isOpen) { if (!lcR.playing) lcR.play(); }
+    else reviewListen();
+    return true;
+  }
+  if (screen !== "practice" || !current || annoP.isActive() || scoreUsesMidi(current, m)) return false;
+  heldMidiCommands.add(m);
+  if (m === 21) {
+    if (lcP.isOpen) lcP.pause();
+    else if (!paused && (isPulso() ? pulse && !pulse.finished : session?.state.status === "playing")) setPaused(true);
+  } else if (lcP.isOpen) { if (!lcP.playing) lcP.play(); }
+  else if (paused) setPaused(false);
+  else openListen();
+  return true;
+}
+function onMidiNoteOn(m, vel, ts) {
+  if (tx.midiNoteOn(m, vel, ts) || handleMidiCommand(m)) return;
+  handleNoteOn(m, ts, "midi");
+}
+function onMidiNoteOff(m, ts) {
+  if (heldMidiCommands.delete(m) || tx.midiNoteOff(m, ts)) return;
+  handleNoteOff(m, ts);
+}
 if (!midi.supported.usb) { $("midi-usb").disabled = true; $("midi-usb").title = "Este navegador no soporta Web MIDI"; }
 if (!midi.supported.ble) { $("midi-ble").disabled = true; $("midi-ble").title = "Este navegador no soporta Web Bluetooth"; }
-$("midi-usb").addEventListener("click", () => midi.connectUsb().catch((e) => toast("USB: " + (e && e.message || e), 4500)));
-$("midi-ble").addEventListener("click", () => midi.connectBle().catch((e) => toast("Bluetooth: " + (e && e.message || e), 4500)));
+$("midi-usb").addEventListener("click", () => {
+  midi.connectUsb().catch((e) => toast("USB: " + (e && e.message || e), 4500));
+  if (settings.midiTransport !== false) player.unlock().catch(() => {});
+});
+$("midi-ble").addEventListener("click", () => {
+  midi.connectBle().catch((e) => toast("Bluetooth: " + (e && e.message || e), 4500));
+  if (settings.midiTransport !== false) player.unlock().catch(() => {});
+});
 
 /* ---------- transcribir desde un audio y grabar la melodía (js/txflow.js) ---------- */
 const txCtx = (s) => ({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl });
@@ -1891,8 +2009,8 @@ function startPractice(score, o = {}) {
   practiceMode = md;
   activeTask = o.task || null; taskBannerOff = false;
   setMetroBpm(o.bpm || (r && r.bpm) || score.bpm || 80, true);
-  metro.setBeats((score.timeSig || [4, 4])[0]);
-  buildPips((score.timeSig || [4, 4])[0]);
+  metro.setBeats(entryBeats());
+  buildPips(entryBeats());
   kb.setRange(...Object.values(scoreRange(score)));
   if (lcP.isOpen) lcP.close("silent");
   kbOpen = false; paused = false; listening = false; closePSheet(true);
@@ -1916,6 +2034,7 @@ function resetSession() {
   resetHolds();
   laps = []; agg = { clean: 0, dirty: 0, wrong: 0 }; trace = { clean: [], dirty: [], errors: [] }; handMiss = { rh: 0, lh: 0 };
   allSteps = buildSteps(current, hands);
+  practiceHandMarks.clear();
   holdAll = holdInfo(current, allSteps);
   steps = passage ? passageSteps(allSteps, passage) : allSteps;
   practiceR.clearMarks(); practiceR.setCursor(null);
@@ -1933,6 +2052,7 @@ function newSession(first) {
   session = createSession(steps, { maxStreak: isLoop() ? 999 : MAX_STREAK });
   missView = null;
   if (!first) practiceR.clearMarks();
+  practiceHandMarks.clear();
   practiceR.setCursor(steps[0].i);
   lastNoteMeasure = -1; trackMeasureNote(steps[0].measure);
   updatePracticeUi(); syncKeyboard(true); refreshNext();
@@ -1959,11 +2079,12 @@ function rememberPractice(now) {
 /* ----- modo "A pulso": el cursor avanza solo al tempo y cada paso tiene su instante ideal ----- */
 let practiceMode = "espera";           // "espera" (Te espero) | "pulso" (A pulso)
 let pulse = null, pulseRun = null, pulseTimer = 0, pulseRestartT = 0, pulseInfo = null, markedLap = -1;
+let pulsePausedAt = null;
 const pulseWin = () => windowFor(metroBpm, settings.pulseWindow || DEFAULT_WINDOW);
 const isPulso = () => practiceMode === "pulso";
 metro.onBeat((i, info) => {   // la primera pulsación fija el instante de la toma: cuenta de entrada de un compás y arranca
   if (!pulseRun || !info) return;
-  if (pulseRun.take0 == null && info.n === 0) pulseRun.take0 = info.perf + pulseRun.nBeats * beatMs(metroBpm);
+  if (pulseRun.phase === "count" && pulseRun.take0 == null && info.n === 0) pulseRun.take0 = info.perf + pulseRun.nBeats * entryUnit() * beatMs(metroBpm);
   if (pulseRun.phase === "count") { pulseRun.countN = Math.min(pulseRun.nBeats, info.n + 1); refreshNext(); }
 });
 const MODE_HINT = {
@@ -1976,11 +2097,15 @@ function syncModeUi() {
   $("mode-hint").textContent = MODE_HINT[practiceMode] + (mic && mic.running && !p ? " A pulso todavía no funciona con micrófono." : "");
   $("btn-tempo").classList.toggle("pulso", p);
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${p ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
-  $("metro-toggle").disabled = p; $("countin-toggle").disabled = p;
-  $("metro-toggle").closest(".switch").classList.toggle("locked", p); $("countin-toggle").closest(".switch").classList.toggle("locked", p);
-  $("countin-sub").textContent = p ? "En «A pulso» siempre hay un compás de cuenta antes de empezar." : "Un compás de clics antes de empezar (y al reiniciar o continuar).";
-  if (p) $("metro-toggle").checked = true;
-  $("countin-toggle").checked = p || !!settings.countIn;
+  $("metro-toggle").disabled = p;
+  $("metro-toggle").closest(".switch").classList.toggle("locked", p);
+  document.querySelectorAll("#practice-start button").forEach((b) => {
+    const on = b.dataset.start === startMode();
+    b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
+  });
+  $("countin-sub").textContent = startMode() === "first"
+    ? "Tocá la primera nota indicada para arrancar."
+    : "Escuchá un compás de clics y empezá en el siguiente tiempo fuerte.";
   $("practice-streak").hidden = p;
   syncMetroUi();
 }
@@ -1997,15 +2122,18 @@ $("mode-seg").addEventListener("click", (e) => { const b = e.target.closest("but
 function stopPulse() { clearInterval(pulseTimer); pulseTimer = 0; clearTimeout(pulseRestartT); pulseRestartT = 0; }
 function startPulseTake() {
   stopPulse();
+  pulsePausedAt = null;
   const ms = measureStarts(current);
   const from = passage ? passage.from : 0, to = passage ? passage.to : N() - 1;
   const origin = ms.starts[from] || 0, lapBeats = (to + 1 < ms.starts.length ? ms.starts[to + 1] : ms.total) - origin;
-  const nBeats = Math.max(1, Math.round(ms.barLen));
+  const nBeats = entryBeats();
   pulse = createPulse(steps, { bpm: metroBpm, win: pulseWin(), origin, lapBeats: lapBeats > 0 ? lapBeats : ms.barLen, loop: isLoop() });
-  pulseRun = { phase: "count", take0: null, nBeats, countN: 0, k: 0, lap: -1, laps: [] };
+  const first = startMode() === "first";
+  pulseRun = { phase: first ? "armed" : "count", take0: null, nBeats, countN: 0, k: 0, lap: -1, laps: [] };
   pulseInfo = null; markedLap = -1; missView = null;
-  metro.stop(); metro.setBpm(metroBpm); metro.setBeats(nBeats); metro.start();
-  if (!metro.isRunning) {
+  metro.stop(); syncMetroRate(); metro.setBeats(nBeats);
+  if (!first) metro.start();
+  if (!first && !metro.isRunning) {
     pulse = null; pulseRun = null; practiceMode = "espera"; syncModeUi();
     toast("Este navegador no puede reproducir el metrónomo: seguís en «Te espero».", 4800);
     resetSession(); return;
@@ -2018,7 +2146,7 @@ function startPulseTake() {
 }
 function markPulse(entry, kind) {   // la partitura muestra la vuelta en curso: al empezar otra vuelta se limpian las marcas
   if (entry.lap < markedLap) return;
-  if (entry.lap > markedLap) { practiceR.clearMarks(); markedLap = entry.lap; }
+  if (entry.lap > markedLap) { practiceR.clearMarks(); practiceHandMarks.clear(); markedLap = entry.lap; }
   practiceR.markStep(entry.i, kind);
 }
 function pulseTick() {
@@ -2037,6 +2165,20 @@ function pulseTick() {
   let changed = false;
   for (const c of pulse.tick(now)) {
     changed = true;
+    const target = stepHandNotes(c.entry);
+    if (hasTwoHands(target)) {
+      if (c.entry.lap < markedLap) continue;
+      markPulse(c.entry, null);
+      for (const hand of ["rh", "lh"]) {
+        const missing = target[hand].filter((m) => c.missing.includes(m));
+        if (!missing.length || practiceR.hasError(c.entry.i, hand)) continue;
+        const text = withHand(`Faltó ${names(missing)}`, hand);
+        pulseError(c.entry, "omit", null, text, hand, missing);
+      }
+      showHandFeedback(c.entry, c.hit, null, c.timing === "ontime" ? "clean" : (c.timing || "clean"));
+      if (c.lapDone && isLoop()) pulseLapDone(c.entry.lap);
+      continue;
+    }
     if (c.status !== "hit") {
       markPulse(c.entry, "dirty");
       if (c.status === "missed" && c.entry.lap >= markedLap) {
@@ -2050,10 +2192,10 @@ function pulseTick() {
   if (pulse.finished) finishPulse();
 }
 /** Marca el error en el lugar donde ocurrió (✕ nota equivocada, ○ omitida) y lo anota para la lista. entry = { i, measure, midi, lap }. */
-function pulseError(entry, kind, played, text) {
+function pulseError(entry, kind, played, text, hand, expected = entry.midi) {
   if (entry.lap < markedLap) return;
-  markPulse(entry, "dirty");
-  practiceR.markError(entry.i, { kind, played, expected: entry.midi, text });
+  if (!hand) markPulse(entry, "dirty");
+  practiceR.markError(entry.i, { kind, played, expected, text, hand });
   logError({ measure: entry.measure, kind, text });
   announceError(text, entry.measure);
 }
@@ -2068,30 +2210,61 @@ function finishPulse() {
 }
 const FB_CLS = { ontime: "ontime", early: "early", late: "late" };
 function pulseNote(m, ts, src) {
-  if (!pulse || !pulseRun || pulseRun.take0 == null || paused || listening) return;
+  if (!pulse || !pulseRun || paused || listening) return;
+  if (pulseRun.phase === "armed") {
+    if (!steps[0].midi.includes(m)) return;
+    const firstAt = pulse.idealAt(0, 0);
+    pulseRun.take0 = ts - firstAt;
+    pulseRun.phase = "play";
+    resumePulseClock(ts);
+  }
+  if (pulseRun.take0 == null) return;
   const r = pulse.noteOn(m, ts - pulseRun.take0);
   if (r.kind === "ignored") return;
   practiceR.follow();
   if (r.kind === "hit") {
     kb.flash(m, "ok"); startHold(m, r.entry.i, src, ts);
+    const target = stepHandNotes(r.entry), split = hasTwoHands(target);
+    if (split && r.entry.lap >= markedLap) {
+      markPulse(r.entry, null);
+      const status = r.meanTiming === "ontime" ? "clean" : r.meanTiming;
+      const marks = showHandFeedback(r.entry, r.hit, null, status);
+      for (const hand of ["rh", "lh"]) if (marks[hand] && target[hand].every((n) => r.hit.includes(n))) practiceR.resolveError(r.entry.i, hand);
+    }
     if (r.done) {
       const tm = r.meanTiming;
-      markPulse(r.entry, tm === "ontime" ? "clean" : tm);
+      if (!split) markPulse(r.entry, tm === "ontime" ? "clean" : tm);
       practiceR.setTag(r.entry.i, TIMING_ES[tm], FB_CLS[tm]);
       pulseInfo = { cls: FB_CLS[tm], sub: `${TIMING_ES[tm][0].toUpperCase()}${TIMING_ES[tm].slice(1)} ${devText(r.meanDev)}` };
     }
   } else {
     kb.flash(m, "bad");
     const where = r.entry || (steps[pulseRun.k] ? { ...steps[pulseRun.k], lap: Math.max(0, pulseRun.lap) } : null);   // nota suelta: se marca en el paso que estaba sonando
-    if (r.entry) { markPulse(r.entry, "dirty"); practiceR.setTag(r.entry.i, "otra nota", "miss"); }
-    if (where) pulseError(where, "wrong", m, errMsg(m, where.midi));
+    if (where && where.lap >= markedLap) {
+      const target = stepHandNotes(where);
+      if (hasTwoHands(target)) {
+        const hit = r.hit || [];
+        const missing = where.midi.filter((n) => !hit.includes(n));
+        const hand = errorHand(target, m, missing);
+        if (hand) {
+          markPulse(where, null);
+          const expected = target[hand].filter((n) => missing.includes(n));
+          showHandFeedback(where, hit, hand);
+          pulseError(where, "wrong", m, withHand(errMsg(m, expected), hand), hand, expected);
+        } else if (!practiceR.hasError(where.i)) logError({ measure: where.measure, kind: "wrong", text: errMsg(m, missing.length ? missing : where.midi) });
+      } else {
+        if (r.entry) { markPulse(r.entry, "dirty"); practiceR.setTag(r.entry.i, "otra nota", "miss"); }
+        pulseError(where, "wrong", m, errMsg(m, where.midi));
+      }
+    }
     pulseInfo = { cls: "miss", sub: `Tocaste ${midiName(m)}` };
   }
   refreshNext(); updatePracticeUi();
 }
 function pulseNext() {
   if (!pulseRun) { setNext("Sin notas", "No hay notas para esta selección de manos", "", ""); return; }
-  if (paused) { setNext("En pausa", "Tocá Continuar", "", "Al continuar empezamos de nuevo, con la cuenta"); return; }
+  if (paused) { setNext("En pausa", "Tocá Continuar", "", ""); return; }
+  if (pulseRun.phase === "armed") { setNext("Primera nota", settings.guide === false ? "Tocá para arrancar" : names(steps[0].midi), "", "La primera nota correcta activa el pulso"); return; }
   if (pulseRun.phase === "count") { setNext("Cuenta de entrada", String(Math.max(1, pulseRun.countN || 1)), "", "Empezá en el primer tiempo fuerte"); return; }
   const guide = settings.guide !== false, st = steps[pulseRun.k];
   setNext("A pulso", guide && st ? names(st.midi) : "Seguí el pulso", pulseInfo ? pulseInfo.cls : "", pulseInfo ? pulseInfo.sub : "");
@@ -2298,7 +2471,7 @@ function refreshNext() {
   if (isPulso()) { pulseNext(); return; }
   if (!session) { setNext("Sin notas", "No hay notas para esta selección de manos", "", ""); return; }
   const st = session.state;
-  if (countingIn) { setNext("Cuenta de entrada", String(Math.max(1, countBeats + 1)), "", "Empezá cuando termine el compás"); return; }
+  if (countingIn) { setNext("Cuenta de entrada", String(Math.max(1, Math.min(entryBeats(), countBeats))), "", "Empezá en el próximo tiempo fuerte"); return; }
   if (paused) { setNext("En pausa", "Tocá Continuar", "", ""); return; }
   if (nextOverride) { setNext(nextOverride.label, nextOverride.name, nextOverride.cls || "", nextOverride.sub); return; }
   if (st.status === "finished") { setNext("", "¡Terminaste!", "", ""); return; }
@@ -2317,10 +2490,30 @@ function setPaused(v, silent) {
   $("pause-t").textContent = paused ? "Continuar" : "Pausar";
   if (paused) holds.clearActive();
   if (silent) return;
-  if (isPulso()) { if (paused) { stopPulse(); metro.stop(); syncMetroUi(); refreshNext(); } else resetSession(); return; }   // A pulso: al continuar se arranca otra toma con cuenta
+  if (isPulso()) {
+    const now = performance.now();
+    if (paused) {
+      pulsePausedAt = pulseRun?.phase === "play" ? now : null;
+      stopPulse(); metro.stop(); syncMetroUi(); refreshNext();
+    } else if (pulsePausedAt != null && pulseRun?.take0 != null) {
+      pulseRun.take0 += now - pulsePausedAt;
+      pulsePausedAt = null;
+      resumePulseClock(now);
+      pulseTimer = setInterval(pulseTick, 30);
+      refreshNext();
+    } else resetSession();
+    return;
+  }
   if (paused) { countWasPaused = metro.isRunning; endCountIn(); metro.stop(); }
   else { if (countWasPaused) metro.start(); beginCountIn(); }
   syncMetroUi(); refreshNext();
+}
+function resumePulseClock(now) {
+  const origin = pulseRun.take0;
+  const unitMs = entryUnit() * beatMs(metroBpm);
+  const beat = Math.max(1, Math.floor((now - origin) / unitMs) + 1);
+  metro.start({ delay: Math.max(0.05, (origin + beat * unitMs - performance.now()) / 1000), beat });
+  syncMetroUi();
 }
 let countWasPaused = false;
 $("practice-pause").addEventListener("click", () => {
@@ -2435,7 +2628,11 @@ $("st-measure").addEventListener("click", () => {
   if (k0 < 0) return;
   const from = session.state.index;
   if (!session.jumpTo(k0)) return;
-  for (let k = k0; k <= from && k < steps.length; k++) practiceR.markStep(steps[k].i, null);
+  for (let k = k0; k <= from && k < steps.length; k++) {
+    practiceR.markStep(steps[k].i, null);
+    practiceR.clearStepErrors(steps[k].i);
+    practiceHandMarks.delete(steps[k].i);
+  }
   missView = null; kb.setHint(null);
   practiceR.setCursor(steps[k0].i); updatePracticeUi(); syncKeyboard(true); refreshNext(); trackPhrase();
 });
@@ -2561,32 +2758,51 @@ function handleNoteOn(m, ts, src) {
   if (ev.type === "partial" || ev.type === "step" || ev.type === "finished") startHold(m, steps[ev.step].i, src, ts);
   practiceR.follow();   // si estabas mirando otra parte, vuelve suavemente al cursor
   const gi = steps[ev.step] ? steps[ev.step].i : null;
+  const step = steps[ev.step];
+  const target = stepHandNotes(step);
+  const split = hasTwoHands(target);
+  const completeMarks = () => {
+    if (split) showHandFeedback(step, step.midi);
+    else practiceR.markStep(gi, ev.result);
+    practiceR.resolveError(gi);
+  };
   switch (ev.type) {
-    case "partial": kb.setHint(null); kb.flash(m, "ok"); missView = null; syncKeyboard(false); break;
+    case "partial":
+      kb.setHint(null); kb.flash(m, "ok"); missView = null;
+      if (split) {
+        const marks = showHandFeedback(step, session.state.pressed);
+        for (const hand of ["rh", "lh"]) {
+          if (marks[hand] && target[hand].every((n) => !ev.expected.includes(n))) practiceR.resolveError(gi, hand);
+        }
+      }
+      syncKeyboard(false); break;
     case "step":
       kb.setHint(null); kb.flash(m, "ok"); missView = null; hideStuck();
-      practiceR.markStep(gi, ev.result); practiceR.resolveError(gi); practiceR.setCursor(steps[session.state.index].i);
+      completeMarks(); practiceR.setCursor(steps[session.state.index].i);
       syncKeyboard(true); if (settings.guide === false) kb.focus([m]); trackPhrase(); trackMeasureNote(steps[session.state.index] ? steps[session.state.index].measure : steps[ev.step].measure); rememberPractice(); break;
     case "miss": case "stopped": {
-      practiceR.markStep(gi, "dirty");
-      const t = nearestMissing(m, ev.expected);
+      const hand = split ? errorHand(target, m, ev.expected) : null;
+      const expected = hand ? target[hand].filter((n) => ev.expected.includes(n)) : ev.expected;
+      if (split) showHandFeedback(step, session.state.pressed, hand);
+      else practiceR.markStep(gi, "dirty");
+      const t = nearestMissing(m, expected);
       kb.flash(m, "bad");
       const guide = settings.guide !== false;
       if (guide && t != null) kb.setHint({ fromMidi: m, toMidi: t });
       if (!guide) kb.focus([m]);
       const mv = t == null ? null : describeMove(m, t);
-      const msg = errMsg(m, ev.expected), meas = steps[ev.step].measure;
-      missView = { played: midiName(m), next: names(ev.expected), sub: guide && mv ? mv.text : "", msg, measure: meas };
-      practiceR.markError(gi, { kind: "wrong", played: m, expected: ev.expected, text: msg });
+      const msg = withHand(errMsg(m, expected), hand), meas = step.measure;
+      missView = { played: midiName(m), next: names(expected), sub: guide && mv ? mv.text : "", msg, measure: meas };
+      if (!split || hand) practiceR.markError(gi, { kind: "wrong", played: m, expected, text: msg, hand });
       logError({ measure: meas, kind: "wrong", text: msg });
       announceError(msg, meas);
-      const hm = stepHands(steps[ev.step]);
-      new Set(ev.expected.map((x) => hm.get(x) || "rh")).forEach((h) => { handMiss[h]++; });
+      if (hand) handMiss[hand]++;
+      else if (!split) handMiss[target.rh.length ? "rh" : "lh"]++;
       if (isLoop() && ev.type === "miss" && ev.streak > MAX_STREAK) { session.resetStreak(); showStuck(); }
       break;
     }
     case "finished":
-      kb.setHint(null); kb.flash(m, "ok"); missView = null; practiceR.markStep(gi, ev.result); practiceR.resolveError(gi); syncKeyboard(false);
+      kb.setHint(null); kb.flash(m, "ok"); missView = null; completeMarks(); syncKeyboard(false);
       if (isLoop()) completeLap(); else { setNext("", "¡Terminaste!", "", ""); }
       break;
   }
@@ -2974,7 +3190,7 @@ if (new URLSearchParams(location.search).has("debug")) {
     practice: (sc, o) => { settings.onscreenKeyboard = true; applyKeyboardSetting(); startPractice(validateScore(sc).score, o || {}); },
     search: (t, a) => openSearch({ title: t, artist: a || "" }),
     settingsNow: () => settings, setSetting: (k, v) => { settings[k] = v; },
-    fakeMidi: (on) => { midiConnected = !!on; tx.midiChanged(); }, midiOn: (m, vel, ts) => { if (!tx.midiNoteOn(m, vel || 80, ts || performance.now())) handleNoteOn(m); }, midiOff: (m, ts) => { if (!tx.midiNoteOff(m, ts || performance.now())) handleNoteOff(m); },
+    fakeMidi: (on) => { midiConnected = !!on; tx.midiChanged(); }, midiOn: (m, vel, ts) => onMidiNoteOn(m, vel || 80, ts || performance.now()), midiOff: (m, ts) => onMidiNoteOff(m, ts || performance.now()),
     tx: () => ({ stage: tx.stage, open: tx.isOpen, notes: tx.notes }),
     openReview: (sc, isNew) => openReview(validateScore(sc).score, isNew), refreshLibrary,
     holdAt: (i) => holdAll[i] || [], nextStep: () => (session ? steps[session.state.index] : null),

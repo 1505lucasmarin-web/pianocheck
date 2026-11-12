@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importMusicXml, importMidiFile, parseXml, splitBeats } from '../js/importers.js';
+import { importMusicXml, importMidiFile, parseXml, pdfPageNumbers, splitBeats } from '../js/importers.js';
 import { zipSync, strToU8 } from '../vendor/fflate.mjs';
-import { durBeats } from '../js/model.js';
+import { buildSteps, durBeats } from '../js/model.js';
+import { buildSchedule } from '../js/playback.js';
 
 const enc = (s) => new TextEncoder().encode(s);
 const file = (bytes, name) => ({ name, arrayBuffer: async () => (bytes instanceof Uint8Array ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : bytes) });
@@ -73,7 +74,7 @@ test('MusicXML: una parte sin staffs se separa por do central', async () => {
   assert.equal(s.title, 'a');
 });
 
-test('MusicXML: dos voces simultáneas coincidentes se funden en acorde; voz distinta se descarta', async () => {
+test('MusicXML: preserva una segunda voz que cambia de nota mientras la primera se sostiene', async () => {
   const xml = `<score-partwise><part-list/><part id="P1"><measure number="1"><attributes><divisions>1</divisions><time><beats>4</beats><beat-type>4</beat-type></time><staves>2</staves></attributes>
   ${note(pitch('E', 5), 2, 'half')}${note(pitch('G', 5), 2, 'half')}
   <backup><duration>4</duration></backup>
@@ -81,8 +82,18 @@ test('MusicXML: dos voces simultáneas coincidentes se funden en acorde; voz dis
   <backup><duration>4</duration></backup>
   ${note(pitch('C', 3), 4, 'whole', '', 2, 3)}</measure></part></score-partwise>`;
   const s = await importMusicXml(file(enc(xml), 'v.xml'));
-  assert.deepEqual(s.measures[0].rh.map((e) => e.k), [['c/5', 'e/5'], ['g/5']]);
+  assert.deepEqual(s.measures[0].rh.map((e) => e.k), [['c/5', 'e/5'], ['c/5', 'g/5'], ['d/5', 'g/5']]);
+  assert.deepEqual(s.measures[0].rh[2].ties, ['g/5']);
+  assert.deepEqual(buildSteps(s, 'rh').map((step) => step.midi), [[72, 76], [72, 79], [74]]);
+  assert.deepEqual(buildSchedule(s, { hands: 'rh' }).events.filter((e) => e.midi === 79).map((e) => [e.beat, e.dur]), [[2, 2]]);
   assert.deepEqual(s.measures[0].lh, [{ k: ['c/3'], d: 'w' }]);
+});
+
+test('PDF: rango estricto, sin duplicados ni recorte silencioso', () => {
+  assert.deepEqual(pdfPageNumbers('3,1-2,2', 4), [1, 2, 3]);
+  assert.deepEqual(pdfPageNumbers('', 4), [1, 2, 3, 4]);
+  assert.throws(() => pdfPageNumbers('3-7', 4), /4 páginas/);
+  assert.throws(() => pdfPageNumbers('', 31), /30 páginas/);
 });
 
 test('MXL (zip con container.xml)', async () => {

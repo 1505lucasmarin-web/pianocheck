@@ -61,6 +61,16 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 ## Tests
 `node --test test/*.test.mjs`
 
+## Práctica, anotaciones e importación
+
+- En un piano de 88 teclas conectado por MIDI, La0 pausa y Do8 inicia la escucha o continúa. También pausa y reanuda la práctica. Si la partitura usa una de esas notas, se conserva como tecla musical. Se puede desactivar en Ajustes.
+- En Tempo → Cómo empezás, elegí Primera nota o Cuenta de entrada. En A pulso, Primera nota espera el primer ataque correcto y toma ese instante como referencia. Cuenta de entrada usa un compás y arranca en el siguiente tiempo fuerte.
+- Cuando las manos tocan juntas, el ✓ va en el pentagrama que completó sus notas y la ✕ junto a la nota pendiente del otro. Si no se puede atribuir el error por altura, se informa sin señalar una mano equivocada.
+- Sugerir digitación usa ambas manos, el contexto de las notas y los acordes para completar los dedos faltantes. Conserva los números existentes y permite editar y guardar en Revisión. En Práctica se puede probar desde Lectura (Aa).
+- En Anotar, elegí 1–5, *, ↑, ↓ o ✓ y tocá la partitura. El teclado del dispositivo sólo aparece al pulsar Escribir texto.
+- Importar partitura → PDF admite escaneos JBIG2. El campo opcional permite indicar páginas, por ejemplo `1-2`. Si un documento reúne varias piezas, importalas por separado para conservar la armadura y el tempo de cada una. Las páginas vacías no se envían al proveedor. Revisá el resultado de la IA, especialmente si hay varias voces.
+- El catálogo local incluye el Preludio en Do mayor BWV 846, 35 compases, sin necesidad de IA. La edición MusicXML [de Noctave, CC0](https://noctavepiano.com/en/sheet-music/bach-prelude-bwv846/) se basa en la de [Mutopia](https://www.ibiblio.org/mutopia/cgibin/piece-info.cgi?id=5).
+
 ## Mi biblioteca
 
 - Botón "Mi biblioteca" siempre visible arriba (con contador): pantalla con todas tus partituras, búsqueda por título/artista, filtros (Todas, Creadas con IA, Importadas, Incluidas, Tareas, Arreglos, Borradores) y orden (Recientes, Título, Mejor resultado). La lista de inicio muestra las 4 más recientes y "Ver todas (N)".

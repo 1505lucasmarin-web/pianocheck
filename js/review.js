@@ -65,7 +65,7 @@ export function setDuration(score, ref, d, dots = 0) {
   const sc = clone(score), evs = evsOf(sc, ref), ev = evs[ref.idx];
   const old = durBeats(ev);
   ev.d = String(d); if (dots === 1 || dots === 2) ev.dots = dots; else delete ev.dots;
-  delete ev.tie;
+  delete ev.tie; delete ev.ties;
   const delta = durBeats(ev) - old;
   if (delta < -EPS) evs.splice(ref.idx + 1, 0, ...restsFor(-delta));            // los que siguen no se mueven
   else if (delta > EPS) {
@@ -145,6 +145,13 @@ export function setFinger(score, ref, f) {
 }
 export const fingerOfRef = (score, ref) => { const ev = valid(score, ref) && evsOf(score, ref)[ref.idx]; return ev && ev.f && ev.f[ref.keyIdx] ? ev.f[ref.keyIdx] : 0; };
 
+function unlinkPitch(event, key) {
+  if (event.tie) event.ties = event.k.filter((k) => k !== key);
+  else if (event.ties) event.ties = event.ties.filter((k) => k !== key);
+  delete event.tie;
+  if (!event.ties?.length) delete event.ties;
+}
+
 /** Sube/baja la altura en semitonos. */
 export function shiftPitch(score, ref, semi) {
   if (!valid(score, ref)) return { ok: false, error: "No hay nota seleccionada." };
@@ -152,6 +159,7 @@ export function shiftPitch(score, ref, semi) {
   if (m == null) return { ok: false, error: "Elegí una nota." };
   const nk = midiToKey(Math.max(21, Math.min(108, m + semi)));
   if (ev.k.some((k, j) => j !== ref.keyIdx && k === nk)) return { ok: false, error: "Ese acorde ya tiene esa nota." };
+  unlinkPitch(ev, ev.k[ref.keyIdx]);
   ev.k[ref.keyIdx] = nk;
   return { ok: true, score: sc, ref: { ...ref } };
 }
@@ -161,6 +169,7 @@ export function deleteNote(score, ref) {
   if (!valid(score, ref)) return { ok: false, error: "No hay nota seleccionada." };
   const sc = clone(score), ev = evsOf(sc, ref)[ref.idx];
   if (isRest(ev)) return { ok: false, error: "Elegí una nota." };
+  unlinkPitch(ev, ev.k[ref.keyIdx]);
   ev.k.splice(ref.keyIdx, 1);
   if (ev.f) { ev.f.splice(ref.keyIdx, 1); if (!ev.f.some(Boolean)) delete ev.f; }
   if (!ev.k.length) { delete ev.tie; delete ev.f; }
@@ -184,6 +193,7 @@ export function insertEvent(score, ref, where, { rest = false } = {}) {
       if (k && !cur.k.includes(k)) { key = k; break; }
     }
     if (!key) return { ok: false, error: "No se pudo sumar otra nota al acorde." };
+    if (cur.tie) { cur.ties = cur.k.slice(); delete cur.tie; }
     cur.k.push(key);
     if (cur.f) cur.f.push(0);
     return { ok: true, score: sc, ref: { ...ref, keyIdx: cur.k.length - 1 } };
