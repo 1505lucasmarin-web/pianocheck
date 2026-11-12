@@ -75,7 +75,7 @@ export function measureAtBeat(lay, beat) {
 }
 
 /** Negras que dura una nota sumando las ligaduras que la continúan en la misma mano (hasta el final de la pieza). */
-function chainBeats(score, mi, hand, idx, key) {
+export function chainBeats(score, mi, hand, idx, key) {
   const evs = (score.measures[mi] || {})[hand] || [];
   let beats = durBeats(evs[idx]);
   let m = mi, i = idx + 1;
@@ -127,7 +127,7 @@ export function buildSchedule(score, opts = {}) {
           const dk = Math.round(beat * 1e6) + ":" + midi;     // misma nota en las dos manos al mismo tiempo: una sola
           const prev = seen.get(dk);
           if (prev) { if (dur > prev.dur) prev.dur = dur; continue; }
-          const e = { id: id++, beat, dur, midi, hand, measure: mi };
+          const e = { id: id++, beat, dur, midi, hand, measure: mi, idx, keyIdx: ev.k.indexOf(key) };
           seen.set(dk, e); events.push(e);
         }
       });

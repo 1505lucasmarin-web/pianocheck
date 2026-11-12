@@ -1,5 +1,5 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v12";
+const VERSION = "pianocheck-v13";
 const SHELL = [
   "./",
   "index.html",
@@ -15,6 +15,7 @@ const SHELL = [
   "js/compose.js",
   "js/demo.js",
   "js/engine.js",
+  "js/hold.js",
   "js/importers.js",
   "js/issues.js",
   "js/keyboard.js",
@@ -26,6 +27,7 @@ const SHELL = [
   "js/mic-worklet.js",
   "js/midi.js",
   "js/model.js",
+  "js/mylib.js",
   "js/omr.js",
   "js/phrases.js",
   "js/passage.js",

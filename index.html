@@ -55,6 +55,7 @@
     <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V11M11 10V5a1.5 1.5 0 013 0v6M14 10.5V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4-2L4.5 14.5a1.5 1.5 0 012.2-2L8 14"/></symbol>
     <symbol id="i-skip" viewBox="0 0 24 24"><path d="M6 6l9 6-9 6zM18 6v12"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 6l-9 6 9 6zM6 6v12"/></symbol>
+    <symbol id="i-library" viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16.4 5.2l3.8 1-3.6 13.6-3.8-1z"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5z"/><path d="M12 6v13.5"/></symbol>
     <symbol id="i-clip" viewBox="0 0 24 24"><rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3.5h5v1M9 10h6M9 14h4"/></symbol>
     <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></symbol>
@@ -79,6 +80,7 @@
         <button type="button" class="btn ghost" id="welcome-theory">Teoría</button>
         <button type="button" class="btn ghost" id="welcome-connect"><svg class="ic sm" aria-hidden="true"><use href="#i-plug"/></svg>Conectar piano</button>
       </nav>
+      <button class="btn ghost" id="open-mylib" aria-label="Mi biblioteca"><svg class="ic sm" aria-hidden="true"><use href="#i-library"/></svg><span class="ml-lbl">Mi biblioteca</span><b class="ml-n" id="mylib-n" aria-hidden="true">0</b></button>
       <button class="btn icon ghost" id="btn-open-settings" aria-label="Ajustes"><svg class="ic"><use href="#i-sliders"/></svg></button>
     </header>
     <main class="content wide">
@@ -153,6 +155,20 @@
         </div>
       </section>
 
+      <section id="draft-card" class="continue draft-card" hidden aria-labelledby="draft-h">
+        <div class="continue-t"><span class="continue-k" id="draft-h">Seguí con tu borrador</span><b id="draft-title"></b><span id="draft-sub" class="continue-sub"></span></div>
+        <div class="row"><button class="btn primary big" id="draft-go"><svg class="ic"><use href="#i-pencil"/></svg>Seguir</button><button class="btn icon ghost" id="draft-x" aria-label="Descartar el borrador"><svg class="ic"><use href="#i-trash"/></svg></button></div>
+      </section>
+
+      <section id="library-section">
+        <div class="lib-head">
+          <h2>Tus partituras</h2>
+          <button class="btn primary" id="btn-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
+        </div>
+        <ul id="library-list" class="cards"></ul>
+        <div class="row center"><button class="btn" id="lib-all" hidden><svg class="ic sm" aria-hidden="true"><use href="#i-library"/></svg><span id="lib-all-t">Ver todas</span></button></div>
+      </section>
+
       <section id="theory-card" class="theory-entry" aria-labelledby="theory-card-h">
         <button class="te-btn" id="open-theory">
           <span class="te-ic"><svg class="ic"><use href="#i-book"/></svg></span>
@@ -166,16 +182,38 @@
         <ul id="task-list" class="cards"></ul>
       </section>
 
-      <section id="library-section">
-        <div class="lib-head">
-          <h2>Mi biblioteca</h2>
-          <button class="btn primary" id="btn-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
-        </div>
-        <ul id="library-list" class="cards"></ul>
-      </section>
       <section id="demo-section">
         <h2>Para probar</h2>
         <ul id="demo-list" class="cards"></ul>
+      </section>
+    </main>
+  </section>
+
+  <!-- 1c. Mi biblioteca -->
+  <section id="screen-mylib" class="screen" hidden aria-label="Mi biblioteca">
+    <header class="bar compact">
+      <button class="btn icon ghost" id="mylib-back" aria-label="Volver al inicio"><svg class="ic"><use href="#i-back"/></svg></button>
+      <h1 class="bar-title">Mi biblioteca <span class="ml-count" id="mylib-count"></span></h1>
+      <button class="btn primary" id="mylib-new"><svg class="ic sm"><use href="#i-plus"/></svg><span class="ml-lbl">Nueva</span></button>
+    </header>
+    <main class="content wide">
+      <form id="ml-form" class="ml-tools" role="search" aria-label="Buscar en mi biblioteca">
+        <label class="sr" for="ml-q">Buscar por título o artista</label>
+        <div class="ls-field"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="ml-q" type="search" autocomplete="off" spellcheck="false" maxlength="120" placeholder="Buscar por título o artista"></div>
+        <label class="ml-sort"><span class="sr">Ordenar por</span><select id="ml-sort"><option value="recientes">Recientes</option><option value="titulo">Título</option><option value="mejor">Mejor resultado</option></select></label>
+      </form>
+      <div id="ml-filters" class="chips ml-filters" role="group" aria-label="Filtrar por origen"></div>
+      <p id="ml-live" class="sr" role="status" aria-live="polite"></p>
+      <ul id="ml-list" class="cards"></ul>
+      <section id="ml-empty" class="ml-empty" hidden aria-labelledby="ml-empty-h">
+        <h2 id="ml-empty-h">Todavía no guardaste partituras</h2>
+        <p id="ml-empty-t">Cuando busques, importes o armes una partitura, queda acá.</p>
+        <div class="row center wrap">
+          <button class="btn primary" id="mlE-search"><svg class="ic sm"><use href="#i-search"/></svg>Buscar una canción</button>
+          <button class="btn" id="mlE-import"><svg class="ic sm"><use href="#i-plus"/></svg>Importar partitura</button>
+          <button class="btn" id="mlE-demo"><svg class="ic sm"><use href="#i-play"/></svg>Probar la demo</button>
+        </div>
+        <p class="hint ml-note" id="ml-note">Las partituras se guardan en este dispositivo y en esta dirección de la app. Si antes usaste otra dirección o instalación, no aparecen acá.</p>
       </section>
     </main>
   </section>
@@ -185,6 +223,7 @@
     <header class="bar compact">
       <button class="btn icon ghost" id="search-back" aria-label="Volver a la biblioteca"><svg class="ic"><use href="#i-back"/></svg></button>
       <div class="bar-title">Buscar una canción</div>
+      <button class="btn ghost ml-go" data-go-mylib aria-label="Mi biblioteca"><svg class="ic sm" aria-hidden="true"><use href="#i-library"/></svg><span class="ml-lbl">Mi biblioteca</span></button>
     </header>
     <main class="content" id="search-body"></main>
   </section>
@@ -198,6 +237,7 @@
       <button class="btn icon play-btn" id="review-play" aria-label="Escuchar la partitura (Play)" title="Escuchar"><svg class="ic" aria-hidden="true"><use href="#i-play"/></svg></button>
     </header>
     <div id="lt-review" role="group" aria-label="Reproductor" hidden></div>
+    <div id="review-draft" class="draft-line" hidden><span class="tag draft">Borrador</span><span>Se guarda solo. «Guardar» lo confirma; «Descartar» lo borra.</span></div>
     <div id="review-note" class="notice" role="note" hidden><svg class="ic"><use href="#i-info"/></svg><span id="review-note-t"></span></div>
     <div id="review-issues" class="issues" role="group" aria-label="Avisos de importación" hidden>
       <svg class="ic is-ic" aria-hidden="true"><use href="#i-warn"/></svg>
@@ -258,6 +298,7 @@
       </div>
       <div class="row wrap ed-save">
         <button class="btn" id="review-save">Guardar</button>
+        <button class="btn danger" id="review-discard" hidden><svg class="ic sm"><use href="#i-trash"/></svg>Descartar</button>
         <button class="btn" id="review-task"><svg class="ic sm"><use href="#i-clip"/></svg>Crear tarea</button>
         <button class="btn" id="review-arrange"><svg class="ic sm"><use href="#i-sliders"/></svg>Arreglo</button>
         <button class="btn" id="review-annotate" aria-pressed="false"><svg class="ic sm"><use href="#i-pen"/></svg>Anotar</button>
@@ -304,6 +345,7 @@
     </div>
     <div id="lap-line" class="lap-line" hidden role="status"></div>
     <div id="err-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="hold-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="practice-anno" class="anno-host"></div>
     <div class="score-area" id="practice-area">
       <div id="measure-note" class="measure-note" role="status" aria-live="polite" hidden></div>
@@ -396,6 +438,11 @@
           <button class="btn icon" id="bpm-up" aria-label="Subir tempo">+</button>
         </div>
         <label class="switch"><input id="metro-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Metrónomo</b><span class="metro-viz"><span id="beat-dot" class="beat-dot" aria-hidden="true"></span><span id="beat-pips" class="pips" aria-hidden="true"></span></span></span></label>
+        <span class="field-t" id="lbl-hold">Sostener las notas</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-hold" id="hold-seg">
+          <button data-hold="mostrar" aria-pressed="true">Mostrar</button><button data-hold="exigir" aria-pressed="false">Exigir</button><button data-hold="apagado" aria-pressed="false">Apagado</button>
+        </div>
+        <p class="hint hold-hint" role="status"></p>
         <label class="switch"><input id="countin-toggle" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Cuenta de entrada</b><span id="countin-sub">Un compás de clics antes de empezar (y al reiniciar o continuar).</span></span></label>
       </div>
 
@@ -463,6 +510,7 @@
         <p class="hint">Al cambiar de mano se reinicia el pasaje.</p>
         <div class="menu-list">
           <button class="btn big" id="menu-whole" hidden><svg class="ic"><use href="#i-back"/></svg>Empezar desde el compás 1</button>
+          <button class="btn big" id="menu-lib"><svg class="ic"><use href="#i-library"/></svg>Mi biblioteca</button>
           <button class="btn big" id="menu-restart"><svg class="ic"><use href="#i-restart"/></svg>Reiniciar</button>
           <button class="btn big" id="menu-stop"><svg class="ic"><use href="#i-flag"/></svg>Terminar y ver resultado</button>
         </div>
@@ -497,6 +545,7 @@
         <p class="strip-legend" id="legend-pulso" aria-hidden="true" hidden><span class="lg clean">✓ A tiempo</span><span class="lg off">≈ Fuera de tiempo</span><span class="lg dirty">✕ Errado u omitido</span></p>
       </section>
       <p id="result-compare" class="result-compare" hidden></p>
+      <p id="result-holds" class="result-compare res-holds" hidden></p>
       <details id="res-errors" class="res-errors" hidden><summary id="res-errors-t">Errores de esta toma</summary><ul id="res-errors-list" aria-label="Lista de errores"></ul></details>
       <dl class="result-stats">
         <div><dt id="st-l1">Pasos limpios</dt><dd id="res-clean">0</dd></div>
@@ -526,7 +575,7 @@
       </section>
       <div class="row center">
         <button class="btn big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg><span id="result-retry-t">Reintentar</span></button>
-        <button class="btn big" id="result-lib">Biblioteca</button>
+        <button class="btn big" id="result-lib"><svg class="ic" aria-hidden="true"><use href="#i-library"/></svg>Mi biblioteca</button>
       </div>
     </main>
   </section>
@@ -592,12 +641,31 @@
         <p class="hint">Piano: varios armónicos, golpe de martillo y cuerdas apenas desafinadas. Suave: un sonido más simple y redondo. Se escucha en Play, «Escuchar pasaje» y Teoría.</p>
       </section>
       <section class="group-card">
+        <h2>Sostener las notas</h2>
+        <span class="field-t first" id="lbl-hold2">Notas largas (1 tiempo o más)</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-hold2" id="set-hold">
+          <button data-hold="mostrar">Mostrar</button><button data-hold="exigir">Exigir</button><button data-hold="apagado">Apagado</button>
+        </div>
+        <p class="hint hold-hint" role="status"></p>
+        <p class="hint">Al acertar una nota larga, el piano guía y la partitura muestran cuánto falta sostenerla. Con micrófono no se puede medir cuándo soltás: ahí es sólo una guía.</p>
+      </section>
+      <section class="group-card">
         <h2>A pulso</h2>
         <span class="field-t first" id="lbl-win">Margen para «a tiempo»</span>
         <div class="seg opts" role="group" aria-labelledby="lbl-win" id="set-win">
           <button data-win="80">Justo ±80 ms</button><button data-win="120">Normal ±120 ms</button><button data-win="180">Amplio ±180 ms</button>
         </div>
         <p class="hint">En tempos lentos el margen crece solo. Se usa en «A pulso» (Tempo → Cómo practicás).</p>
+      </section>
+      <section class="group-card" id="lib-card">
+        <h2>Mi biblioteca</h2>
+        <p class="hint">Llevá tus partituras, anotaciones e historial a otro dispositivo o hacé una copia de seguridad. El archivo no incluye tu API key.</p>
+        <div class="row wrap share-btns">
+          <button class="btn" id="lib-export" type="button"><svg class="ic sm"><use href="#i-share"/></svg>Exportar mi biblioteca</button>
+          <button class="btn" id="lib-import" type="button"><svg class="ic sm"><use href="#i-plus"/></svg>Importar biblioteca</button>
+          <input id="lib-file" type="file" accept=".pianocheck-lib,.json,application/json" hidden>
+        </div>
+        <p class="hint" id="lib-msg" role="status" aria-live="polite"></p>
       </section>
       <section class="group-card" id="share-card">
         <h2>Pasar ajustes a otro dispositivo</h2>

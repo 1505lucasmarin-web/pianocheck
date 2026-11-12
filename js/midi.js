@@ -76,7 +76,7 @@ export function parseBleMidi(data) {
   return out;
 }
 
-export function createMidiInput({ onNoteOn, onNoteOff, onStatus } = {}) {
+export function createMidiInput({ onNoteOn, onNoteOff, onPedal, onStatus } = {}) {
   const nav = typeof navigator !== 'undefined' ? navigator : null;
   const supported = {
     usb: !!(nav && typeof nav.requestMIDIAccess === 'function'),
@@ -95,7 +95,8 @@ export function createMidiInput({ onNoteOn, onNoteOff, onStatus } = {}) {
   function handleMsg(st, d1, d2, ts) {
     const hi = st & 0xf0;
     if (hi === 0x90 && d2 > 0) onNoteOn && onNoteOn(d1, d2, ts);   // ts = instante del evento (misma escala que performance.now())
-    else if (hi === 0x80 || hi === 0x90) onNoteOff && onNoteOff(d1);
+    else if (hi === 0x80 || hi === 0x90) onNoteOff && onNoteOff(d1, ts);   // note-off, o note-on con velocity 0
+    else if (hi === 0xb0 && d1 === 64) onPedal && onPedal(d2 >= 64, ts);   // pedal de sustain (CC64)
   }
 
   // ---------- USB ----------

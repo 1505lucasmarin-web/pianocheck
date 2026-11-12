@@ -62,7 +62,7 @@ const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$
 
 /**
  * createKeyboard(container, { onKey?(midi), minWhite? }) →
- *   { setRange, setTargets([{midi, hand:"rh"|"lh", done?, label?, finger?}]), setSteps(list), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
+ *   { setHolds([{midi,hand,total,remaining,fraction,state}]), setHoldMsg(text,kind), setLane(bool), setRange, setTargets([{midi, hand:"rh"|"lh", done?, label?, finger?}]), setSteps(list), flash(midi,"ok"|"bad"), setHint({fromMidi,toMidi}|null),
  *     setInteractive(bool), focus(midis), destroy() }
  * `done:true` en un objetivo lo pinta verde (nota del acorde que ya tocaste).
  * `label` en un objetivo reemplaza el nombre de la tecla (p. ej. "Fa♯" o "Mi♯" con la ortografía de la tonalidad).
@@ -71,13 +71,15 @@ const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$
 export function createKeyboard(container, opts = {}) {
   const minWhite = opts.minWhite || 22, maxWhite = opts.maxWhite || 60;
   const onKey = opts.onKey || (() => {});
+  const onKeyUp = opts.onKeyUp || (() => {});
   container.classList.add("pk");
   container.setAttribute("role", "group");
   container.setAttribute("aria-label", "Teclado de piano");
-  container.innerHTML = `<div class="pk-bar"><span class="pk-leg" hidden><span class="pk-mk rh" aria-hidden="true"></span>MD<span class="pk-mk lh" aria-hidden="true"></span>MI</span></div><div class="pk-scroll"><div class="pk-keys"></div></div>`;
+  container.innerHTML = `<div class="pk-bar"><span class="pk-leg" hidden><span class="pk-mk rh" aria-hidden="true"></span>MD<span class="pk-mk lh" aria-hidden="true"></span>MI</span></div><div class="pk-scroll"><div class="pk-keys"></div></div><div class="pk-msg" role="status" aria-live="off" hidden></div>`;
   const legend = container.querySelector(".pk-leg");
   const scroller = container.querySelector(".pk-scroll");
   const keysEl = container.querySelector(".pk-keys");
+  const msgEl = container.querySelector(".pk-msg");
 
   let low = 48, high = 83, nWhite = 0, ww = minWhite, interactive = false;
   const els = new Map();             // midi → elemento
@@ -104,6 +106,7 @@ export function createKeyboard(container, opts = {}) {
       }
     }
     keysEl.innerHTML = html;
+    holdEls.clear();
     keysEl.querySelectorAll("[data-midi]").forEach((e) => els.set(+e.dataset.midi, e));
     svg = document.createElementNS(SVGNS, "svg");
     svg.setAttribute("class", "pk-arrow"); svg.setAttribute("aria-hidden", "true");
@@ -111,7 +114,7 @@ export function createKeyboard(container, opts = {}) {
     layout(); paint();
   }
 
-  function stripH() { return parseFloat(getComputedStyle(keysEl).getPropertyValue("--strip")) || 0; }
+  function stripH() { const cs = getComputedStyle(keysEl); return (parseFloat(cs.getPropertyValue("--strip")) || 0) + (parseFloat(cs.getPropertyValue("--lane")) || 0); }
 
   function layout() {
     const W = scroller.clientWidth;
@@ -121,7 +124,7 @@ export function createKeyboard(container, opts = {}) {
     keysEl.style.setProperty("--ww", ww + "px");
     keysEl.style.width = nWhite * ww + "px";
     keysEl.style.marginLeft = nWhite * ww < W ? Math.floor((W - nWhite * ww) / 2) + "px" : "0";
-    drawArrow(); drawSteps();
+    drawArrow(); drawSteps(); layoutHolds();
     if (pendingFocus) { const f = pendingFocus; pendingFocus = null; focusNow(f, false); }
     else if (!scroller.dataset.init) { scroller.dataset.init = "1"; scroller.scrollLeft = Math.max(0, centerX(Math.min(high, Math.max(low, 60))) - W / 2); }
   }
@@ -206,6 +209,58 @@ export function createKeyboard(container, opts = {}) {
     scroller.scrollTo({ left: target, behavior: smooth ? "smooth" : "auto" });
   }
 
+    /* ---------- notas sostenidas: carril sobre la tecla que se consume hacia ella (tipo Guitar Hero) ---------- */
+    const holdEls = new Map();    // midi → { el, fill, num, f, state, n }
+    let msgTimer = 0;
+    function holdBox(m) {
+      const k = els.get(m); if (!k) return null;
+      const black = isBlack(m), wid = Math.max(black ? 24 : 28, Math.min(ww * (black ? 0.7 : 0.82), 46));
+      return { x: centerX(m) - wid / 2, w: wid };
+    }
+    function layoutHolds() { holdEls.forEach((h, m) => { const b = holdBox(m); if (b) { h.el.style.left = b.x + "px"; h.el.style.width = b.w + "px"; } }); }
+    /**
+     * list = [{ midi, hand, total, remaining, fraction, state:"holding"|"done"|"early", guided? }] — una barra por tecla; fraction = lo ya sostenido.
+     * La barra va de la tecla hacia arriba y se acorta con el tiempo (sólo transform / opacity); muestra los pulsos que faltan (4 · 3 · 2 · 1).
+     */
+    function setHolds(list) {
+      const seen = new Set();
+      for (const hd of list || []) {
+        if (!hd || !els.has(hd.midi)) continue;
+        seen.add(hd.midi);
+        let h = holdEls.get(hd.midi);
+        const total = Math.max(1, Math.round(hd.total || 1));
+        if (!h) {
+          const b = holdBox(hd.midi); if (!b) continue;
+          const el = document.createElement("div");
+          el.className = "pk-hold"; el.style.left = b.x + "px"; el.style.width = b.w + "px";
+          const ticks = [];
+          for (let i = 1; i <= Math.min(total, 8); i++) ticks.push(`<i class="ph-t" style="bottom:${(i / (hd.total || total)) * 100}%"><b>${i}</b></i>`);
+          el.innerHTML = `<span class="ph-rail"></span><span class="ph-fill"></span>${ticks.join("")}<span class="ph-num" aria-hidden="true"></span>`;
+          keysEl.appendChild(el);
+          h = { el, fill: el.querySelector(".ph-fill"), num: el.querySelector(".ph-num"), f: -1, state: "", n: -1, ticks: [...el.querySelectorAll(".ph-t")], hand: "" };
+          holdEls.set(hd.midi, h);
+        }
+        const rem = Math.max(0, 1 - (hd.fraction || 0));
+        if (Math.abs(rem - h.f) > 0.002) { h.fill.style.transform = `scaleY(${rem.toFixed(3)})`; h.f = rem; }
+        const left = hd.state === "holding" ? Math.max(1, Math.ceil((hd.remaining || 0) - 1e-6)) : hd.state === "done" ? "✓" : "";
+        if (left !== h.n) { h.num.textContent = left; h.n = left; }
+        h.ticks.forEach((t, i) => { const gone = (i + 1) > (hd.remaining || 0) + 1e-6; if (t.hidden !== gone) t.hidden = gone; });
+        const cls = "pk-hold " + (hd.hand === "lh" ? "lh " : "rh ") + hd.state + (hd.guided ? " guided" : "");
+        if (cls !== h.state) { h.el.className = cls; h.state = cls; }
+      }
+      for (const [m, h] of [...holdEls]) if (!seen.has(m)) { h.el.remove(); holdEls.delete(m); }
+    }
+    /** Mensaje corto en el carril ("Soltaste antes · faltaban 2 tiempos"). kind: "ok" | "bad" | "info" | "" (lo borra). ms = cuánto dura (0 = fijo). */
+    function setHoldMsg(text, kind, ms = 2200) {
+      clearTimeout(msgTimer);
+      if (!text) { msgEl.hidden = true; msgEl.textContent = ""; return; }
+      msgEl.hidden = false; msgEl.textContent = text; msgEl.className = "pk-msg " + (kind || "");
+      msgEl.style.animation = "none"; void msgEl.offsetWidth; msgEl.style.animation = "";
+      if (ms > 0) msgTimer = setTimeout(() => { msgEl.hidden = true; }, ms);
+    }
+    /** Reserva (o no) el carril de las notas sostenidas sobre las teclas. */
+    function setLane(on) { container.classList.toggle("lane", !!on); layout(); }
+
   const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => layout()) : null;
   if (ro) ro.observe(scroller);
 
@@ -214,7 +269,7 @@ export function createKeyboard(container, opts = {}) {
     const k = e.target.closest("[data-midi]"); if (!k) return;
     const m = +k.dataset.midi;
     k.classList.add("down");
-    const up = () => { k.classList.remove("down"); k.removeEventListener("pointerup", up); k.removeEventListener("pointerleave", up); k.removeEventListener("pointercancel", up); };
+    const up = () => { k.classList.remove("down"); k.removeEventListener("pointerup", up); k.removeEventListener("pointerleave", up); k.removeEventListener("pointercancel", up); onKeyUp(m); };
     k.addEventListener("pointerup", up); k.addEventListener("pointerleave", up); k.addEventListener("pointercancel", up);
     onKey(m);
   });
@@ -250,6 +305,7 @@ export function createKeyboard(container, opts = {}) {
       stepList = (list || []).filter((x) => x && Number.isFinite(x.fromMidi) && Number.isFinite(x.toMidi));
       drawSteps();
     },
+    setHolds, setHoldMsg, setLane,
     setInteractive(v) { interactive = !!v; container.classList.toggle("interactive", interactive); },
     /** Lleva a la vista las teclas dadas (sólo se mueve si no se ven con margen). */
     focus(midis) { const l = (midis || []).filter(Number.isFinite); if (!l.length) return; if (!scroller.clientWidth) pendingFocus = l; else focusNow(l, true); },

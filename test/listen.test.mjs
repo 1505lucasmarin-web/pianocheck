@@ -197,13 +197,25 @@ test('pieza de 120 compases: sin desfase acumulado ni picos de notas vivas', () 
 
 test('síntesis: el plan de una nota depende de la altura y el timbre "Suave" es más simple', () => {
   const lo = voicePlan(36, 'piano'), hi = voicePlan(96, 'piano'), soft = voicePlan(60, 'suave');
-  assert.ok(lo.partials[0].tau > hi.partials[0].tau * 2);
+  assert.ok(lo.partials[0].tauS > hi.partials[0].tauS * 1.5, 'graves sostienen más');
   assert.ok(lo.partials.length > hi.partials.length);
   assert.ok(lo.release > hi.release);
   assert.ok(lo.partials.every((p, i) => i === 0 || p.tau < lo.partials[i - 1].tau), 'los parciales altos decaen antes');
   assert.ok(Math.abs(lo.partials.reduce((a, p) => a + p.amp, 0) - 1) < 1e-9);
   assert.equal(soft.partials.length, 2); assert.equal(soft.hammer, 0);
   assert.ok(lo.hammer > 0);
+});
+
+test('síntesis: una nota larga conserva cuerpo y se apaga con claridad al soltarla', () => {
+  for (const m of [36, 60, 84]) {
+    const p = voicePlan(m, 'piano');
+    // nivel del fundamental tras 3 s de sostener, relativo al pico (dB): etapa rápida + etapa lenta
+    const f = p.partials[0], t = 3;
+    const lvl = f.hold * Math.exp(-Math.max(0, t - f.tau * 2.2) / f.tauS * 1);
+    assert.ok(20 * Math.log10(lvl) > -14, `a 3 s no cae más de 14 dB (midi ${m})`);
+    assert.ok(p.release <= 0.16 && p.release >= 0.07, 'se corta dentro de ~200 ms');
+    assert.ok(Math.exp(-0.2 / (p.release / 3)) < 0.1, 'caída >= 20 dB a los 200 ms');
+  }
 });
 
 test('síntesis: polifonía acotada y handle cancel / release', () => {

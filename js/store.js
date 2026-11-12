@@ -54,6 +54,20 @@ export async function saveScore(score) {
   return rec;
 }
 
+/** Guarda una partitura tal cual (conserva updatedAt): para importar una biblioteca exportada. */
+export async function putScoreRaw(rec) {
+  const r = JSON.parse(JSON.stringify(rec));
+  if (!r.id) throw new Error('Partitura sin id.');
+  if (!Number.isFinite(r.updatedAt)) r.updatedAt = Date.now();
+  await run('scores', 'readwrite', (s) => s.put(r));
+  return r;
+}
+/** Guarda un intento tal cual (conserva id y fecha): para importar una biblioteca exportada. */
+export async function putAttemptRaw(rec) {
+  if (!rec || !rec.id || !rec.scoreId) throw new Error('Intento inválido.');
+  await run('attempts', 'readwrite', (s) => s.put(JSON.parse(JSON.stringify(rec))));
+}
+
 export async function getScore(id) {
   const r = await run('scores', 'readonly', (s) => s.get(id));
   return r || null;

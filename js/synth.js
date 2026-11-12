@@ -6,26 +6,33 @@ export const MAX_VOICES = 40;
 const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-/** Parámetros de una nota (puro, testeable): parciales [{ n, ratio, amp, tau }], retardo de liberación y volumen. */
+/**
+ * Parámetros de una nota (puro, testeable): parciales [{ n, ratio, amp, tau, hold, tauS }], retardo de liberación y volumen.
+ * Envolvente en dos etapas, como un piano real: "sonido inmediato" (cae rápido, `tau` s hasta `hold` de su nivel) y "sonido sostenido"
+ * (cae lento, constante `tauS`), así una blanca o una redonda se oye con cuerpo hasta el final de su valor.
+ * `release` es el tiempo en que se apaga una nota al soltarla (constante de caída = release / 3).
+ */
 export function voicePlan(midi, timbre = "piano", vel = 1) {
   const pos = clamp((midi - 21) / 87, 0, 1);                       // 0 = La0, 1 = Do8
   const peak = 0.42 * vel * (1.14 - 0.42 * pos);                    // graves un poco más fuertes, agudos más suaves
+  const release = 0.075 + 0.075 * (1 - pos);                        // se corta con claridad: ~-30 dB a los 200 ms de soltar
   if (timbre === "suave") {
-    return { timbre, peak: peak * 0.95, attack: 0.012, release: 0.18 + 0.12 * (1 - pos), hammer: 0, pos,
-      partials: [{ n: 1, ratio: 1, amp: 1, tau: 1.6 - 0.9 * pos, type: "triangle" }, { n: 2, ratio: 2, amp: 0.22, tau: 1.0 - 0.5 * pos, type: "sine" }] };
+    const tauS = 4.4 - 2.2 * pos;
+    return { timbre, peak: peak * 0.95, attack: 0.012, release, hammer: 0, pos,
+      partials: [{ n: 1, ratio: 1, amp: 1, tau: 0.4, hold: 0.8, tauS, type: "triangle" }, { n: 2, ratio: 2, amp: 0.22, tau: 0.3, hold: 0.6, tauS: tauS * 0.7, type: "sine" }] };
   }
-  const tau0 = 5.2 - 4.1 * pos;                                      // segundos para caer a 1/e en el fundamental: graves largos, agudos cortos
+  const tauS = 7.2 - 4.4 * pos;                                      // caída lenta del "sonido sostenido": graves largos, agudos más cortos
   const nP = pos < 0.3 ? 6 : pos < 0.65 ? 5 : pos < 0.85 ? 4 : 3;
   const B = 0.00012 * Math.pow(2, pos * 4);                          // inarmonicidad leve
   const partials = [];
   let sum = 0;
   for (let n = 1; n <= nP; n++) {
     const a = Math.pow(n, -1.05) * (n === 2 ? 1.25 : 1) * (pos < 0.2 && n === 1 ? 0.8 : 1);
-    partials.push({ n, ratio: n * Math.sqrt(1 + B * n * n), amp: a, tau: tau0 / (1 + 0.75 * (n - 1)), type: "sine" });
+    partials.push({ n, ratio: n * Math.sqrt(1 + B * n * n), amp: a, tau: 0.38 / (1 + 0.5 * (n - 1)), hold: n === 1 ? 0.78 : 0.62 - 0.03 * Math.min(n, 5), tauS: tauS / (1 + 0.3 * (n - 1)), type: "sine" });
     sum += a;
   }
   partials.forEach((p) => { p.amp /= sum; });
-  return { timbre, peak, attack: 0.003, release: 0.1 + 0.28 * (1 - pos), hammer: 0.1 * vel * (0.5 + pos), pos, partials };
+  return { timbre, peak, attack: 0.003, release, hammer: 0.1 * vel * (0.5 + pos), pos, partials };
 }
 
 export function createSynth(ctx, { timbre = "piano", volume = 0.8, maxVoices = MAX_VOICES } = {}) {
@@ -63,23 +70,25 @@ export function createSynth(ctx, { timbre = "piano", volume = 0.8, maxVoices = M
     const g = ctx.createGain();           // envolvente de la nota (liberación)
     g.gain.setValueAtTime(1, when);
     g.gain.setValueAtTime(1, when + hold);
-    g.gain.setTargetAtTime(0, when + hold, plan.release / 3);
+    g.gain.setTargetAtTime(0, when + hold, plan.release / 3);   // al terminar su valor la nota se apaga de verdad (no se arrastra)
     g.connect(vol);
     const end = when + hold + plan.release * 2 + 0.05;
     const oscs = [];
     const extra = [];
     const spread = (rnd() - 0.5) * 4;      // cents de desafinación propia de esa nota
     plan.partials.forEach((p) => {
-      const strings = p.n === 1 && st.timbre === "piano" ? [-1.6, 1.6] : [0];   // dos cuerdas en el fundamental: late levemente
-      strings.forEach((dc) => {
+      const strings = p.n === 1 && st.timbre === "piano" ? [{ dc: -1, w: 0.82 }, { dc: 1, w: 0.18 }] : [{ dc: 0, w: 1 }];   // dos cuerdas en el fundamental: laten apenas (sin anularse)
+      strings.forEach(({ dc, w }) => {
         const o = ctx.createOscillator();
         o.type = p.type; o.frequency.value = f * p.ratio;
         if (o.detune) o.detune.value = spread + dc;
         const pg = ctx.createGain();
-        const a = plan.peak * p.amp / strings.length;
+        const a = plan.peak * p.amp * w;
+        const t1 = when + plan.attack, t2 = t1 + p.tau * 2.2;           // etapa 1: del pico a `hold` en ~2 constantes
         pg.gain.setValueAtTime(0.0001, when);
-        pg.gain.exponentialRampToValueAtTime(a, when + plan.attack);
-        pg.gain.exponentialRampToValueAtTime(a * 0.02, when + plan.attack + p.tau * 4);
+        pg.gain.exponentialRampToValueAtTime(a, t1);
+        pg.gain.exponentialRampToValueAtTime(a * p.hold, t2);
+        pg.gain.exponentialRampToValueAtTime(a * p.hold * 0.01, t2 + p.tauS * 4.6);   // etapa 2: caída lenta
         o.connect(pg); pg.connect(g);
         o.start(when); o.stop(end);
         oscs.push(o); extra.push(pg);

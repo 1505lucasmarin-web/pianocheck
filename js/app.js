@@ -25,6 +25,8 @@ import { buildSummary } from "./summary.js";
 import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
+import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName } from "./mylib.js";
+import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
 
 const MAX_STREAK = 5;
 const $ = (id) => document.getElementById(id);
@@ -46,7 +48,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8 };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar" };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -83,7 +85,7 @@ function confirmDialog({ title, text, yes = "Eliminar", no = "Cancelar", danger 
 }
 
 /* ---------- navegación ---------- */
-const screens = ["library", "search", "review", "practice", "result", "settings", "theory"];
+const screens = ["library", "mylib", "search", "review", "practice", "result", "settings", "theory"];
 const welcome = mountWelcome($("empty-state"));
 function show(name, push = true) {
   const prev = screen;
@@ -100,6 +102,7 @@ function show(name, push = true) {
   if (prev === "result" && name !== "result") discardTake();
   if (push && name !== "library" && prev !== name) history.pushState({ s: name }, "", "");
   if (name === "library") refreshLibrary();
+  if (name === "mylib") refreshMyLib();
   if (name === "review") requestAnimationFrame(() => reviewR.redraw());
   if (name === "practice") requestAnimationFrame(() => practiceR.redraw());
 }
@@ -141,7 +144,7 @@ let lcLastCursor = -2;
 const lcP = createListen({ player, host: $("lt-practice"), kind: "practice", prefs: lprefs, toast, title: () => (current && current.title) || "",
   adapter: {
     score: () => current, practiceHands: () => hands, stepAt: (b) => stepAtBeat(allSteps, b),
-    onOpen: () => listenEnter(), onClose: (r) => listenLeave(r), onFrame: (f) => listenFrame(f), onPlaying: (p) => listenPlaying(p),
+    onOpen: () => listenEnter(), onClose: (r) => listenLeave(r), onFrame: (f) => listenFrame(f), onSound: (f) => listenSound(f), onPlaying: (p) => listenPlaying(p),
     onPractice: () => lcP.close("practice"),
   } });
 let reviewSteps = [];
@@ -214,16 +217,22 @@ function cardHtml(s, demo, sum) {
   const ver = s.derivedFrom ? `<span class="tag ver">Versión de «${esc(s.derivedFrom.title || "otra partitura")}»</span>` : "";
   const tags = s.measures ? [`${n} ${n === 1 ? "compás" : "compases"}`, `♩ ${s.bpm || 80}`, (s.timeSig || [4, 4]).join("/"), demo ? "" : fmtDate(s.updatedAt || s.createdAt)].filter(Boolean).map((t) => `<span class="tag">${esc(t)}</span>`).join("") + ver : ver;
   const lvl = LEVEL_ES[s.level] ? `<span class="tag level">${LEVEL_ES[s.level]}</span>` : "";   // sólo partituras viejas: las nuevas (modo auto) no llevan nivel
+  const kind = demo ? null : originKind(s, { bundledIds: bundledIds() });
+  const orig = kind ? `<span class="tag origin ${kind}">${ORIGIN_NAMES[kind]}</span>` : "";
+  const draftTag = isDraft(s) ? `<span class="tag draft">Borrador</span>` : "";
+  const art = s.artist ? `<div class="art">${esc(s.artist)}</div>` : "";
   const res = sum && sum.count
     ? `<div class="scores"><div class="sc best"><span>Mejor</span><b>${sum.best == null ? "—" : sum.best + "%"}</b></div><div class="sc"><span>Último</span><b>${sum.last}%</b></div></div><div class="mini" aria-hidden="true"><i style="width:${sum.best || 0}%"></i></div>`
     : `<div class="sc-none">Sin intentos todavía</div>`;
   const title = esc(s.title || "Sin título");
-  return `<li class="card" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${lvl}</div><div class="tags">${tags}</div>${res}
+  return `<li class="card${isDraft(s) ? " is-draft" : ""}" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${draftTag}${lvl}</div>${art}<div class="tags">${orig}${tags}</div>${res}
     <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("hand", "sm")}Practicar</button>
     <button class="btn listen-btn" data-act="listen" aria-label="Escuchar ${title}">${ic("play", "sm")}Escuchar</button>
     ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
     ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
 }
+let _bundled = null;
+const bundledIds = () => (_bundled ||= new Set([demoScore.id, ...PIECES.flatMap((p) => p.versions.map((v) => v.score.id))]));
 let continueInfo = null;
 const id2score = (id, list) => (id === demoScore.id ? demoScore : (list || []).find((x) => x.id === id));
 async function refreshLibrary() {
@@ -239,6 +248,12 @@ async function refreshLibrary() {
   if (searchForm.parentElement !== searchSlot) searchSlot.append(searchForm);
   $("library-section").hidden = list.length === 0;
   $("demo-section").hidden = list.length === 0;
+  $("mylib-n").textContent = String(list.length); $("mylib-n").hidden = !list.length; $("open-mylib").setAttribute("aria-label", `Mi biblioteca: ${list.length} ${list.length === 1 ? "partitura" : "partituras"}`);
+  const HOME_MAX = 4;
+  $("lib-all").hidden = list.length <= HOME_MAX; $("lib-all-t").textContent = `Ver todas (${list.length})`;
+  const dr = draftsOf(list), dc = $("draft-card");
+  dc.hidden = !dr.length;
+  if (dr.length) { $("draft-title").textContent = dr[0].title || "Sin título"; $("draft-sub").textContent = `${(dr[0].measures || []).length} compases · sin confirmar${dr.length > 1 ? ` · ${dr.length} borradores en total` : ""}`; dc.dataset.id = dr[0].id; }
   const ids = new Set(list.map((x) => x.id)); ids.add(demoScore.id);
   continueInfo = latestPractice(settings.lastPractice, (id) => ids.has(id));
   const cc = $("continue-card");
@@ -258,7 +273,7 @@ async function refreshLibrary() {
   $("tasks-section").hidden = !tHtml.length;
   $("task-list").innerHTML = tHtml.join("");
   $("demo-list").innerHTML = cardHtml(demoScore, true, sums[demoScore.id]);
-  $("library-list").innerHTML = list.map((s) => cardHtml(s, false, sums[s.id])).join("");
+  $("library-list").innerHTML = list.slice(0, HOME_MAX).map((s) => cardHtml(s, false, sums[s.id])).join("");
 }
 async function resolveScore(id) {
   if (id === demoScore.id) return clone(demoScore);
@@ -267,7 +282,7 @@ async function resolveScore(id) {
   return validateScore(s).score;
 }
 async function addDemo() {
-  const s = clone(demoScore); s.id = newId(); s.title = "Oda a la Alegría";
+  const s = clone(demoScore); s.id = newId(); s.title = "Oda a la Alegría"; s.origin = "incluida";
   return store.save(s);
 }
 async function onCardClick(e) {
@@ -282,13 +297,14 @@ async function onCardClick(e) {
     else if (act === "arrange") openArrange(await resolveScore(id), "library");
     else if (act === "del") {
       const name = card.querySelector(".t").textContent;
-      if (await confirmDialog({ title: "¿Eliminar esta partitura?", text: `«${name}» se borra de tu biblioteca junto con su historial de resultados. No se puede deshacer.`, yes: "Eliminar" })) { await store.del(id); if (settings.tasks && settings.tasks[id]) { delete settings.tasks[id]; await saveTasks(); } refreshLibrary(); toast("Partitura eliminada"); }
+      if (await confirmDialog({ title: "¿Eliminar esta partitura?", text: `«${name}» se borra de tu biblioteca junto con su historial de resultados. No se puede deshacer.`, yes: "Eliminar" })) { await store.del(id); if (settings.tasks && settings.tasks[id]) { delete settings.tasks[id]; await saveTasks(); } screen === "mylib" ? refreshMyLib() : refreshLibrary(); toast("Partitura eliminada"); }
     } else if (act === "adddemo") {
       await addDemo(); refreshLibrary(); toast("Agregada a tu biblioteca");
     }
   } catch (err) { toast("Error: " + err.message, 4000); }
 }
 $("library-list").addEventListener("click", onCardClick);
+$("ml-list").addEventListener("click", onCardClick);
 $("demo-list").addEventListener("click", onCardClick);
 function startWelcomePractice(options = {}) {
   startPractice(clone(demoScore), { hands: "rh", ...options });
@@ -514,7 +530,7 @@ async function runImport(kind, files, ctxOverride) {
     const v = validateScore(score);
     if (!v.ok || !v.score.measures.length) { busy.error("No se pudo leer ninguna nota de la partitura. " + (v.errors || []).slice(0, 2).join(" ")); return; }
     v.score.id = v.score.id || newId();
-    if (ORIGIN_OF[kind]) v.score.origin = ORIGIN_OF[kind];   // foto / imágenes / PDF: se le buscan avisos de importación en Revisión
+    v.score.origin = ORIGIN_OF[kind] || "importada";   // foto / imágenes / PDF: se le buscan avisos de importación en Revisión; MusicXML / MIDI: sólo "importada"
     if (ctx) {
       if (ctx.title) v.score.title = ctx.title;
       if (ctx.artist) v.score.artist = ctx.artist;
@@ -727,6 +743,7 @@ async function playLocalScore(sc) {
 async function playPiece(pieceId, versionId) {
   const base = getPieceScore(pieceId, versionId);
   if (!base) { toast("No encontré esa versión."); return; }
+  base.origin = "incluida";
   let sc = null;
   try { sc = await store.get(base.id); if (!sc) sc = await store.save(base); } catch (e) { toast("No se pudo guardar en tu biblioteca: " + e.message, 4500); sc = base; }
   playLocalScore(sc);
@@ -861,6 +878,7 @@ async function applyArrange(kind) {
     if (from === "review") { base = await saveReview(); if (!base) return; }   // la original (con sus correcciones) queda guardada tal cual
     const out = makeArrangement(base, kind);
     if (!out) { toast(kind === "melodia" ? "Esta partitura ya es sólo melodía." : "Ya tiene ese acompañamiento.", 3200); return; }
+    out.origin = "arreglo";
     const saved = await store.save(validateScore(out).score);
     const est = describeEstimate(saved).label;
     closeArrange();
@@ -918,7 +936,38 @@ function openReview(score, isNew, warnings, note) {
   refreshReview();
   if (editState.issues.length) requestAnimationFrame(() => gotoIssue(0, true));
   else if (warnings && warnings.length) toast("Aviso: " + warnings[0], 4500);
+  syncDraftUi();
+  if (isNew) autoDraft(); else if (isDraft(score)) { editState.draft = true; syncDraftUi(); }
 }
+/* ----- borradores: lo que llega a Revisión se guarda solo ----- */
+let draftT = 0;
+function syncDraftUi() { const d = !!(editState && editState.draft); $("review-discard").hidden = !d; $("review-draft").hidden = !d; }
+async function autoDraft() {
+  const es = editState; if (!es) return;
+  if (!es.score.id) es.score.id = newId();
+  es.score.draft = true; es.draft = true; syncDraftUi();
+  try { await store.save(validateScore(es.score).score); } catch (e) { toast("No pude guardar el borrador: " + e.message, 4500); }
+}
+/** Guarda de nuevo el borrador (con los cambios de Revisión) poco después de cada edición. */
+function scheduleDraftSave() {
+  if (!editState || !editState.draft) return;
+  clearTimeout(draftT);
+  const es = editState;
+  draftT = setTimeout(() => { if (editState === es && es.draft) { es.score.draft = true; store.save(validateScore(es.score).score).catch(() => {}); } }, 700);
+}
+async function flushDraft() {
+  clearTimeout(draftT);
+  const es = editState;
+  if (es && es.draft) { es.score.title = $("review-title").value.trim() || es.score.title || "Sin título"; es.score.draft = true; try { await store.save(validateScore(es.score).score); } catch (e) { /* sin guardar */ } }
+}
+$("review-title").addEventListener("input", scheduleDraftSave);
+$("review-discard").addEventListener("click", async () => {
+  if (!editState || !editState.draft) return;
+  if (!(await confirmDialog({ title: "¿Descartar este borrador?", text: "La partitura se borra de tu biblioteca. No se puede deshacer.", yes: "Descartar", no: "Seguir editando" }))) return;
+  const id = editState.score.id; clearTimeout(draftT); editState.draft = false;
+  try { await store.del(id); } catch (e) { /* ya no estaba */ }
+  toast("Borrador descartado"); goLibrary();
+});
 function selNote() {
   const s = editState && editState.selected; if (!s) return null;
   const m = editState.score.measures[s.measure]; const ev = m && m[s.hand][s.idx];
@@ -996,7 +1045,7 @@ function commit(r, { keepSel = false } = {}) {
   if (!r || !r.ok) { toast((r && r.error) || "No se pudo hacer ese cambio.", 3800); return false; }
   const m = editState.selected ? editState.selected.measure : null;
   editState.hist.push({ score: editState.score, selected: editState.selected });
-  editState.score = r.score;
+  editState.score = r.score; scheduleDraftSave();
   if (!keepSel) editState.selected = r.ref || null;
   if (r.warn && r.warn.over && m != null) toast(`El compás ${m + 1} se pasa por ${tiemposText(r.warn.over)}. Acortá otra nota o sacá un silencio.`, 5200);
   redrawReview();
@@ -1061,11 +1110,12 @@ $("cm-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.pr
 async function saveReview() {
   const sc = editState.score;
   sc.title = $("review-title").value.trim() || "Sin título";
+  clearTimeout(draftT); delete sc.draft;   // Guardar confirma el borrador (misma partitura, mismo id: no se duplica)
   sc.bpm = Math.max(30, Math.min(240, parseInt($("review-bpm").value, 10) || sc.bpm || 80));
   const v = validateScore(sc);
   v.score.id = sc.id || newId();
   try { await store.save(v.score); } catch (e) { toast("No se pudo guardar: " + e.message, 4500); return null; }
-  editState.isNew = false;
+  editState.isNew = false; editState.draft = false; syncDraftUi();
   if (editState.fromSearch) clearLastSearch();   // ya conseguiste la partitura de esa búsqueda
   return v.score;
 }
@@ -1073,6 +1123,7 @@ $("review-save").addEventListener("click", async () => { if (await saveReview())
 $("review-save-practice").addEventListener("click", async () => { const s = await saveReview(); if (s) startPractice(s); });
 $("review-task").addEventListener("click", () => { const v = validateScore(editState.score); if (!v.ok) { toast("Primero tiene que haber alguna nota."); return; } v.score.title = $("review-title").value.trim() || v.score.title; openTaskSheet(v.score, { bpm: parseInt($("review-bpm").value, 10) || v.score.bpm }); });
 $("review-back").addEventListener("click", async () => {
+  if (editState && editState.draft) { await flushDraft(); toast("Quedó como borrador en tu biblioteca", 2800); goLibrary(); return; }
   if (editState && (editState.hist.canUndo || editState.isNew) && !(await confirmDialog({ title: "¿Salir sin guardar?", text: "Los cambios que hiciste en esta partitura se pierden.", yes: "Salir sin guardar", no: "Seguir editando" }))) return;
   goLibrary();
 });
@@ -1217,6 +1268,7 @@ async function runImportTask(file) {
     if (!alive()) return;
     const r = parseTaskFile(text);
     if (!r.ok) { busy.error(r.error); return; }
+    r.score.origin = "tarea";
     const saved = await store.save(r.score);
     if (r.annotations) { try { await annoPersist.save(r.id, r.annotations); } catch (e) { /* sin anotaciones */ } }
     settings.tasks = { ...(settings.tasks || {}), [r.id]: { ...r.task, at: Date.now() } };
@@ -1378,10 +1430,11 @@ function handleIncomingHash() {
 window.addEventListener("hashchange", handleIncomingHash);
 
 /* ---------- piano guía (teclado fijo en Práctica) ---------- */
-const kb = createKeyboard($("piano"), { onKey: (m) => handleNoteOn(m) });
+const kb = createKeyboard($("piano"), { onKey: (m) => handleNoteOn(m), onKeyUp: (m) => handleNoteOff(m) });
 let kbOpen = false;   // con la Guía apagada el teclado se pliega; el usuario puede desplegarlo
 function applyKeyboardSetting() {
   kb.setInteractive(!!settings.onscreenKeyboard); thKb.setInteractive(!!settings.onscreenKeyboard);
+  kb.setLane(holdMode() !== "apagado"); syncHoldUi();
   const g = settings.guide !== false;
   $("guide-toggle").setAttribute("aria-pressed", String(g));
   $("kb-toggle").setAttribute("aria-pressed", String(!!settings.onscreenKeyboard));
@@ -1616,7 +1669,7 @@ function syncMetroUi() {
   updateMicNote();
 }
 function setMetroBpm(n, silent) {
-  metroBpm = Math.max(30, Math.min(240, Math.round(n))); metro.setBpm(metroBpm);
+  metroBpm = Math.max(30, Math.min(240, Math.round(n))); metro.setBpm(metroBpm); holds.setBpm(metroBpm, performance.now());
   $("bpm-val").textContent = metroBpm; $("tempo-t").textContent = `♩ ${metroBpm} BPM`;
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${isPulso() ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
   if (!silent) {
@@ -1647,7 +1700,8 @@ function endCountIn() {
 
 const midi = createMidiInput({
   onNoteOn: (m, vel, ts) => handleNoteOn(m, ts),
-  onNoteOff: () => {},
+  onNoteOff: (m, ts) => handleNoteOff(m, ts),
+  onPedal: (down, ts) => holdPedal(down, ts),
   onStatus: (s) => {
     midiConnected = !!s.connected;
     if (mic && mic.running) onMicStatus({ connected: true });
@@ -1709,7 +1763,7 @@ function onMicStatus(s) {
 async function startMic() {
   if (!mic) {
     const m = await lazy("mic");
-    mic = m.createMicInput({ onNoteOn: (n) => { if (!midiConnected) handleNoteOn(n); }, onStatus: onMicStatus, getExpected: currentExpected, sensitivity: settings.micSensitivity });
+    mic = m.createMicInput({ onNoteOn: (n) => { if (!midiConnected) handleNoteOn(n, undefined, "mic"); }, onStatus: onMicStatus, getExpected: currentExpected, sensitivity: settings.micSensitivity });
   }
   mic.setSensitivity(settings.micSensitivity);
   if (isPulso()) { toast("A pulso todavía no funciona con micrófono. Pasamos a «Te espero».", 4800); setMode("espera"); }
@@ -1788,8 +1842,10 @@ function resetSession() {
   clearTimeout(finishTimer); clearTimeout(lapTimer); stopPulse(); stopListening(true); endCountIn(); setPaused(false, true);
   lastNoteMeasure = -1; hideMeasureNote(); pulseRun = null; pulse = null; session = null;
   errLog = []; errDetail = null; clearTimeout(errDetailT);
+  resetHolds();
   laps = []; agg = { clean: 0, dirty: 0, wrong: 0 }; trace = { clean: [], dirty: [], errors: [] }; handMiss = { rh: 0, lh: 0 };
   allSteps = buildSteps(current, hands);
+  holdAll = holdInfo(current, allSteps);
   steps = passage ? passageSteps(allSteps, passage) : allSteps;
   practiceR.clearMarks(); practiceR.setCursor(null);
   practiceR.draw(current, allSteps);
@@ -1940,13 +1996,13 @@ function finishPulse() {
   clearTimeout(finishTimer); finishTimer = setTimeout(showResult, 500);
 }
 const FB_CLS = { ontime: "ontime", early: "early", late: "late" };
-function pulseNote(m, ts) {
+function pulseNote(m, ts, src) {
   if (!pulse || !pulseRun || pulseRun.take0 == null || paused || listening) return;
   const r = pulse.noteOn(m, ts - pulseRun.take0);
   if (r.kind === "ignored") return;
   practiceR.follow();
   if (r.kind === "hit") {
-    kb.flash(m, "ok");
+    kb.flash(m, "ok"); startHold(m, r.entry.i, src, ts);
     if (r.done) {
       const tm = r.meanTiming;
       markPulse(r.entry, tm === "ontime" ? "clean" : tm);
@@ -1969,6 +2025,132 @@ function pulseNext() {
   const guide = settings.guide !== false, st = steps[pulseRun.k];
   setNext("A pulso", guide && st ? names(st.midi) : "Seguí el pulso", pulseInfo ? pulseInfo.cls : "", pulseInfo ? pulseInfo.sub : "");
 }
+
+/* ----- sostener las notas largas (carril sobre el piano guía + barra sobre la partitura) ----- */
+const holds = createHoldTracker({ bpm: 80, now: () => performance.now(), onResult: (v) => onHoldResult(v) });
+const holdMode = () => normHoldMode(settings.holdMode);
+let holdAll = [];                       // holdInfo por paso global (índice = step.i)
+const holdMeta = new Map();             // midi → info de la nota que se está sosteniendo
+let holdSrc = "practice", holdRaf = 0, holdWait = null, durSteps = new Set();
+let listenSnap = null, listenSig = "";
+const endRefCache = new Map();
+const say = (t) => { const el = $("hold-live"); el.textContent = ""; requestAnimationFrame(() => { el.textContent = t; }); };
+const timeNow = (ts) => { const n = performance.now(); return Number.isFinite(ts) && Math.abs(ts - n) < 2000 ? ts : n; };
+function resetHolds() {
+  holds.reset(); holdMeta.clear(); durSteps = new Set(); holdWait = null;
+  kb.setHolds([]); kb.setHoldMsg(""); practiceR.setHolds([]); practiceR.setCursorWait(false);
+}
+function startHold(m, stepI, src, ts) {
+  if (holdMode() === "apagado" || screen !== "practice") return;
+  const n = (holdAll[stepI] || []).find((x) => x.midi === m);
+  const t = timeNow(ts), guided = src === "mic";
+  if (!n) return;
+  holds.press(m, { hand: n.hand, beats: n.beats, measure: n.measure, step: n.step, guided }, t);
+  if (n.beats >= 1) {
+    holdMeta.set(m, n); holdSrc = "practice";
+    const b = Math.round(n.beats * 2) / 2;
+    say(`Sostené ${String(b).replace(".", ",")} ${b <= 1 ? "tiempo" : "tiempos"}`);
+    if (guided) kb.setHoldMsg("Con micrófono no mido cuánto sostenés: es sólo una guía", "info", 3200);
+    holdKick();
+  }
+}
+function handleNoteOff(m, ts) {
+  if (screen !== "practice") return;
+  holds.release(m, timeNow(ts)); holdKick();
+}
+function holdPedal(down, ts) { if (screen !== "practice") return; holds.pedal(down, timeNow(ts)); holdKick(); }
+function onHoldResult(v) {
+  if (v.state === "done") {
+    if (v.total >= 2) kb.setHoldMsg("¡Bien!", "ok", 900);
+    say(`Completaste los ${Math.round(v.total * 2) / 2} ${v.total <= 1 ? "tiempo" : "tiempos"}`.replace("Completaste los 1 tiempo", "Completaste el tiempo"));
+    return;
+  }
+  const msg = `Soltaste antes · ${beatsText(v.short)}`;
+  kb.setHoldMsg(msg, "bad", 2800); say(msg);
+  if (holdMode() === "exigir" && !v.excused && v.step != null) {
+    const meta = holdMeta.get(v.midi), text = `Soltaste antes ${midiName(v.midi)} · ${beatsText(v.short)}`;
+    durSteps.add(v.step);
+    if (!practiceR.hasError(v.step)) practiceR.markStep(v.step, "dur");
+    errLog.push({ measure: v.measure != null ? v.measure : 0, kind: "dur", text });
+    if (errLog.length > 60) errLog.shift();
+    updatePracticeUi();
+  }
+}
+function holdKick() { if (!holdRaf) holdRaf = requestAnimationFrame(holdFrame); }
+function holdFrame() {
+  holdRaf = 0;
+  if (holdMode() === "apagado") { kb.setHolds([]); practiceR.setHolds([]); return; }
+  const now = performance.now(), kbL = [], scL = [];
+  let keep = false;
+  if (holdSrc === "listen") {
+    if (!listenSnap) { kb.setHolds([]); practiceR.setHolds([]); return; }
+    const b = listenSnap.beat + (now - listenSnap.t) * listenSnap.rate;
+    for (const e of listenSnap.events) {
+      const el = Math.max(0, Math.min(e.dur, b - e.beat)); if (el >= e.dur) continue;
+      const st = { total: e.dur, remaining: e.dur - el, fraction: el / e.dur, state: "holding", hand: e.hand };
+      if (e.dur >= 1 - 1e-9) kbL.push({ midi: e.midi, ...st });
+      let er = endRefCache.get(e.id);
+      if (er === undefined && current) { er = endRefOf(current, { measure: e.measure, hand: e.hand, idx: e.idx, keyIdx: e.keyIdx }); endRefCache.set(e.id, er); }
+      scL.push({ id: "L" + e.id, ref: { measure: e.measure, hand: e.hand, idx: e.idx, keyIdx: e.keyIdx }, endRef: er, hand: e.hand, fraction: st.fraction, state: "holding" });
+    }
+    keep = listenSnap.rate > 0 && listening;
+  } else {
+    let wait = null;
+    const views = holds.tick(now), nxt = !isPulso() && session && session.state.status === "playing" ? steps[session.state.index] : null;
+    for (const v of views) {
+      kbL.push(v);
+      const meta = holdMeta.get(v.midi);
+      if (meta && meta.ref) scL.push({ id: v.id, ref: meta.ref, endRef: meta.endRef, hand: v.hand, fraction: v.fraction, state: v.state });
+      if (v.state === "holding" && nxt && meta && nxt.t >= meta.end - 1e-6 && v.remaining > 0.05 && (!wait || v.remaining > wait.remaining)) wait = { remaining: v.remaining, midi: v.midi };
+    }
+    keep = views.length > 0;
+    const k0 = holdWait ? Math.ceil(holdWait.remaining - 1e-6) : 0, k1 = wait ? Math.ceil(wait.remaining - 1e-6) : 0;
+    holdWait = wait;
+    practiceR.setCursorWait(!!wait);
+    if (k0 !== k1) refreshNext();
+  }
+  kb.setHolds(kbL); practiceR.setHolds(scL);
+  if (keep) holdRaf = requestAnimationFrame(holdFrame);
+}
+function listenSound(f) {
+  holdSrc = "listen";
+  listenSnap = { beat: f.beat, t: performance.now(), rate: f.playing ? f.rate / 1000 : 0, events: f.events };
+  const sig = f.events.map((e) => e.id).join(",");
+  if (sig !== listenSig) {   // las teclas quedan encendidas durante TODA la duración de su nota
+    listenSig = sig;
+    if (settings.guide !== false) kb.setTargets(f.events.map((e) => ({ midi: e.midi, hand: e.hand })));
+  }
+  holdKick();
+}
+/** Campos del intento sobre duraciones (vacío si no hubo notas largas evaluadas). */
+function holdRec() {
+  const sum = summarizeHolds(holds.results);
+  if (!sum.total) return {};
+  return { holdTotal: sum.total, holdOk: sum.ok, holdWeak: sum.byMeasure.slice(0, 3).map((w) => ({ measure: w.measure, errors: w.early })), holdMode: holdMode(), holdDurSteps: holdMode() === "exigir" ? durSteps.size : 0 };
+}
+function renderHoldLine(rec) {
+  const el = $("result-holds"); if (!el) return;
+  const line = rec && rec.holdTotal ? holdLine({ total: rec.holdTotal, ok: rec.holdOk }) : null;
+  el.hidden = !line;
+  if (!line) { el.textContent = ""; return; }
+  const weak = holdWeakText({ byMeasure: (rec.holdWeak || []).map((w) => ({ measure: w.measure, early: w.errors })) });
+  const extra = rec.holdDurSteps ? ` · ${rec.holdDurSteps} ${rec.holdDurSteps === 1 ? "paso marcado" : "pasos marcados"} con error de duración` : "";
+  el.innerHTML = `${esc(line)}${extra}${weak ? `<br><span>${esc(weak)}</span>` : ""}`;
+}
+/* ajuste «Sostener las notas» (hoja de Tempo y Ajustes) */
+const HOLD_HINT = { mostrar: "Anima y avisa cuánto sostener. No penaliza.", exigir: "Soltar antes marca el paso con error de duración (no corta el intento).", apagado: "Sin animación ni evaluación de duraciones." };
+function syncHoldUi() {
+  const m = holdMode();
+  document.querySelectorAll("#hold-seg button, #set-hold button").forEach((b) => { const on = b.dataset.hold === m; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  document.querySelectorAll(".hold-hint").forEach((e) => { e.textContent = HOLD_HINT[m]; });
+}
+function setHoldMode(m) {
+  settings.holdMode = normHoldMode(m);
+  store.saveSettings({ holdMode: settings.holdMode }).catch(() => {});
+  if (settings.holdMode === "apagado") resetHolds();
+  kb.setLane(settings.holdMode !== "apagado"); syncHoldUi();
+}
+document.querySelectorAll("#hold-seg, #set-hold").forEach((g) => g.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setHoldMode(b.dataset.hold); }));
 
 /* ----- comentarios por compás, en Práctica ----- */
 let lastNoteMeasure = -1, mNoteTimer = 0;
@@ -2050,6 +2232,7 @@ function refreshNext() {
   if (nextOverride) { setNext(nextOverride.label, nextOverride.name, nextOverride.cls || "", nextOverride.sub); return; }
   if (st.status === "finished") { setNext("", "¡Terminaste!", "", ""); return; }
   if (missView) { setNext(`<span class="n-bad">✕ Nota equivocada · compás ${missView.measure + 1}</span>`, missView.msg, "bad err", guide ? missView.sub : "Probá de nuevo"); return; }
+  if (holdWait) { setNext("Seguí sosteniendo…", beatsText(Math.ceil(holdWait.remaining - 1e-6), false), "hold", "Todavía no toca la próxima nota"); return; }
   if (!guide) { setNext("Guía apagada", "Seguí la partitura", "", ""); return; }
   const exp = expectedNow();
   const partial = st.pressed.length > 0;
@@ -2061,6 +2244,7 @@ function setPaused(v, silent) {
   b.setAttribute("aria-pressed", String(paused));
   b.querySelector("use").setAttribute("href", paused ? "#i-play" : "#i-pause");
   $("pause-t").textContent = paused ? "Continuar" : "Pausar";
+  if (paused) holds.clearActive();
   if (silent) return;
   if (isPulso()) { if (paused) { stopPulse(); metro.stop(); syncMetroUi(); refreshNext(); } else resetSession(); return; }   // A pulso: al continuar se arranca otra toma con cuenta
   if (paused) { countWasPaused = metro.isRunning; endCountIn(); metro.stop(); }
@@ -2188,7 +2372,7 @@ $("st-measure").addEventListener("click", () => {
 /* ----- modo escucha en Práctica (Play, "Escuchar pasaje" de la ayuda y del bucle): la evaluación queda en pausa mientras dura ----- */
 let micPaused = false;
 function listenEnter() {
-  listening = true; lcLastCursor = -2;
+  listening = true; lcLastCursor = -2; resetHolds(); holdSrc = "listen";
   $("screen-practice").classList.add("listening");
   hideStuck(); setPaused(false, true); kb.setHint(null); missView = null;
   if (isPulso()) { stopPulse(); metro.stop(); syncMetroUi(); }
@@ -2198,10 +2382,7 @@ function listenEnter() {
 }
 function listenFrame(f) {
   if (f.step && f.step.i !== lcLastCursor) { lcLastCursor = f.step.i; practiceR.setCursor(f.step.i); }
-  if (settings.guide !== false) {
-    const ts = f.notes.map((x) => ({ midi: x.midi, hand: x.hand }));
-    kb.setTargets(ts); if (ts.length) kb.focus(ts.map((x) => x.midi));
-  }
+  if (settings.guide !== false && f.notes.length) kb.focus(f.notes.map((x) => x.midi));
   $("measure-now").textContent = `Compás ${f.measure + 1} de ${N()}`;
   $("hands-t").textContent = "Escuchando";
 }
@@ -2214,7 +2395,7 @@ function listenPlaying(p) {
   if (p) requestWake();
 }
 function listenLeave(reason) {
-  listening = false; lcLastCursor = -2;
+  listening = false; lcLastCursor = -2; listenSnap = null; listenSig = ""; holdSrc = "practice"; kb.setHolds([]); practiceR.setHolds([]);
   $("screen-practice").classList.remove("listening");
   listenPlaying(false);
   if (micPaused) { micPaused = false; startMic().catch(() => {}); }
@@ -2298,14 +2479,15 @@ $("practice-stop").addEventListener("click", doStop); $("menu-stop").addEventLis
 $("practice-back").addEventListener("click", () => goLibrary());
 
 /* ----- entrada de notas ----- */
-function handleNoteOn(m, ts) {
+function handleNoteOn(m, ts, src) {
   if (screen === "theory") { theory.noteOn(m); return; }
   if (screen === "practice" && annoP.isActive()) return;   // anotando: la evaluación está en pausa
   if (screen === "practice" && listening) { if (lcP.along && lcP.isOpen) kb.flash(m, "ok"); return; }   // escuchando: no se evalúa; con «Tocar encima» se ve en el piano guía
-  if (screen === "practice" && isPulso()) { const now = performance.now(); pulseNote(m, Number.isFinite(ts) && Math.abs(ts - now) < 2000 ? ts : now); return; }
+  if (screen === "practice" && isPulso()) { const now = performance.now(); pulseNote(m, Number.isFinite(ts) && Math.abs(ts - now) < 2000 ? ts : now, src); return; }
   if (screen !== "practice" || !session || paused || listening || countingIn) return;
   const ev = session.noteOn(m);
   if (ev.type === "ignored") return;
+  if (ev.type === "partial" || ev.type === "step" || ev.type === "finished") startHold(m, steps[ev.step].i, src, ts);
   practiceR.follow();   // si estabas mirando otra parte, vuelve suavemente al cursor
   const gi = steps[ev.step] ? steps[ev.step].i : null;
   switch (ev.type) {
@@ -2374,7 +2556,7 @@ async function showResult() {
   const run = collectRun();
   const n = N(), range = passage && !isWholeRange(passage, n) ? { from: passage.from, to: passage.to } : null;
   const cov = coverage(steps, run.done);
-  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal, mode: "espera", weak: hardestMeasures(run.results, steps, run.errors).slice(0, 3).map((h) => ({ measure: h.measure, errors: h.errors })) };
+  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal, mode: "espera", weak: hardestMeasures(run.results, steps, run.errors).slice(0, 3).map((h) => ({ measure: h.measure, errors: h.errors })), ...holdRec() };
   const { prev, saved } = await saveAttempt(rec);
   if (screen !== "practice") return;
   lastRun = { passage: passage ? { ...passage } : null, hands, bpm: metroBpm, mode: "espera" };
@@ -2404,7 +2586,7 @@ async function showResult() {
   $("res-clean").textContent = run.clean; $("res-dirty").textContent = run.dirty; $("res-wrong").textContent = run.wrong;
   $("res-laps").textContent = laps.length;
 
-  renderCompare(rec, prev, fin, acc, range, n);
+  renderCompare(rec, prev, fin, acc, range, n); renderHoldLine(rec);
 
   // la UNA acción principal
   const act = nextAction({ stepResults: run.results, steps, stepErrors: run.errors, done: run.done, status: run.status, hands, bpm: metroBpm, measures: n, range, loop: isLoop() });
@@ -2426,7 +2608,7 @@ let resultMeasure = null;
 function renderErrList() {
   const box = $("res-errors"); box.hidden = !errLog.length; box.open = false;
   $("res-errors-t").textContent = `Errores de esta toma (${errLog.length})`;
-  $("res-errors-list").innerHTML = errLog.map((e) => `<li><span class="sym" aria-hidden="true">${e.kind === "omit" ? "○" : "✕"}</span><b>Compás ${e.measure + 1}</b><span>${esc(e.text)}</span></li>`).join("");
+  $("res-errors-list").innerHTML = errLog.map((e) => `<li><span class="sym" aria-hidden="true">${e.kind === "omit" ? "○" : e.kind === "dur" ? "⊢" : "✕"}</span><b>Compás ${e.measure + 1}</b><span>${esc(e.text)}</span></li>`).join("");
 }
 /* ---------- Resultado: textos según el modo, comparación, resumen para el profe y toma de audio ---------- */
 let lastResult = null;   // { rec (intento guardado), attempts, n, title }
@@ -2482,7 +2664,7 @@ async function showPulseResult() {
   const rec = {
     scoreId: current && current.id, accuracy: sum.pctCorrect, status: fin ? "finished" : "playing", total: steps.length, index: Math.min(steps.length, sum.total),
     clean: sum.ontime, dirty: sum.total - sum.ontime, wrong: sum.wrongNotes, hands, range, loop, bpm: metroBpm, laps: res.laps, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal,
-    mode: "pulso", onTimePct: sum.pctOnTime, trendMs: sum.trendMs, hits: sum.hit, omitted: sum.missed, winMs: sum.win, weak: sum.weak.map((w) => ({ measure: w.measure, errors: w.bad })),
+    mode: "pulso", onTimePct: sum.pctOnTime, trendMs: sum.trendMs, hits: sum.hit, omitted: sum.missed, winMs: sum.win, weak: sum.weak.map((w) => ({ measure: w.measure, errors: w.bad })), ...holdRec(),
   };
   const { prev, saved } = await saveAttempt(rec);
   if (screen !== "practice") return;
@@ -2506,7 +2688,7 @@ async function showPulseResult() {
   if (range) sc.textContent = `${loop ? "Bucle" : "Desde el compás " + (range.from + 1)}: compases ${rangeText(range)} de ${n} · ${handsText().toLowerCase()}`;
   $("res-clean").textContent = sum.ontime; $("res-dirty").textContent = sum.early; $("res-wrong").textContent = sum.late; $("res-laps").textContent = sum.missed + sum.wrong;
   $("st-l4").textContent = sum.wrong ? "Omitidos o errados" : "Omitidos";
-  renderCompare(rec, prev, fin, acc, range, n);
+  renderCompare(rec, prev, fin, acc, range, n); renderHoldLine(rec);
   const act = timingAction(sum, { bpm: metroBpm, measures: n });
   const box = $("result-action"), btn = $("result-action-btn");
   box.hidden = sum.total === 0;
@@ -2602,7 +2784,83 @@ function runAction(act) {
   else if (act.type === "faster" || act.type === "slower") returnToPractice({ bpm: act.bpm });
 }
 $("result-retry").addEventListener("click", () => returnToPractice());
-$("result-lib").addEventListener("click", () => { show("library", false); });
+$("result-lib").addEventListener("click", () => { show("mylib"); });
+
+
+/* ---------- Mi biblioteca (pantalla propia con todas las partituras) ---------- */
+const ml = { q: "", filter: "todas", sort: "recientes" };
+async function refreshMyLib() {
+  let list = [], sums = {};
+  try { list = (await store.list()) || []; sums = await store.summaries(); } catch (e) { $("ml-list").innerHTML = `<li class="empty">No se pudo leer la biblioteca: ${esc(e.message)}</li>`; return; }
+  const total = list.length, opts = { bundledIds: bundledIds() };
+  $("mylib-count").textContent = total ? `(${total})` : "";
+  $("mylib-n").textContent = String(total); $("mylib-n").hidden = !total;
+  const counts = filterCounts(list, opts);
+  $("ml-filters").innerHTML = FILTERS.filter(([k]) => k === "todas" || k === ml.filter || counts[k] > 0).map(([k, name]) => `<button type="button" class="chip${k === ml.filter ? " on" : ""}" data-f="${k}" aria-pressed="${k === ml.filter}">${name}<b class="chip-n">${counts[k] || 0}</b></button>`).join("");
+  $("ml-form").hidden = !total; $("ml-filters").hidden = !total;
+  $("ml-empty").hidden = total > 0;
+  const res = queryLibrary(list, { ...ml, sums, ...opts });
+  $("ml-list").innerHTML = total && !res.length ? `<li class="empty">Ninguna partitura coincide con esa búsqueda o filtro.</li>` : res.map((s) => cardHtml(s, false, sums[s.id])).join("");
+  $("ml-live").textContent = total ? `${res.length} de ${total} ${total === 1 ? "partitura" : "partituras"}` : "";
+}
+const goMyLib = () => { if (screen !== "mylib") show("mylib"); };
+$("open-mylib").addEventListener("click", goMyLib);
+$("lib-all").addEventListener("click", goMyLib);
+document.querySelectorAll("[data-go-mylib]").forEach((b) => b.addEventListener("click", goMyLib));
+$("menu-lib").addEventListener("click", () => { closePSheet(true); goMyLib(); });
+$("mylib-back").addEventListener("click", goLibrary);
+$("mylib-new").addEventListener("click", () => openSheet());
+$("ml-form").addEventListener("submit", (e) => e.preventDefault());
+$("ml-q").addEventListener("input", (e) => { ml.q = e.target.value; refreshMyLib(); });
+$("ml-sort").addEventListener("change", (e) => { ml.sort = e.target.value; refreshMyLib(); });
+$("ml-filters").addEventListener("click", (e) => { const b = e.target.closest("button[data-f]"); if (b) { ml.filter = b.dataset.f; refreshMyLib(); } });
+$("mlE-search").addEventListener("click", () => { show("library", false); requestAnimationFrame(() => { const q = $("lib-search-q"); q && q.focus(); }); });
+$("mlE-import").addEventListener("click", () => openSheet({ path: "import" }));
+$("mlE-demo").addEventListener("click", async () => { try { await startOnscreen(clone(demoScore), { hands: "rh" }); } catch (err) { toast("Error: " + err.message, 4000); } });
+/* borrador en la pantalla inicial */
+$("draft-go").addEventListener("click", async () => { const id = $("draft-card").dataset.id; try { openReview(await resolveScore(id), false, null, "Borrador sin confirmar: tocá Guardar para dejarlo en tu biblioteca."); } catch (err) { toast("Error: " + err.message, 4000); } });
+$("draft-x").addEventListener("click", async () => {
+  const id = $("draft-card").dataset.id; if (!id) return;
+  if (!(await confirmDialog({ title: "¿Descartar este borrador?", text: "La partitura se borra de tu biblioteca. No se puede deshacer.", yes: "Descartar", no: "Cancelar" }))) return;
+  try { await store.del(id); } catch (e) { /* ya no estaba */ }
+  refreshLibrary(); toast("Borrador descartado");
+});
+
+/* ----- exportar / importar la biblioteca (Ajustes) ----- */
+const libMsg = (t, bad) => { const el = $("lib-msg"); el.textContent = t || ""; el.classList.toggle("bad", !!bad); };
+$("lib-export").addEventListener("click", async () => {
+  try {
+    const st = await lazy("store");
+    const scores = (await st.listScores()) || [];
+    if (!scores.length) { libMsg("Todavía no hay partituras para exportar.", true); return; }
+    const attempts = (await st.listAttempts()) || [], annotations = {};
+    for (const sc of scores) { try { const a = await st.getAnnotations(sc.id); if (a) annotations[sc.id] = a; } catch (e) { /* sin anotaciones */ } }
+    const data = buildLibraryExport({ scores, attempts, annotations, tasks: settings.tasks || {} });
+    const name = libraryFileName();
+    downloadFile(new File([serializeLibrary(data)], name, { type: "application/json" }), name);
+    libMsg(`Exporté ${scores.length} ${scores.length === 1 ? "partitura" : "partituras"}, ${attempts.length} ${attempts.length === 1 ? "intento" : "intentos"} y ${Object.keys(annotations).length} con anotaciones. Sin tu API key.`);
+  } catch (err) { libMsg("No se pudo exportar: " + (err && err.message || err), true); }
+});
+$("lib-import").addEventListener("click", () => $("lib-file").click());
+$("lib-file").addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  try {
+    if (f.size > 25 * 1024 * 1024) { libMsg("El archivo es demasiado grande para importarlo.", true); return; }
+    const r = parseLibraryExport(await f.text());
+    if (!r.ok) { libMsg(r.error, true); return; }
+    const st = await lazy("store");
+    const scoreIds = new Set(((await st.listScores()) || []).map((x) => x.id)), attemptIds = new Set(((await st.listAttempts()) || []).map((x) => x.id));
+    const plan = planMerge({ scoreIds, attemptIds }, r);
+    for (const sc of plan.addScores) await st.putScoreRaw(sc);
+    for (const a of plan.addAttempts) await st.putAttemptRaw(a);
+    for (const id of Object.keys(plan.addAnnotations)) await st.saveAnnotations(id, plan.addAnnotations[id]);
+    if (Object.keys(plan.addTasks).length) { settings.tasks = { ...plan.addTasks, ...(settings.tasks || {}) }; await saveTasks(); }
+    const sk = r.skipped.scores + r.skipped.attempts + r.skipped.annotations;
+    libMsg(`Importé ${plan.counts.scores} ${plan.counts.scores === 1 ? "partitura" : "partituras"} nuevas${plan.counts.existing ? ` (${plan.counts.existing} ya estaban y no se tocaron)` : ""}${sk ? `. Se descartaron ${sk} datos dañados o fuera de límite` : ""}.`);
+    refreshLibrary();
+  } catch (err) { libMsg("No se pudo importar: " + (err && err.message || err), true); }
+});
 
 /* ---------- arranque ---------- */
 (async function init() {
@@ -2639,6 +2897,13 @@ if (new URLSearchParams(location.search).has("debug")) {
     phase: () => (pulseRun ? pulseRun.phase : null),
     inject: (m, rel) => pulseNote(m, pulseRun.take0 + rel),
     handle: (m) => handleNoteOn(m, performance.now()),
+    noteOn: (m, src) => handleNoteOn(m, performance.now(), src), noteOff: (m) => handleNoteOff(m, performance.now()), pedal: (d) => holdPedal(d, performance.now()),
+    holds: () => ({ results: holds.results, active: holds.tick(performance.now()), mode: holdMode(), wait: holdWait, dur: [...durSteps] }), setHoldMode, setBpm: (n) => setMetroBpm(n),
+    demo: (o) => { settings.onscreenKeyboard = true; applyKeyboardSetting(); startPractice(clone(demoScore), o || { hands: "both" }); },
+    practice: (sc, o) => { settings.onscreenKeyboard = true; applyKeyboardSetting(); startPractice(validateScore(sc).score, o || {}); },
+    search: (t, a) => openSearch({ title: t, artist: a || "" }),
+    openReview: (sc, isNew) => openReview(validateScore(sc).score, isNew), refreshLibrary,
+    holdAt: (i) => holdAll[i] || [], nextStep: () => (session ? steps[session.state.index] : null),
     state: () => ({ screen, mode: practiceMode, bpm: metroBpm, steps: steps.length, next: $("next-title") ? $("next-title").textContent : "" }),
     show: (n) => show(n),
     tap: (ref) => { if (editState) { editState.selected = ref; updateEditUi(); } },

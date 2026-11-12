@@ -387,6 +387,7 @@ export function createRenderer(container, opts = {}) {
     cursorRect = null; selMark = null; cs = null; activeM = null; flagEls.clear(); flagY = FLAG_Y; tagEl = null; clearTimeout(tagTimer);
     cancelAnimationFrame(inertia); drag = null;
     if (annoSvg) { annoSvg.remove(); annoSvg = null; }
+    clearHolds();
     root.innerHTML = ""; root.className = "score-root";
     container.classList.toggle("cont", mode === "cont");
     if (!sc || !VF()) return;
@@ -757,7 +758,7 @@ export function createRenderer(container, opts = {}) {
   /* ---------------------------- marcas, cursor, selección ---------------------------- */
   function setCls(infos, cls, on) { infos.forEach((n) => n.el && n.el.classList.toggle(cls, on)); }
   /** Marca no cromática: ✓ (limpio) o ✕ (con error) debajo del pentagrama, además del color. */
-  const FLAG_PATH = { clean: "M-4 0L-1 3.5L5 -4", dirty: "M-3.6 -3.6L3.6 3.6M3.6 -3.6L-3.6 3.6", early: "M2.6 -4.2L-2.6 0L2.6 4.2", late: "M-2.6 -4.2L2.6 0L-2.6 4.2" };
+  const FLAG_PATH = { clean: "M-4 0L-1 3.5L5 -4", dirty: "M-3.6 -3.6L3.6 3.6M3.6 -3.6L-3.6 3.6", early: "M2.6 -4.2L-2.6 0L2.6 4.2", late: "M-2.6 -4.2L2.6 0L-2.6 4.2", dur: "M-5.5 0H1.5M4.5 -4.5V4.5" };
   function setFlag(i, kind) {
     const old = flagEls.get(i); if (old) { old.remove(); flagEls.delete(i); }
     if (!kind) return;
@@ -779,6 +780,7 @@ export function createRenderer(container, opts = {}) {
     setCls(infos, "pc-dirty", kind === "dirty");
     setCls(infos, "pc-early", kind === "early");
     setCls(infos, "pc-late", kind === "late");
+    setCls(infos, "pc-dur", kind === "dur");
     setFlag(i, kind);
   }
   /** Rótulo breve junto a la nota ("adelantado", "atrasado", "a tiempo"…); desaparece solo. Sólo hay uno a la vez. */
@@ -799,7 +801,7 @@ export function createRenderer(container, opts = {}) {
   function clearMarks() {
     marks = []; errs.clear();
     systems.forEach((s) => s && s.svg.querySelectorAll(".err-g").forEach((e) => e.remove()));
-    stepEls.forEach((infos) => { setCls(infos, "pc-clean", false); setCls(infos, "pc-dirty", false); setCls(infos, "pc-early", false); setCls(infos, "pc-late", false); });
+    stepEls.forEach((infos) => { setCls(infos, "pc-clean", false); setCls(infos, "pc-dirty", false); setCls(infos, "pc-early", false); setCls(infos, "pc-late", false); setCls(infos, "pc-dur", false); });
     flagEls.forEach((e) => e.remove()); flagEls.clear();
     if (tagEl) { tagEl.remove(); tagEl = null; } clearTimeout(tagTimer);
   }
@@ -905,6 +907,7 @@ export function createRenderer(container, opts = {}) {
     return cursorRect;
   }
   function applyCursor(i, animate) {
+    setTimeout(applyWait, 0);
     stepEls.forEach((infos) => setCls(infos, "pc-cur", false));
     const infos = stepEls[i];
     setActive(steps[i] ? steps[i].measure : null);
@@ -990,6 +993,85 @@ export function createRenderer(container, opts = {}) {
     if (best) tapCb(best);
   });
 
+
+  /* ---------------------------- notas sostenidas: barra de duración sobre la partitura ---------------------------- */
+  // Una barra por nota larga, desde la cabeza hasta donde termina su valor (en continua, proporcional al espacio de la partitura; en página,
+  // dentro del renglón). Se dibuja una vez y después sólo cambia transform / opacity: no se vuelve a dibujar VexFlow.
+  let holdSvg = null, cursorWait = false;
+  const holdEls = new Map();    // id → { g, fill, w, state, f }
+  function applyWait() {
+    if (cs && cs.cursorEl) cs.cursorEl.classList.toggle("wait", cursorWait);
+    if (cursorRect) cursorRect.classList.toggle("wait", cursorWait);
+  }
+  /** Marca que el cursor todavía no toca (se sigue sosteniendo una nota que termina antes). */
+  function setCursorWait(on) { on = !!on; if (on === cursorWait) return; cursorWait = on; applyWait(); }
+  function clearHolds() { holdEls.clear(); if (holdSvg) { holdSvg.remove(); holdSvg = null; } }
+  function holdSvgEl() {
+    if (holdSvg && holdSvg.isConnected) return holdSvg;
+    if (!systems.length) return null;
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("class", "hold-svg"); svg.setAttribute("aria-hidden", "true");
+    (cs ? cs.track : container).appendChild(svg);
+    holdSvg = svg; sizeHoldSvg();
+    return svg;
+  }
+  function sizeHoldSvg() {
+    if (!holdSvg) return;
+    const w = cs ? cs.total * cs.scale : container.clientWidth, h = cs ? cs.svgH : Math.max(container.scrollHeight, container.clientHeight);
+    holdSvg.setAttribute("width", w); holdSvg.setAttribute("height", h);
+    holdSvg.style.width = w + "px"; holdSvg.style.height = h + "px";
+  }
+  /** px (en el lienzo que se desplaza) de una coordenada x / y del SVG del sistema. */
+  const hx = (sys, ax) => (cs ? (ax + sys.x0) * cs.scale : sys.el.offsetLeft + ax * sys.scale);
+  const hy = (sys, ay) => (cs ? (ay - cs.y0) * cs.scale : sys.el.offsetTop + ay * sys.scale);
+  function holdGeom(h) {
+    const r = h.ref; const info = r && noteIndex.get(nk(r.measure, r.hand, r.idx)); if (!info || info.rest) return null;
+    const s = systems[info.sys]; if (!s) return null;
+    let ax, ys; try { ax = info.note.getAbsoluteX(); ys = info.note.getYs(); } catch (e) { return null; }
+    const j = Math.max(0, info.k2 ? info.k2.indexOf(r.keyIdx) : 0), yy = ys[j] != null ? ys[j] : ys[0];
+    const k = cs ? cs.scale : s.scale || 1;
+    const x0 = hx(s, ax) + 11 * k, y = hy(s, yy);
+    let x1 = null;
+    const e = h.endRef && noteIndex.get(nk(h.endRef.measure, h.endRef.hand, h.endRef.idx));
+    if (e && (cs || e.sys === info.sys)) { try { x1 = hx(systems[e.sys], e.note.getAbsoluteX()) - 4 * k; } catch (er) { x1 = null; } }
+    if (x1 == null) {
+      let m = h.endRef ? h.endRef.measure : (score ? score.measures.length : 1);
+      if (!cs) m = Math.min(m - (h.endRef && h.endRef.idx === 0 ? 1 : 0), s.to);
+      else m = Math.max(r.measure, m - (h.endRef && h.endRef.idx === 0 ? 1 : 0));
+      if (cs) { const gi = Math.min(Math.max(0, m), cs.gx.length - 1); x1 = (cs.gx[gi] + cs.gw[gi]) * cs.scale - 8 * k; }
+      else { const mm = s.mx[Math.min(Math.max(m, s.from), s.to)]; x1 = s.el.offsetLeft + (mm.x + mm.w) * s.scale - 8 * k; }
+    }
+    return { x: x0, y, w: Math.max(18, x1 - x0), th: Math.max(5, 6.5 * k) };
+  }
+  /** list = [{ id, ref:{measure,hand,idx,keyIdx}, endRef, hand, fraction, state:"holding"|"done"|"early" }]. Lo que no está en la lista se quita. */
+  function setHolds(list) {
+    const seen = new Set();
+    for (const h of list || []) {
+      if (!h || !h.ref) continue;
+      seen.add(h.id);
+      let e = holdEls.get(h.id);
+      if (!e) {
+        const svg = holdSvgEl(); if (!svg) continue;
+        const g = holdGeom(h); if (!g) continue;
+        sizeHoldSvg();
+        const el = document.createElementNS(SVGNS, "g");
+        el.setAttribute("class", "hold-g " + (h.hand === "lh" ? "lh" : "rh"));
+        el.style.transform = `translate(${g.x}px, ${g.y - g.th / 2}px)`;
+        const mk = (cls, w) => { const r = document.createElementNS(SVGNS, "rect"); r.setAttribute("class", cls); r.setAttribute("width", w); r.setAttribute("height", g.th); r.setAttribute("rx", g.th / 2); el.appendChild(r); return r; };
+        mk("hold-track", g.w);
+        const fill = mk("hold-fill", g.w);
+        svg.appendChild(el);
+        e = { g: el, fill, w: g.w, state: "", f: -1 };
+        holdEls.set(h.id, e);
+      }
+      const f = Math.max(0, Math.min(1, h.fraction || 0));
+      if (Math.abs(f - e.f) > 0.002) { e.fill.style.transform = `scaleX(${f.toFixed(3)})`; e.f = f; }
+      const st = h.state || "holding";
+      if (st !== e.state) { e.g.setAttribute("class", "hold-g " + (h.hand === "lh" ? "lh" : "rh") + " " + st); e.state = st; }
+    }
+    for (const [id, e] of [...holdEls]) if (!seen.has(id)) { e.g.remove(); holdEls.delete(id); }
+  }
+
   /* ---------------------------- aspecto / redibujo ---------------------------- */
   function setLook(o = {}) {
     let redo = false;
@@ -1019,7 +1101,7 @@ export function createRenderer(container, opts = {}) {
   ro.observe(container);
 
   return {
-    draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError: (i) => errs.has(i), onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag,
+    draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError: (i) => errs.has(i), onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag, setHolds, setCursorWait,
     onNoteTap(cb) { tapCb = cb; },
     onMeasureTap(cb) { measureCb = cb; },
     onBadgeTap(cb) { badgeCb = cb; },

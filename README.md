@@ -52,5 +52,18 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - Transporte: Play/Pausa, Detener, barra por compás, tocar un compás para saltar, velocidad 50/75/100/125 % con BPM resultante, repetir, manos, silenciar la mano que practicás, metrónomo, cuenta de entrada, volumen y «Tocar encima» (se ve en el piano guía, no se puntúa). Atajos: espacio y flechas.
 - Núcleo puro en `js/playback.js` (eventos, ligaduras, rango, mano, agenda con anticipación sobre `AudioContext.currentTime`), sintetizador en `js/synth.js` (timbres «Piano» y «Suave», en Ajustes), interfaz en `js/listen.js`. Android: Media Session y Wake Lock mientras suena.
 
+## Sostener las notas largas
+- Al acertar una nota de 1 tiempo o más (Te espero y A pulso), el piano guía muestra sobre la tecla un carril que se consume hacia ella (pulsos 4 · 3 · 2 · 1 y el número que falta) y la partitura una barra que se llena hasta donde termina su valor. Si soltás antes: «Soltaste antes · faltaban 2 tiempos». Con micrófono no se puede medir cuándo soltás: es sólo una guía. El pedal de sustain (MIDI CC64) evita que soltar la tecla cuente.
+- Ajuste «Sostener las notas» (Tempo y Ajustes; clave `holdMode`): Mostrar (por defecto, avisa y no penaliza), Exigir (soltar antes marca el paso con ⊢, error de duración distinto del de nota; no corta el intento) o Apagado. Resultado: «Duraciones: sostuviste completas X de Y notas largas» y los compases donde más soltaste antes; entra en el intento y en el resumen para el profe.
+- En modo escucha cada tecla queda encendida durante toda la duración de su nota y la partitura muestra la estela de duración. El sintetizador usa una envolvente de dos etapas (cuerpo sostenido) y se corta con claridad al terminar el valor.
+- Lógica pura en `js/hold.js` (duraciones con ligaduras, tolerancia 15 % o 120 ms, cambio de tempo en caliente, notas repetidas, pedal).
+
 ## Tests
 `node --test test/*.test.mjs`
+
+## Mi biblioteca
+
+- Botón "Mi biblioteca" siempre visible arriba (con contador): pantalla con todas tus partituras, búsqueda por título/artista, filtros (Todas, Creadas con IA, Importadas, Incluidas, Tareas, Arreglos, Borradores) y orden (Recientes, Título, Mejor resultado). La lista de inicio muestra las 4 más recientes y "Ver todas (N)".
+- Todo lo que llega a Revisión (IA, importación, foto, PDF) se guarda solo como "Borrador" (lógica en `js/mylib.js`). "Guardar" lo confirma, "Descartar" lo borra con confirmación; en el inicio aparece "Seguí con tu borrador".
+- Ajustes > "Exportar mi biblioteca" / "Importar biblioteca": archivo `.pianocheck-lib` con partituras, anotaciones e historial (sin API key); al importar se une sin duplicar por id.
+- Las partituras viven en este dispositivo y en esta dirección de la app.

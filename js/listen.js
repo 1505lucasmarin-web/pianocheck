@@ -106,6 +106,10 @@ export function createListen({ player, host, adapter, prefs, toast = () => {}, k
       if (E.range) E.range.setAttribute("aria-valuetext", `Compás ${m + 1} de ${nMeasures()}, ${fmt((beat - s.startBeat) / rt)} de ${fmt(tot)}`);
     }
     if (E.t1) E.t1.textContent = fmt(tot);
+    if (adapter.onSound) {   // notas que suenan ahora (para mantener encendidas las teclas y llenar la barra de duración)
+      const act = counting ? [] : s.events.filter((e) => e.beat <= beat + 1e-6 && beat < e.beat + e.dur - 1e-6);
+      adapter.onSound({ beat, playing: tr.playing, rate: rt, events: act, counting });
+    }
     const step = adapter.stepAt(beat);
     const si = step ? step.i : -1;
     if (si !== S.lastStep || m !== S.lastMeasure || S.forceFrame) {

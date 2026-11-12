@@ -1097,3 +1097,95 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
   .ctl.play{flex:0 0 48px}
   #btn-tempo{flex:1.4 1 0}
 }
+
+/* ---- Sostener las notas largas: carril sobre las teclas, barra sobre la partitura ---- */
+.pk{--lane:0px;position:relative}
+.pk.lane{--lane:64px}
+.pk-keys{height:calc(var(--lane) + var(--strip) + var(--kh))}
+.pk-w,.pk-b{top:calc(var(--lane) + var(--strip))}
+.pk-step{top:calc(var(--lane) + 3px)}
+.pk-hold{--c:var(--acc);position:absolute;top:3px;height:calc(var(--lane) - 6px);z-index:4;pointer-events:none}
+.pk-hold.lh{--c:var(--lh)}
+.ph-rail{position:absolute;inset:0;border-radius:7px 7px 3px 3px;background:rgba(244,234,214,.08);border:1px solid rgba(244,234,214,.22)}
+.ph-fill{position:absolute;inset:0;border-radius:7px 7px 3px 3px;background:linear-gradient(180deg,color-mix(in srgb,var(--c) 70%,#fff),var(--c) 60%);transform-origin:50% 100%;box-shadow:0 0 14px color-mix(in srgb,var(--c) 55%,transparent),inset 0 0 0 1px rgba(255,255,255,.28);will-change:transform}
+.ph-t{position:absolute;left:0;right:0;height:0;border-top:1.5px dashed rgba(32,22,10,.6)}
+.ph-t{left:0;right:0;border-top:1.5px dashed rgba(32,22,10,.6)}
+.ph-t b{position:absolute;right:100%;margin-right:3px;top:-6px;font:800 10px/1 var(--sans);color:var(--mut)}
+.ph-num{position:absolute;left:50%;bottom:2px;transform:translateX(-50%);font:900 22px/1 var(--serif);color:#15110d;text-shadow:0 0 6px rgba(255,255,255,.55)}
+.pk-hold.done .ph-fill{transform:scaleY(1)!important;background:linear-gradient(180deg,#b8ecc2,var(--ok));box-shadow:0 0 16px rgba(134,212,148,.8);animation:phpop .55s ease-out forwards}
+.pk-hold.done .ph-t{display:none}
+.pk-hold.early .ph-rail{border-color:var(--bad);border-style:dashed}
+.pk-hold.early .ph-fill{background:repeating-linear-gradient(45deg,#ff8272 0 5px,#c64a3d 5px 10px);box-shadow:none;animation:phshake .42s ease-in-out}
+.pk-hold.early .ph-num{font-size:15px;color:#fff;text-shadow:0 0 4px #15110d}
+.pk-hold.guided .ph-rail{border-style:dotted}
+.pk-hold.guided .ph-fill{opacity:.8}
+.pk-msg{position:absolute;left:0;top:-1px;z-index:8;max-width:calc(100% - 118px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 11px;border-radius:999px;background:#15110d;border:1.5px solid var(--acc);color:var(--acc);font:700 .8rem/1.3 var(--sans);pointer-events:none;box-shadow:0 3px 10px rgba(0,0,0,.5);animation:phmsg .25s ease-out}
+.pk-msg.ok{border-color:var(--ok);color:var(--ok)}
+.pk-msg.bad{border-color:var(--bad);color:#ffb3a8}
+.pk-msg.info{border-color:var(--line);color:var(--mut);font-weight:600}
+@keyframes phpop{0%{filter:brightness(1.8)}100%{filter:brightness(1)}}
+@keyframes phshake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+@keyframes phmsg{from{opacity:0}to{opacity:1}}
+@media (max-width:600px){.pk.lane{--lane:56px}.ph-num{font-size:19px}.pk-msg{font-size:.74rem}}
+@media (min-width:900px) and (min-height:600px){.pk.lane{--lane:78px}}
+@media (max-height:520px){.pk.lane{--lane:40px}.ph-num{font-size:15px}}
+/* en la partitura */
+.hold-svg{position:absolute;left:0;top:0;pointer-events:none;overflow:visible;z-index:1;stroke:none!important}
+.hold-svg rect{stroke:none!important}
+.hold-track{fill:var(--sh-cur)!important;opacity:.22}
+.hold-fill{fill:var(--sh-cur)!important;opacity:.85;transform-box:fill-box;transform-origin:0 50%;transform:scaleX(0);will-change:transform}
+.hold-g.lh .hold-track,.hold-g.lh .hold-fill{fill:var(--sh-early)!important}
+.hold-g.done .hold-fill{fill:var(--sh-ok)!important}
+.hold-g.early .hold-track{fill:var(--sh-bad)!important;opacity:.28}
+.hold-g.early .hold-fill{fill:var(--sh-bad)!important}
+.cs-cursor.wait{background:transparent;border-style:dashed;opacity:.8}
+.cursor-rect.wait{fill:none;stroke-dasharray:5 4}
+.vf-stavenote.pc-dur *{fill:var(--sh-late) !important;stroke:var(--sh-late) !important}
+.step-flag.dur{stroke:var(--sh-late)!important}
+.next-info.hold .next-name{color:var(--acc)}
+.hold-seg-hint{margin-top:6px}
+.res-holds{margin:4px 0 0;font-weight:600;font-size:.95rem}
+@media (prefers-reduced-motion:reduce){.ph-fill{transition:none}}
+
+/* ---- Mi biblioteca ---- */
+#open-mylib{position:relative;gap:6px;padding-inline:10px;white-space:nowrap}
+.ml-n,.chip-n{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:var(--acc);color:var(--acc-ink);font:800 .78rem/1 var(--sans)}
+.chip-n{background:var(--bg);color:var(--mut);border:1px solid var(--line)}
+.chip.on .chip-n{background:var(--acc-ink);color:var(--acc);border-color:transparent}
+.ml-count{color:var(--mut);font:600 .95rem var(--sans)}
+.ml-tools{display:flex;gap:10px;align-items:center;margin:12px 0 10px;flex-wrap:wrap}
+.ml-tools .ls-field{flex:1 1 240px}
+.ml-sort select{min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--bg3);color:var(--fg);font:inherit;padding:0 12px}
+.ml-filters{margin:4px 0 14px}
+.ml-filters .chip{min-height:40px;padding:4px 12px}
+.ml-filters .chip.on{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}
+.ml-empty{text-align:center;padding:28px 8px}
+.ml-empty h2{margin:8px 0 6px}
+.ml-empty p{color:var(--mut);margin:0 0 16px}
+.ml-empty .row{justify-content:center;gap:10px}
+.ml-note{max-width:520px;margin:18px auto 0!important;font-size:.9rem}
+#ml-list .empty{grid-column:1/-1;list-style:none;color:var(--mut);padding:24px 8px;text-align:center}
+.card .art{color:var(--mut);font-size:.95rem;margin-top:-4px}
+.tag.origin{color:var(--fg);background:var(--bg3)}
+.tag.origin.ia{border-color:#6b5428;color:var(--acc)}
+.tag.origin.tarea{border-color:#3d5c7a;color:var(--lh)}
+.tag.draft{color:var(--acc-ink);background:var(--warn);border-color:var(--warn);font-weight:800;white-space:nowrap}
+.card.is-draft{border-style:dashed;border-color:#8a6a2c}
+.draft-card{border-color:#8a6a2c}
+#lib-card .row{gap:10px}
+#lib-msg.bad{color:var(--bad)}
+#library-section .row.center{justify-content:center;margin-top:12px}
+@media (max-width:600px){
+  .ml-lbl{display:none}
+  #open-mylib{padding-inline:8px}
+  #open-mylib .ml-lbl{display:inline;font-size:.8rem}
+  #welcome-nav:not([hidden]) ~ #open-mylib .ml-lbl{display:none}
+}
+.ml-n[hidden]{display:none}
+.ml-tools .ls-field input{width:100%;height:46px;box-sizing:border-box}
+.ml-tools .ls-field{flex:1 1 100%}
+.ml-filters .chip::before{display:none}
+.ml-filters .chip.on{border-color:var(--acc)}
+
+.draft-line{display:flex;align-items:center;gap:8px;padding:4px 14px;font-size:.82rem;color:var(--muted,#8a8272)}
+.ml-tools .ls-field input[type=search]{-webkit-appearance:none;appearance:none;background:var(--bg3);border:1px solid var(--line);border-radius:12px;color:var(--fg);font:inherit}
