@@ -96,6 +96,16 @@
         <div class="continue-t"><span class="continue-k" id="search-card-h">Búsqueda pendiente</span><b id="search-card-title"></b><span id="search-card-sub" class="continue-sub"></span></div>
         <div class="row"><button class="btn primary big" id="search-card-go"></button><button class="btn icon ghost" id="search-card-x" aria-label="Descartar la búsqueda pendiente"><svg class="ic"><use href="#i-x"/></svg></button></div>
       </section>
+      <section id="pdf-resume-card" class="continue" hidden aria-labelledby="pdf-resume-heading">
+        <div class="continue-t">
+          <span class="continue-k" id="pdf-resume-heading">Importación de PDF pendiente</span>
+          <b id="pdf-resume-title"></b><span class="continue-sub" id="pdf-resume-progress"></span>
+        </div>
+        <div class="row wrap">
+          <button class="btn primary" id="pdf-resume-go" type="button">Retomar PDF</button>
+          <button class="btn icon ghost" id="pdf-resume-discard" type="button" aria-label="Descartar importación pendiente"><svg class="ic"><use href="#i-x"/></svg></button>
+        </div>
+      </section>
       <section id="continue-card" class="continue" hidden aria-labelledby="continue-h">
         <div class="continue-t"><span class="continue-k" id="continue-h">Continuar práctica</span><b id="continue-title"></b><span id="continue-sub" class="continue-sub"></span></div>
         <button class="btn primary big" id="continue-go"><svg class="ic"><use href="#i-play"/></svg>Continuar</button>
@@ -921,6 +931,7 @@
       <div id="busy-err" class="busy-err" role="alert" hidden></div>
       <div class="row center">
         <button class="btn" id="busy-settings" hidden>Ir a Ajustes</button>
+        <button class="btn primary" id="busy-resume-pdf" type="button" hidden>Retomar PDF</button>
         <button class="btn" id="busy-close">Cancelar</button>
       </div>
     </div>

@@ -131,3 +131,35 @@ test('OMR: descarta la respuesta cortada y reúne los sistemas en orden con el c
   assert.deepEqual(score.measures.map((m) => m.rh[0].k), [['g/4', 'b/4'], ['a/4'], ['b/4']]);
   assert.deepEqual(score.measures[1].rh[0].f, [3]);
 });
+
+test('OMR: limita el paralelo, guarda respuestas desordenadas y retoma sólo lo que falta', async () => {
+  const images = Object.assign([blob()], { pageNumbers: [2], totalPages: 4 });
+  const splitImage = async () => Array.from({ length: 6 }, blob);
+  const checkpoint = { completed: {}, async save(id, data) { this.completed[id] = data; } };
+  const requested = [];
+  const pitches = ['c/4', 'd/4', 'e/4', 'f/4', 'g/4', 'a/4'];
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let active = 0, peak = 0, disconnect = true;
+  const fetchImpl = async (_url, req) => {
+    const prompt = JSON.parse(req.body).messages[0].content[1].text;
+    const system = Number(/system (\d+) of 6/.exec(prompt)[1]);
+    requested.push(system);
+    peak = Math.max(peak, ++active);
+    try {
+      if (disconnect && system === 2) throw new TypeError('Failed to fetch');
+      await delay(system === 3 ? 25 : 5);
+      const text = JSON.stringify({ timeSig: [3, 4], measures: [{ rhTimed: [[0, 1, pitches[system - 1]]] }] });
+      return resp(200, { content: [{ type: 'text', text }] });
+    } finally { active--; }
+  };
+  const options = { apiKey: 'fake', fetchImpl, splitImage, checkpoint };
+  await assert.rejects(recognizeScore(images, options), (e) => e.kind === 'network');
+  assert.deepEqual(requested, [1, 2, 3, 4]);
+  assert.deepEqual(Object.keys(checkpoint.completed), ['2:1/6', '2:4/6', '2:3/6']);
+  disconnect = false;
+  requested.length = 0;
+  const score = await recognizeScore(images, options);
+  assert.deepEqual(requested, [2, 5, 6]);
+  assert.equal(peak, 3);
+  assert.deepEqual(score.measures.map((m) => m.rh[0].k[0]), pitches);
+});

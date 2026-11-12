@@ -281,25 +281,39 @@ async function callProvider(provider, opts, fetchImpl, signal) {
   const build = provider === 'anthropic' ? buildAnthropicRequest : buildGeminiRequest;
   const { url, init } = build(opts);
   let res;
+  let body;
   try {
     res = await fetchImpl(url, { ...init, signal });
+    body = await res.text();
   } catch (e) {
     if (e && e.name === 'AbortError') throw new OmrError('Lectura cancelada.', 'abort');
     throw new OmrError('No hay conexión con internet (o el navegador bloqueó la llamada). Verificá tu conexión y reintentá.', 'network');
   }
-  const body = await res.text();
   if (!res.ok) throw mapHttpError(res.status, provider, body);
   let json;
   try { json = JSON.parse(body); } catch (e) { throw new OmrError('La respuesta del servidor no se pudo leer.', 'parse'); }
   return textFromResponse(provider, json);
 }
 
+/** Al fallar un sistema, terminar los pedidos ya iniciados para poder guardar sus respuestas. */
+async function readPool(indices, limit, read) {
+  let next = 0, failure;
+  async function worker() {
+    while (!failure && next < indices.length) {
+      const index = indices[next++];
+      try { await read(index); } catch (error) { failure ||= error; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(indices.length, limit) }, worker));
+  if (failure) throw failure;
+}
+
 /**
  * Lee una o más páginas de partitura con IA.
- * options: { provider, apiKey, model, onProgress, fetchImpl?, signal? }
+ * options: { provider, apiKey, model, onProgress, fetchImpl?, signal?, checkpoint?, concurrency? }
  */
 export async function recognizeScore(images, options = {}) {
-  const { provider = 'anthropic', apiKey, onProgress = () => {}, signal } = options;
+  const { provider = 'anthropic', apiKey, onProgress = () => {}, signal, checkpoint } = options;
   const fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   if (provider !== 'anthropic' && provider !== 'gemini') throw new OmrError('Proveedor de IA desconocido.', 'config');
   if (!apiKey || !String(apiKey).trim()) throw new OmrError('Falta la API key. Cargala en Ajustes.', 'auth');
@@ -307,6 +321,7 @@ export async function recognizeScore(images, options = {}) {
   if (!fetchImpl) throw new OmrError('Este navegador no soporta llamadas de red.', 'config');
   const model = options.model || DEFAULT_MODELS[provider];
   const key = String(apiKey).trim();
+  const concurrency = Math.max(1, Math.min(3, Math.floor(options.concurrency || 3)));
 
   const pages = [];
   const split = options.splitImage || splitScoreImage;
@@ -316,29 +331,34 @@ export async function recognizeScore(images, options = {}) {
     const total = images.totalPages || images.length;
     const label = total > 1 ? ` (página ${page} de ${total})` : '';
     onProgress(`Preparando imagen${label}…`);
-    let previous = pages.length ? mergePages(pages, { includeMeasures: false }) : undefined;
-    async function read(blob, fragment) {
+    const previous = pages.length ? mergePages(pages, { includeMeasures: false }) : undefined;
+    const pageKey = (fragment) => `${page}:${fragment ? `${fragment.index}/${fragment.count}` : 'full'}`;
+    async function read(blob, fragment, context) {
       signal?.throwIfAborted();
+      const id = pageKey(fragment);
+      if (checkpoint?.completed?.[id]) {
+        return checkpoint.completed[id];
+      }
       const image = await imageToBase64(blob);
       signal?.throwIfAborted();
       const suffix = fragment?.count > 1 ? ` · sistema ${fragment.index} de ${fragment.count}` : '';
       onProgress(`Leyendo la partitura con IA${label}${suffix}…`);
-      const text = await callProvider(provider, { apiKey: key, model, image, page, total, previous, fragment }, fetchImpl, signal);
+      const text = await callProvider(provider, { apiKey: key, model, image, page, total, previous: context, fragment }, fetchImpl, signal);
       let parsed;
       try { parsed = extractJson(text); } catch {
         throw new OmrError('No se pudo interpretar la respuesta de la IA. Reintentá o probá con una foto más nítida.', 'parse');
       }
       if (Array.isArray(parsed)) parsed = { measures: parsed };
-      const withContext = { timeSig: previous?.timeSig, ...parsed };
+      const withContext = { timeSig: context?.timeSig, ...parsed };
       if (!validateScore(mergePages([withContext])).ok) {
         throw new OmrError('La IA no encontró notas. Verificá que la página tenga música o elegí otro rango.', 'empty');
       }
-      pages.push(parsed);
-      previous = {
-        timeSig: parsed.timeSig || previous?.timeSig,
-        keySig: parsed.keySig || previous?.keySig,
-        bpm: parsed.bpm || previous?.bpm,
-      };
+      signal?.throwIfAborted();
+      if (checkpoint) {
+        try { await checkpoint.save(id, parsed); }
+        catch { throw new OmrError('El dispositivo no pudo guardar el avance de la lectura. Revisá el espacio disponible y reintentá.', 'storage'); }
+      }
+      return parsed;
     }
     try {
       // Los PDFs con muchos sistemas se leen por bandas desde el principio.
@@ -346,8 +366,10 @@ export async function recognizeScore(images, options = {}) {
       if (images.pageNumbers) {
         try { parts = await split(images[i]); } catch { /* la imagen completa sigue disponible */ }
       }
-      if (parts.length < 4) {
-        try { await read(images[i]); continue; }
+      const expectedSuffix = `/${parts.length > 1 ? parts.length : 1}`;
+      const knownFragment = Object.keys(checkpoint?.completed || {}).some((id) => id.startsWith(`${page}:`) && id.endsWith(expectedSuffix));
+      if (parts.length < 4 && !knownFragment) {
+        try { pages.push(await read(images[i], undefined, previous)); continue; }
         catch (e) {
           if (e.kind !== 'truncated') throw e;
           if (!parts.length && !images.pageNumbers) {
@@ -356,14 +378,29 @@ export async function recognizeScore(images, options = {}) {
         }
       }
       const chunks = parts.length > 1 ? parts : [images[i]];
-      for (let j = 0; j < chunks.length; j++) {
-        try { await read(chunks[j], { index: j + 1, count: chunks.length }); }
+      const results = new Array(chunks.length);
+      let complete = 0;
+      async function readChunk(j, context) {
+        try {
+          results[j] = await read(chunks[j], { index: j + 1, count: chunks.length }, context);
+          complete++;
+          onProgress(`Página ${page} de ${total} · ${complete} de ${chunks.length} sistemas listos.`);
+        }
         catch (e) {
           if (e.kind !== 'truncated') throw e;
           const where = chunks.length > 1 ? ` (sistema ${j + 1} de ${chunks.length})` : '';
           throw new OmrError(`La IA agotó su límite incluso con el formato compacto${where}. Probá con otro modelo en Ajustes o importá una edición MusicXML o MIDI.`, 'truncated');
         }
       }
+      // El primer sistema aporta el compás, la armadura y el tempo para los demás.
+      await readChunk(0, previous);
+      const context = {
+        timeSig: results[0].timeSig || previous?.timeSig,
+        keySig: results[0].keySig || previous?.keySig,
+        bpm: results[0].bpm || previous?.bpm,
+      };
+      await readPool(chunks.slice(1).map((_, i) => i + 1), concurrency, (j) => readChunk(j, context));
+      pages.push(...results);
     } catch (e) {
       throw new OmrError(e.message + label, e.kind);
     }

@@ -239,6 +239,7 @@ const bundledIds = () => (_bundled ||= new Set([demoScore.id, ...PIECES.flatMap(
 let continueInfo = null;
 const id2score = (id, list) => (id === demoScore.id ? demoScore : (list || []).find((x) => x.id === id));
 async function refreshLibrary() {
+  refreshPendingPdf().catch(() => {});
   let list = [], sums = {};
   try { list = (await store.list()) || []; sums = await store.summaries(); } catch (e) { $("library-list").innerHTML = `<li class="empty">No se pudo leer la biblioteca: ${esc(e.message)}</li>`; return; }
   list = list.slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
@@ -480,13 +481,25 @@ function handleIncomingShare() {
 }
 
 /* ---------- importación ---------- */
-const busy = { open(title) { $("busy-title").textContent = title; $("busy-log").textContent = ""; $("busy-err").hidden = true; $("busy-settings").hidden = true; $("busy-spinner").classList.remove("stop"); $("busy-close").textContent = "Cancelar"; $("busy").hidden = false; },
+const busy = { open(title) { $("busy-title").textContent = title; $("busy-log").textContent = ""; $("busy-err").hidden = true; $("busy-settings").hidden = true; $("busy-resume-pdf").hidden = true; $("busy-spinner").classList.remove("stop"); $("busy-close").textContent = "Cancelar"; $("busy").hidden = false; },
   log(msg) { $("busy-log").textContent = msg; },
   error(msg, needSettings) { $("busy-log").textContent = ""; $("busy-spinner").classList.add("stop"); $("busy-err").textContent = msg; $("busy-err").hidden = false; $("busy-settings").hidden = !needSettings; $("busy-close").textContent = "Cerrar"; },
   close() { $("busy").hidden = true; } };
 let lastImportKind = "";
+let pendingPdf = null;
+function renderPendingPdf(job) {
+  pendingPdf = job;
+  $("pdf-resume-card").hidden = !job;
+  if (!job) return;
+  $("pdf-resume-title").textContent = job.file.name;
+  const n = Object.keys(job.completed).length;
+  $("pdf-resume-progress").textContent = n ? `${n} ${n === 1 ? "parte guardada" : "partes guardadas"}` : "Archivo listo para leer";
+}
+async function refreshPendingPdf() {
+  renderPendingPdf(await (await lazy("store")).getPendingPdfImport());
+}
 function cancelImport() { if (composeAbort) { try { composeAbort.abort(); } catch (e) { /* nada */ } }
-  importToken++; busy.close(); }
+  importToken++; busy.close(); refreshPendingPdf().catch(() => {}); }
 $("busy-close").addEventListener("click", cancelImport);
 $("busy-settings").addEventListener("click", () => { cancelImport(); openSettings(); });
 
@@ -494,24 +507,71 @@ let composeAbort = null;
 $("compose-go").addEventListener("click", onComposeGo);
 
 const ORIGIN_OF = { photo: "foto", images: "imagenes", pdf: "pdf" };
-async function runImport(kind, files, ctxOverride) {
+async function digestPdf(file) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+async function resumePdf() {
+  const job = pendingPdf;
+  if (job) await runImport("pdf", [job.file], job.context, job);
+}
+$("pdf-resume-go").addEventListener("click", resumePdf);
+$("busy-resume-pdf").addEventListener("click", resumePdf);
+$("pdf-resume-discard").addEventListener("click", async () => {
+  const job = pendingPdf;
+  if (!job) return;
+  if (!await confirmDialog({ title: "¿Descartar la importación?", text: "Se borra el avance guardado de este PDF.", yes: "Descartar", no: "Conservar" })) return;
+  try { await (await lazy("store")).updatePendingPdfImport(job.id, () => null); await refreshPendingPdf(); }
+  catch { toast("No se pudo descartar el avance guardado."); }
+});
+async function runImport(kind, files, ctxOverride, savedPdf) {
   files = Array.from(files || []); if (!files.length) return;
   if (kind === "task") { await runImportTask(files[0]); return; }
-  const ctx = ctxOverride || importCtx; importCtx = null;   // datos de la búsqueda que originó la importación (título, artista, enlace)
+  let ctx = ctxOverride || importCtx; importCtx = null;   // datos de la búsqueda que originó la importación (título, artista, enlace)
   lastImportKind = kind;
-  const pdfRange = kind === "pdf" ? $("pdf-pages").value.trim() : "";
+  const pdfRange = savedPdf?.range ?? (kind === "pdf" ? $("pdf-pages").value.replace(/\s+/g, "") : "");
   const token = ++importToken;
   const alive = () => token === importToken;
   const needsAi = kind === "photo" || kind === "images" || kind === "pdf";
+  let job = savedPdf, pdfStore;
   busy.open(needsAi ? "Leyendo partitura con IA" : "Importando partitura");
   try {
     let score;
     let importWarnings = [];
+    if (kind === "pdf") {
+      pdfStore = await lazy("store");
+      if (!job) {
+        busy.log("Guardando el PDF en este dispositivo…");
+        const hash = await digestPdf(files[0]);
+        const old = await pdfStore.getPendingPdfImport();
+        if (!alive()) return;
+        if (old && old.hash === hash && old.range === pdfRange) job = old;
+        else {
+          if (old && Object.keys(old.completed).length) {
+            const replace = await confirmDialog({ title: "Hay un PDF pendiente", text: "Empezar otra importación reemplaza el avance guardado. Si querés conservarlo, tocá Retomar PDF en el inicio.", yes: "Empezar otra", no: "Conservar el avance" });
+            if (!alive()) return;
+            if (!replace) { busy.close(); renderPendingPdf(old); return; }
+          }
+          const next = { id: newId(), hash, file: files[0], range: pdfRange, context: ctx, completed: {} };
+          try { await pdfStore.savePendingPdfImport(next); }
+          catch { throw new Error("No se pudo guardar el PDF en este dispositivo. Liberá espacio y reintentá."); }
+          job = next;
+        }
+      }
+      ctx = job.context;
+      if (!alive()) return;
+      renderPendingPdf(job);
+    }
     if (needsAi) {
+      if (job && !navigator.onLine) {
+        busy.error("Sin conexión. El PDF y las partes leídas siguen guardados en este dispositivo.");
+        $("busy-resume-pdf").hidden = false;
+        return;
+      }
       if (!settings.apiKey) {
         busy.error("Falta la API key. Cargala en Ajustes para leer fotos y PDF con IA.", true); return;
       }
-      if (!navigator.onLine) { busy.error("Sin conexión a internet: la lectura por IA la necesita."); return; }
+      if (!navigator.onLine && !job) { busy.error("Sin conexión a internet: la lectura por IA la necesita."); return; }
       busy.log("Preparando imágenes…");
       const ctl = new AbortController();
       composeAbort = ctl;
@@ -529,8 +589,21 @@ async function runImport(kind, files, ctxOverride) {
       }
       if (!alive()) return;
       if (!blobs.length) throw new Error("No se obtuvieron imágenes para leer.");
+      const checkpoint = job && {
+        completed: job.completed,
+        async save(id, parsed) {
+          // Guardar una copia de cada resultado antes de dar el fragmento por terminado.
+          const updated = await pdfStore.updatePendingPdfImport(job.id, (current) => {
+            current.completed[id] = parsed;
+            return current;
+          });
+          if (!updated) throw new Error("La importación cambió en otra pestaña.");
+          job.completed[id] = parsed;
+        },
+      };
       score = await omr.recognizeScore(blobs, {
         provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model,
+        checkpoint, concurrency: job?.serial ? 1 : undefined,
         signal: ctl.signal, onProgress: (m) => alive() && busy.log(m),
       });
       if (!score.title || score.title === "Sin título") score.title = files[0].name.replace(/\.[^.]+$/, "");
@@ -550,13 +623,35 @@ async function runImport(kind, files, ctxOverride) {
       if (ctx.artist) v.score.artist = ctx.artist;
       if (/^https?:\/\/\S+$/i.test(ctx.sourceUrl || "")) v.score.sourceUrl = ctx.sourceUrl;
     }
+    if (job) {
+      // Usar el mismo ID al retomar, por si se cerró la app justo después de guardar el borrador.
+      v.score.id = job.id;
+      v.score.draft = true;
+      const existing = await store.get(job.id);
+      if (!alive()) return;
+      if (!existing) await store.save(v.score);
+      if (!alive()) return;
+      await pdfStore.updatePendingPdfImport(job.id, () => null);
+      if (!alive()) return;
+      renderPendingPdf(null);
+      if (existing) v.score = existing;
+    }
     busy.close();
-    openReview(v.score, true, [...importWarnings, ...v.errors], ctx ? `Importada para «${ctx.title}»${ctx.artist ? " de " + ctx.artist : ""}. Revisá las notas antes de practicar.` : (kind === "pdf" ? "Revisá las notas y la digitación antes de practicar, especialmente donde hay varias voces." : undefined));
+    openReview(v.score, !job, [...importWarnings, ...v.errors], ctx ? `Importada para «${ctx.title}»${ctx.artist ? " de " + ctx.artist : ""}. Revisá las notas antes de practicar.` : (kind === "pdf" ? "Revisá las notas y la digitación antes de practicar, especialmente donde hay varias voces." : undefined));
     if (ctx && editState) editState.fromSearch = true;
   } catch (err) {
     if (!alive()) return;
     console.error(err);
-    busy.error(err && err.message ? err.message : String(err), ["auth", "model"].includes(err?.kind));
+    if (job && err?.kind === "rate" && !job.serial) {
+      job.serial = true;
+      await pdfStore.updatePendingPdfImport(job.id, (current) => ({ ...current, serial: true })).catch(() => {});
+    }
+    if (!alive()) return;
+    if (job) renderPendingPdf(job);
+    const kept = job ? Object.keys(job.completed).length : 0;
+    const detail = kept ? ` Avance guardado: ${kept} ${kept === 1 ? "parte" : "partes"}. Podés retomar este PDF desde el inicio.` : "";
+    busy.error((err && err.message ? err.message : String(err)) + detail, ["auth", "model"].includes(err?.kind));
+    $("busy-resume-pdf").hidden = !job || !["network", "rate", "server", "storage"].includes(err?.kind);
   } finally { if (alive() && needsAi) composeAbort = null; }
 }
 const importMap = { "imp-photo": ["file-photo", "photo"], "imp-images": ["file-images", "images"], "imp-pdf": ["file-pdf", "pdf"], "imp-xml": ["file-xml", "xml"], "imp-midi": ["file-midi", "midi"], "imp-task": ["file-task", "task"] };

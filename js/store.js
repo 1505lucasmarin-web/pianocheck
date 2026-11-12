@@ -73,6 +73,36 @@ export async function getScore(id) {
   return r || null;
 }
 
+const PDF_IMPORT_KEY = 'pending-pdf-import';
+export async function getPendingPdfImport() {
+  return (await run('settings', 'readonly', (s) => s.get(PDF_IMPORT_KEY))) || null;
+}
+
+export async function savePendingPdfImport(job) {
+  await run('settings', 'readwrite', (s) => job ? s.put(job, PDF_IMPORT_KEY) : s.delete(PDF_IMPORT_KEY));
+}
+
+/** Escribe el avance en una sola transacción y sin reemplazar otro trabajo. */
+export async function updatePendingPdfImport(id, update) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('settings', 'readwrite');
+    const settings = tx.objectStore('settings');
+    let updated = false;
+    const req = settings.get(PDF_IMPORT_KEY);
+    req.onsuccess = () => {
+      const job = req.result;
+      if (job?.id !== id) return;
+      const next = update(job);
+      if (next) settings.put(next, PDF_IMPORT_KEY);
+      else settings.delete(PDF_IMPORT_KEY);
+      updated = true;
+    };
+    tx.oncomplete = () => resolve(updated);
+    tx.onabort = () => reject(tx.error || new Error('No se pudo guardar la importación.'));
+  });
+}
+
 export async function deleteScore(id) {
   await run('scores', 'readwrite', (s) => s.delete(id));
   try { await deleteAttempts(id); } catch (e) { /* sin historial */ }
