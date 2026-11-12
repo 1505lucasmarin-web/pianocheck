@@ -35,7 +35,7 @@ test("buscar, filtrar y ordenar", () => {
   assert.deepEqual(queryLibrary(list, { q: "BRAHMS cuna" }).map((s) => s.id), ["1"]);
   assert.deepEqual(queryLibrary(list, { filter: "importada" }).map((s) => s.id), ["2"]);
   assert.deepEqual(queryLibrary(list, { filter: "borrador" }).map((s) => s.id), ["3"]);
-  assert.deepEqual(filterCounts(list), { todas: 3, borrador: 1, ia: 1, importada: 1, incluida: 0, tarea: 1, arreglo: 0 });
+  assert.deepEqual(filterCounts(list), { todas: 3, borrador: 1, ia: 1, importada: 1, incluida: 0, tarea: 1, arreglo: 0, transcrita: 0, grabada: 0 });
   assert.deepEqual(draftsOf(list).map((s) => s.id), ["3"]); assert.equal(isDraft(list[0]), false);
   assert.equal(FILTERS[0][0], "todas");
 });
@@ -88,4 +88,13 @@ test("límites: demasiadas partituras o intentos", () => {
   const e = buildLibraryExport({ scores: [sc("a"), sc("b"), sc("c")], attempts: [{ id: "1", scoreId: "a" }, { id: "2", scoreId: "a" }, { id: "3", scoreId: "a" }] });
   const r = parseLibraryExport(JSON.stringify(e), { ...LIB_LIMITS, maxScores: 2, maxAttempts: 1 });
   assert.equal(r.scores.length, 2); assert.equal(r.attempts.length, 1); assert.equal(r.skipped.scores, 1); assert.equal(r.skipped.attempts, 2); assert.ok(r.warnings.length);
+});
+
+test('orígenes nuevos: transcrita y grabada (etiqueta, filtro y conteo)', () => {
+  const list = [{ id: 'a', title: 'A', origin: 'transcrita' }, { id: 'b', title: 'B', origin: 'grabada', draft: true }, { id: 'c', title: 'C', origin: 'ia' }];
+  assert.equal(originKind(list[0]), 'transcrita'); assert.equal(originKind(list[1]), 'grabada');
+  assert.deepEqual(queryLibrary(list, { filter: 'transcrita' }).map((s) => s.id), ['a']);
+  assert.deepEqual(queryLibrary(list, { filter: 'grabada' }).map((s) => s.id), ['b']);
+  assert.equal(filterCounts(list).transcrita, 1);
+  assert.ok(FILTERS.some(([k, n]) => k === 'transcrita' && n === 'Transcritas') && FILTERS.some(([k]) => k === 'grabada'));
 });

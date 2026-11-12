@@ -1,5 +1,8 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v13";
+const VERSION = "pianocheck-v14";
+// Motor de transcripción (vendor/ pesado: TF.js recortado + modelo): NO va en el precache inicial; se guarda la primera vez que se usa,
+// en una caché aparte y versionada (subir el número si cambian esos archivos). Después funciona sin conexión.
+const ENGINE_CACHE = "pianocheck-engine-v1";
 const SHELL = [
   "./",
   "index.html",
@@ -11,10 +14,12 @@ const SHELL = [
   "js/annotate-ui.js",
   "js/annotations.js",
   "js/arrange.js",
+  "js/capture.js",
   "js/catalog.js",
   "js/compose.js",
   "js/demo.js",
   "js/engine.js",
+  "js/guide.js",
   "js/hold.js",
   "js/importers.js",
   "js/issues.js",
@@ -37,6 +42,9 @@ const SHELL = [
   "js/summary.js",
   "js/task.js",
   "js/timing.js",
+  "js/transcribe.js",
+  "js/transcribe-core.js",
+  "js/txflow.js",
   "js/pitch.js",
   "js/playback.js",
   "js/share.js",
@@ -57,6 +65,8 @@ const SHELL = [
 ];
 // Nunca se cachean: IA (incluida su búsqueda web), oEmbed y APIs de búsqueda de canciones (identificar un enlace), catálogos y descargas de ediciones.
 // Cualquier pedido a otro origen pasa de largo (ver el filtro del "fetch"); sólo se sirve del caché el shell de esta app.
+const SHELL_PATHS = new Set(SHELL.map((u) => new URL(u, self.location.href).pathname));
+const isEngineFile = (url) => /\/vendor\//.test(url.pathname) && !SHELL_PATHS.has(url.pathname) && !/(LICENSE|README)/i.test(url.pathname);
 const AI_HOSTS = ["api.anthropic.com", "generativelanguage.googleapis.com"];
 const LOOKUP_HOSTS = ["www.youtube.com", "youtube.com", "open.spotify.com", "soundcloud.com", "api.deezer.com", "itunes.apple.com"];
 
@@ -75,7 +85,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter((k) => k.startsWith("pianocheck-") && k !== VERSION).map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k.startsWith("pianocheck-") && k !== VERSION && k !== ENGINE_CACHE).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -86,12 +96,13 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
   if (AI_HOSTS.includes(url.hostname) || LOOKUP_HOSTS.includes(url.hostname) || url.origin !== self.location.origin) return; // nunca cachear APIs de IA, oEmbed/lookup ni terceros
   e.respondWith((async () => {
-    const cache = await caches.open(VERSION);
+    const engine = isEngineFile(url);
+    const cache = await caches.open(engine ? ENGINE_CACHE : VERSION);
     const hit = await cache.match(req, { ignoreSearch: true });
     if (hit) return hit;
     try {
       const res = await fetch(req);
-      if (res.ok && res.type === "basic") cache.put(req, res.clone());
+      if (res.ok && res.status === 200 && res.type === "basic") cache.put(req, res.clone());
       return res;
     } catch (err) {
       if (req.mode === "navigate") { const idx = await cache.match(new URL("index.html", self.registration.scope).href); if (idx) return idx; }

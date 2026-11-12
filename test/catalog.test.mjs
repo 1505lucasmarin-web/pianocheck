@@ -256,7 +256,7 @@ test('fetchEditionFile', async () => {
   }
   assert.equal(calls, 0);
   const cors = await fetchEditionFile(MIDI, { fetchImpl: async () => { throw new TypeError('Failed to fetch'); } });
-  assert.equal(cors.kind, 'network'); assert.match(cors.error, /Importar mi copia/);
+  assert.equal(cors.kind, 'network'); assert.match(cors.error, /Importar un archivo/);
   assert.equal((await fetchEditionFile(MIDI, { fetchImpl: async () => { const e = new Error('a'); e.name = 'AbortError'; throw e; } })).kind, 'abort');
   assert.equal((await fetchEditionFile(MIDI, { fetchImpl: mk({ ok: false, status: 404 }) })).kind, 'http');
   const html = await fetchEditionFile(MIDI, { fetchImpl: mk({ headers: { get: () => 'text/html; charset=utf-8' } }) });
@@ -264,4 +264,65 @@ test('fetchEditionFile', async () => {
   const big = await fetchEditionFile(MIDI, { fetchImpl: mk({ headers: { get: (h) => (h === 'content-length' ? String(99 * 1024 * 1024) : null) } }) });
   assert.equal(big.kind, 'size');
   assert.equal((await fetchEditionFile(MIDI, { fetchImpl: mk({ blob: async () => new Blob([]) }) })).kind, 'format');
+});
+
+/* ------------------------------------------------------------------ modo freeOnly (sólo acceso libre) */
+import { FREE_SEARCH_SYSTEM_PROMPT, COMMERCIAL_DOMAINS, OPEN_HOSTS } from '../js/catalog.js';
+
+test('freeOnly: evermore con búsqueda que devuelve Hal Leonard → ninguna edición paga, sin enlaces a tiendas', async () => {
+  const r = await searchSong({ title: 'evermore', artist: 'Taylor Swift' }, { ai, freeOnly: true, fetchImpl: async () => resp(200, anthropicReply({ results: [[HL, 'Evermore HL'], [FAKE, 'x']], text: evermoreJson() })) });
+  assert.deepEqual(r.editions, []);
+  assert.ok(r.rejected >= 1);
+  assert.ok(r.searchLinks.every((l) => !/halleonard|musicnotes|sheetmusic/i.test(l.url)));
+  assert.ok(r.searchLinks.every((l) => /^https:\/\/www\.mutopiaproject\.org\/cgibin\/make-table\.cgi\?searchingfor=evermore$/.test(l.url)));
+  const free = await searchSong({ title: 'evermore', artist: 'Taylor Swift' }, { ai, fetchImpl: async () => resp(200, anthropicReply({ results: [[HL, 'Evermore HL']], text: evermoreJson() })) });
+  assert.equal(free.editions[0].publisher, 'Hal Leonard');                       // sin freeOnly sigue igual
+  assert.equal(free.editions[0].free, false);
+  assert.equal(free.editions[0].access, 'commercial');
+});
+
+test('freeOnly: el pedido a la IA pide sólo acceso libre y bloquea tiendas; el modo normal no cambia', () => {
+  const free = buildSearchRequest('anthropic', { apiKey: 'k', model: 'm', title: 'Gymnopédie', freeOnly: true });
+  const body = JSON.parse(free.init.body);
+  assert.equal(body.system, FREE_SEARCH_SYSTEM_PROMPT);
+  assert.match(body.system, /never pay/i);
+  assert.match(body.messages[0].content, /FREE/);
+  assert.ok(body.tools[0].blocked_domains.includes('halleonard.com') && body.tools[0].blocked_domains.includes('scribd.com'));
+  const norm = JSON.parse(buildSearchRequest('anthropic', { apiKey: 'k', model: 'm', title: 'x' }).init.body);
+  assert.equal(norm.system, SEARCH_SYSTEM_PROMPT);
+  assert.deepEqual(norm.tools[0].blocked_domains, BLOCKED_DOMAINS);
+  const g = JSON.parse(buildSearchRequest('gemini', { apiKey: 'k', model: 'm', title: 'x', freeOnly: true }).init.body);
+  assert.ok(g.input.startsWith(FREE_SEARCH_SYSTEM_PROMPT));
+  assert.ok(COMMERCIAL_DOMAINS.includes('halleonard.com') && !OPEN_HOSTS.some((h) => COMMERCIAL_DOMAINS.includes(h)));
+});
+
+test('freeOnly: acepta fuentes abiertas (importables) y "gratis del titular" declarado; descarta lo desconocido sin declarar', async () => {
+  const IMSLP = 'https://imslp.org/images/3/3a/PMLP2-Gymnopedie.pdf';
+  const OWNER = 'https://artista.example/partituras/mi-cancion.pdf';
+  const ANON = 'https://random-blog.example/partitura.pdf';
+  const MN = 'https://www.musicnotes.com/sheetmusic/x';
+  const urls = [IMSLP, OWNER, ANON, MN];
+  const text = model({ identified: { title: 'Gymnopédie No. 1', artist: 'Erik Satie', kind: 'song' }, editions: [
+    { title: 'Gymnopédie 1', publisher: 'IMSLP', url: IMSLP, format: 'pdf', access: 'open' },
+    { title: 'Mi canción', publisher: 'La artista', url: OWNER, format: 'pdf', access: 'owner-free' },
+    { title: 'Blog', url: ANON, format: 'pdf' },
+    { title: 'Musicnotes', url: MN, access: 'owner-free' },                 // el modelo miente: igual es una tienda
+  ] });
+  const r = await searchSong({ title: 'Gymnopédie' }, { ai, freeOnly: true, fetchImpl: async () => resp(200, anthropicReply({ results: urls.map((u) => [u, 'T']), text })) });
+  assert.deepEqual(r.editions.map((e) => e.url), [IMSLP, OWNER]);
+  assert.equal(r.editions[0].importable, true); assert.equal(r.editions[0].access, 'open'); assert.equal(r.editions[0].free, true);
+  assert.equal(r.editions[1].importable, false); assert.equal(r.editions[1].access, 'owner-free');
+  assert.equal(r.rejected, 2);
+  // fallback sin JSON: sólo las citadas de fuente abierta
+  const r2 = await searchSong({ title: 'x' }, { ai, freeOnly: true, fetchImpl: async () => resp(200, anthropicReply({ results: [[IMSLP, 'a'], [OWNER, 'b'], [HL, 'c']], text: 'Mirá.', citations: [[IMSLP, 'a'], [OWNER, 'b'], [HL, 'c']] })) });
+  assert.deepEqual(r2.editions.map((e) => e.url), [IMSLP]);
+});
+
+test('freeOnly: buildSearchLinks sólo con catálogos gratuitos; sin título no hay enlaces', () => {
+  const l = buildSearchLinks({ title: 'Clair de lune', artist: 'Debussy' }, { freeOnly: true });
+  assert.equal(l.length, 1);
+  assert.equal(l[0].url, 'https://www.mutopiaproject.org/cgibin/make-table.cgi?searchingfor=Clair%20de%20lune');
+  assert.deepEqual(buildSearchLinks({ artist: 'x' }, { freeOnly: true }), []);
+  assert.deepEqual(buildSearchLinks({}, { freeOnly: true }), []);
+  assert.match(buildSearchLinks({ title: 'a' })[0].url, /halleonard/);        // el comportamiento viejo se mantiene sin la opción
 });

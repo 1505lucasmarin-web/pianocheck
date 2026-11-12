@@ -6,7 +6,7 @@ const LATIN_NAMES = ['Do', 'Do#', 'Re', 'Re#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#',
 const DUR_BEATS = { w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125 };
 const VALID_DEN = [1, 2, 4, 8, 16, 32];
 export const MAX_COMMENT = 160;                                  // largo máximo del comentario de un compás
-export const ORIGINS = ['foto', 'imagenes', 'pdf', 'ia', 'importada', 'incluida', 'tarea', 'arreglo'];   // foto/imagenes/pdf/ia: leídas por IA, se les buscan avisos de importación; el resto sólo dice de dónde salió
+export const ORIGINS = ['foto', 'imagenes', 'pdf', 'ia', 'importada', 'incluida', 'tarea', 'arreglo', 'transcrita', 'grabada'];   // foto/imagenes/pdf/ia: leídas por IA, se les buscan avisos de importación; el resto sólo dice de dónde salió
 const fingerOf = (v) => { const n = Math.round(Number(v)); return n >= 1 && n <= 5 ? n : 0; };
 
 /** "c/4" → 60. Acepta #, ##, b, bb, n. Devuelve null si es inválida. */

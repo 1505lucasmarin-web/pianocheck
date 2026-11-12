@@ -27,6 +27,12 @@
 // Buscadores de catálogos (para `searchLinks`): se exige URL de búsqueda confirmada HOY cargándola.
 //   CONFIRMADO: Hal Leonard  https://www.halleonard.com/search/search.action?keywords=<texto>  (devolvió "Search Results:
 //   "evermore" | Hal Leonard", 198 productos, primero "Taylor Swift – Evermore" Easy Piano).
+//   CONFIRMADO (2026-11-12, modo `freeOnly`): Mutopia Project  https://www.mutopiaproject.org/cgibin/make-table.cgi?searchingfor=<texto>
+//   (con «Moonlight» devolvió 4 entradas, entre ellas «Sonata No. 14 "Moonlight"» de Beethoven para piano; con «Bach» filtró por Bach: la
+//   consulta SÍ se aplica). Buscar sólo por título: no se pudo confirmar cómo combina varias palabras de campos distintos.
+//   NO confirmados hoy (no se incluyen en `freeOnly`): IMSLP (robots.txt impide leerlo; el formato MediaWiki `index.php?search=` no se pudo probar),
+//   CPDL y Wikimedia Commons (no cargaron desde este entorno), archive.org (la página /search?query= carga pero se arma con JavaScript:
+//   no se pudo ver si aplica la consulta) y Musopen (sin respuesta).
 //   NO confirmados (por eso NO se incluyen): Musicnotes (robots.txt impide leerlo), MuseScore (robots), IMSLP (robots),
 //   Sheet Music Direct (la URL que figura en su blog de 2014 y las variantes actuales dieron error 4xx) y Sheet Music Plus
 //   (`/en/explore?q=` cargó pero ignoró la consulta). Si se confirma otro formato, agregarlo en `SEARCH_ENGINES`.
@@ -46,6 +52,9 @@ export const BLOCKED_DOMAINS = ['pdfdrive.com', 'scribd.com', 'pdfcoffee.com', '
 
 /** Hosts de acceso abierto (dominio público / licencia abierta declarada por la fuente): sólo ahí una edición puede ser `importable`. */
 export const OPEN_HOSTS = ['imslp.org', 'mutopiaproject.org', 'musopen.org', 'cpdl.org', 'upload.wikimedia.org', 'commons.wikimedia.org', 'archive.org'];
+
+/** Tiendas y editoriales comerciales: en modo `freeOnly` nunca se devuelven ni se aceptan como "gratis del titular". */
+export const COMMERCIAL_DOMAINS = ['halleonard.com', 'musicnotes.com', 'sheetmusicplus.com', 'sheetmusicdirect.com', 'sheetmusicboss.com', 'alfred.com', 'onlinesheetmusic.com', 'sheetmusicdirect.us', 'virtualsheetmusic.com', 'jwpepper.com', 'stantons.com', 'prosheets.com', 'musicroom.com', 'ukulele-tabs.com', 'pianoworld.com', 'noviscore.com', 'musescore.com', 'sheetmusic-free.com', 'free-scores.com', 'freescores.com', 'kunstderfuge.com', 'bladimirsheetmusic.com', 'hoffmeister.com', 'amazon.com', 'ebay.com'];
 
 const FORMAT_BY_EXT = { musicxml: 'musicxml', mxl: 'musicxml', xml: 'musicxml', mid: 'midi', midi: 'midi', pdf: 'pdf' };
 const MIME_EXT = { musicxml: 'musicxml', midi: 'mid', pdf: 'pdf' };
@@ -102,15 +111,21 @@ function formatOf(url) {
 const SEARCH_ENGINES = [
   { label: 'Buscar en Hal Leonard', url: (q) => `https://www.halleonard.com/search/search.action?keywords=${encodeURIComponent(q)}` },
 ];
+/** Buscadores de catálogos GRATUITOS (dominio público / licencia abierta) con formato confirmado. `titleOnly`: se busca sólo por título. */
+const FREE_SEARCH_ENGINES = [
+  { label: 'Buscar en Mutopia (dominio público)', titleOnly: true, url: (q) => `https://www.mutopiaproject.org/cgibin/make-table.cgi?searchingfor=${encodeURIComponent(q)}` },
+];
 
 /**
- * Enlaces de búsqueda armados de forma determinista hacia catálogos legítimos.
+ * Enlaces de búsqueda armados de forma determinista hacia catálogos legítimos. Con `freeOnly` sólo catálogos gratuitos confirmados.
  * @param {{title?:string, artist?:string}} q
  * @returns {{label:string, url:string}[]} vacío si no hay texto para buscar
  */
-export function buildSearchLinks({ title, artist } = {}) {
+export function buildSearchLinks({ title, artist } = {}, { freeOnly = false } = {}) {
+  const t = String(title || '').trim();
   const text = [title, artist].map((x) => String(x || '').trim()).filter(Boolean).join(' ');
   if (!text) return [];
+  if (freeOnly) return t ? FREE_SEARCH_ENGINES.map((e) => ({ label: e.label, url: e.url(e.titleOnly ? t : text) })) : [];
   return SEARCH_ENGINES.map((e) => ({ label: e.label, url: e.url(text) }));
 }
 
@@ -161,9 +176,26 @@ JSON schema:
 {"identified":{"title":string,"artist":string,"kind":"song"|"album"|"unknown"},
  "editions":[{"title":string,"artist":string,"publisher":string,"url":string,"format":"musicxml"|"midi"|"pdf"|"web","scope":"song"|"album"|"collection","note":string}]}`;
 
+export const FREE_SEARCH_SYSTEM_PROMPT = `You help a piano student find sheet music that is FREE to obtain legally, using your web search tool. The student will never pay for sheet music: do not return anything that has to be bought, subscribed to, or unlocked with a paid account. Output ONLY one JSON object at the end, with no markdown fences.
+
+Rules:
+1. First work out what the user means. A song and an album can share a name (for example "evermore" is both a Taylor Swift song and an album). Decide which one the title and artist refer to and say so in "kind": "song", "album" or "unknown".
+2. Accept ONLY these kinds of sources, and say which in "access":
+ - "open": public-domain or openly licensed catalogues: IMSLP, Mutopia Project, Musopen, CPDL, OpenScore, Wikimedia Commons, archive.org (items that are public domain or openly licensed).
+ - "owner-free": a page where the rights holder themselves (the composer, artist, label or publisher) publishes this very score for free download or free viewing, with no purchase. Say who in "publisher".
+3. Do NOT return: online shops and publishers' stores (Hal Leonard, Musicnotes, Sheet Music Plus, Alfred, etc.), subscription or "free trial" sites, MuseScore.com user uploads of copyrighted songs, free-download PDF dumps, scraped uploads, torrent or "lyrics + tabs" copy sites. If the only results are of those kinds, return an empty list: that is the correct answer.
+4. Modern songs are almost always still under copyright: do not stretch to find something. An empty list is fine.
+5. Only list pages that your web search actually returned. NEVER write a URL from memory or invent one: every "url" must be exactly a URL from the search results. Prefer direct links to a PDF, MusicXML or MIDI file when the search returned one.
+6. A songbook of the whole album is not the same as the single song: say so in "scope" ("song", "album" or "collection").
+7. Write "note" in Spanish (Argentina), one short sentence at most. Return at most 6 editions.
+
+JSON schema:
+{"identified":{"title":string,"artist":string,"kind":"song"|"album"|"unknown"},
+ "editions":[{"title":string,"artist":string,"publisher":string,"url":string,"format":"musicxml"|"midi"|"pdf"|"web","scope":"song"|"album"|"collection","access":"open"|"owner-free","note":string}]}`;
+
 /** Mensaje de usuario de la búsqueda (título/artista/enlace como datos entre comillas). */
-export function buildSearchUserPrompt({ title, artist, sourceUrl } = {}) {
-  const lines = [`Find sheet music editions for a piano player. Title: ${JSON.stringify(String(title || '').trim())}`];
+export function buildSearchUserPrompt({ title, artist, sourceUrl, freeOnly } = {}) {
+  const lines = [`Find ${freeOnly ? 'FREE (public-domain, open-licence or free-from-the-rights-holder)' : ''} sheet music editions for a piano player. Title: ${JSON.stringify(String(title || '').trim())}`];
   if (artist && String(artist).trim()) lines.push(`Artist or composer: ${JSON.stringify(String(artist).trim())}`);
   if (sourceUrl && String(sourceUrl).trim()) lines.push(`The user got this from a link (only to help identify the piece): ${JSON.stringify(String(sourceUrl).trim())}`);
   lines.push('Search the web, then answer with the JSON object described in the instructions. JSON only.');
@@ -171,8 +203,10 @@ export function buildSearchUserPrompt({ title, artist, sourceUrl } = {}) {
 }
 
 /** Pedido a la API del proveedor con su herramienta de búsqueda web. */
-export function buildSearchRequest(provider, { apiKey, model, title, artist, sourceUrl, messages } = {}) {
-  const user = buildSearchUserPrompt({ title, artist, sourceUrl });
+export function buildSearchRequest(provider, { apiKey, model, title, artist, sourceUrl, messages, freeOnly } = {}) {
+  const user = buildSearchUserPrompt({ title, artist, sourceUrl, freeOnly });
+  const SYSTEM = freeOnly ? FREE_SEARCH_SYSTEM_PROMPT : SEARCH_SYSTEM_PROMPT;
+  const blocked = freeOnly ? [...BLOCKED_DOMAINS, ...COMMERCIAL_DOMAINS] : BLOCKED_DOMAINS;
   if (provider === 'anthropic') {
     return {
       url: ANTHROPIC_URL,
@@ -182,9 +216,9 @@ export function buildSearchRequest(provider, { apiKey, model, title, artist, sou
         body: JSON.stringify({
           model,
           max_tokens: 4096,
-          system: SEARCH_SYSTEM_PROMPT,
+          system: SYSTEM,
           messages: messages || [{ role: 'user', content: user }],
-          tools: [{ type: ANTHROPIC_SEARCH_TOOL, name: 'web_search', max_uses: 3, blocked_domains: BLOCKED_DOMAINS }],
+          tools: [{ type: ANTHROPIC_SEARCH_TOOL, name: 'web_search', max_uses: 3, blocked_domains: blocked }],
         }),
       },
     };
@@ -194,7 +228,7 @@ export function buildSearchRequest(provider, { apiKey, model, title, artist, sou
     init: {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({ model, input: `${SEARCH_SYSTEM_PROMPT}\n\n${user}`, tools: [{ type: 'google_search' }] }),
+      body: JSON.stringify({ model, input: `${SYSTEM}\n\n${user}`, tools: [{ type: 'google_search' }] }),
     },
   };
 }
@@ -285,7 +319,7 @@ async function runAiSearch(q, ai, fetchImpl, signal) {
 }
 
 /** Convierte lo que devolvió la herramienta en ediciones verificables. Sólo sobreviven URLs que están en el pool real. */
-function editionsFromPool(pool) {
+function editionsFromPool(pool, { freeOnly = false } = {}) {
   let parsed = null;
   try { parsed = extractJson(pool.text); } catch (e) { parsed = null; }
   const picks = parsed && Array.isArray(parsed.editions) ? parsed.editions.slice(0, 20) : null;
@@ -297,6 +331,10 @@ function editionsFromPool(pool) {
     const host = x.hostname.toLowerCase().replace(/^www\./, '');
     if (hostIn(host, BLOCKED_DOMAINS)) { rejected++; return; }
     if (host === 'vertexaisearch.cloud.google.com') { rejected++; return; }          // enlace de redirección opaco: no se sabe de qué sitio es
+    const commercial = hostIn(host, COMMERCIAL_DOMAINS);
+    const open = hostIn(host, OPEN_HOSTS);
+    let access = open ? 'open' : commercial ? 'commercial' : meta.access === 'owner-free' ? 'owner-free' : 'unknown';
+    if (freeOnly && (commercial || (access !== 'open' && access !== 'owner-free'))) { rejected++; return; }   // modo gratis: sólo acceso libre o gratis del titular
     seen.add(key);
     const format = formatOf(hit.url);
     const importable = x.protocol === 'https:' && format !== 'web' && hostIn(host, OPEN_HOSTS);
@@ -308,6 +346,8 @@ function editionsFromPool(pool) {
       format,
       importable,
       verified: true,
+      access,
+      free: access === 'open' || access === 'owner-free',
       scope: ['song', 'album', 'collection'].includes(meta.scope) ? meta.scope : 'song',
     };
     if (meta.artist) ed.artist = String(meta.artist).slice(0, 80);
@@ -321,7 +361,7 @@ function editionsFromPool(pool) {
       accept(key, e);
     }
   } else {
-    for (const key of pool.cited) accept(key, { note: 'Resultado citado por el buscador.' });
+    for (const key of pool.cited) accept(key, { note: freeOnly ? 'Resultado citado por el buscador (fuente abierta).' : 'Resultado citado por el buscador.' });
   }
   const identified = parsed && parsed.identified && typeof parsed.identified === 'object' ? parsed.identified : null;
   return { editions: out.slice(0, MAX_EDITIONS), rejected, identified };
@@ -335,7 +375,7 @@ const errEntry = (source, err) => ({ source, kind: classifyFailure(err), message
  * Busca una versión para tocar antes de generar de memoria.
  * @param {{title:string, artist?:string, sourceUrl?:string}} query
  * @param {{library?: object[], ai?: {provider:'anthropic'|'gemini', apiKey:string, model?:string}, fetchImpl?: Function,
- *   signal?: AbortSignal, skipAiIfLocal?: boolean}} [opts] `skipAiIfLocal` (defecto true): si ya hay coincidencia en la biblioteca o
+ *   signal?: AbortSignal, skipAiIfLocal?: boolean, freeOnly?: boolean}} [opts] `freeOnly` (defecto false): sólo ediciones de acceso libre (dominio público / licencia abierta) o gratis de su titular; descarta lo comercial y arma `searchLinks` sólo con catálogos gratuitos confirmados. `skipAiIfLocal` (defecto true): si ya hay coincidencia en la biblioteca o
  *   entre las incluidas no se gasta una llamada de IA.
  * @returns {Promise<{
  *   identified:{title:string, artist:string, kind:'song'|'album'|'unknown'},
@@ -353,9 +393,10 @@ export async function searchSong(query = {}, opts = {}) {
   const title = String((query && query.title) || '').trim();
   const artist = String((query && query.artist) || '').trim();
   const sourceUrl = String((query && query.sourceUrl) || '').trim();
+  const freeOnly = !!(opts && opts.freeOnly);
   const res = {
     identified: { title, artist, kind: 'unknown' }, inLibrary: [], included: [], editions: [],
-    searchLinks: buildSearchLinks({ title, artist }), errors: [], retryable: false, rejected: 0, aiSkipped: false,
+    searchLinks: buildSearchLinks({ title, artist }, { freeOnly }), errors: [], retryable: false, rejected: 0, aiSkipped: false,
   };
   try {
     if (!title && !sourceUrl) {
@@ -379,11 +420,11 @@ export async function searchSong(query = {}, opts = {}) {
         res.errors.push({ source: 'ai', kind: 'unknown', message: 'Este navegador no soporta llamadas de red.' });
       } else {
         try {
-          const pool = await runAiSearch({ title, artist, sourceUrl }, ai, fetchImpl, opts.signal);
+          const pool = await runAiSearch({ title, artist, sourceUrl, freeOnly }, ai, fetchImpl, opts.signal);
           for (const code of pool.toolErrors) {
             res.errors.push({ source: 'ai', kind: TOOL_ERROR_KIND[code] || 'unknown', message: `La búsqueda web falló (${code}).` });
           }
-          const r = editionsFromPool(pool);
+          const r = editionsFromPool(pool, { freeOnly });
           res.editions = r.editions;
           res.rejected = r.rejected;
           const id = r.identified;
@@ -410,11 +451,11 @@ export async function searchSong(query = {}, opts = {}) {
  * @param {{fetchImpl?: Function, signal?: AbortSignal}} [opts]
  * @returns {Promise<{blob: Blob, filename: string}|{error: string, kind: 'unsupported'|'network'|'http'|'format'|'size'|'abort'}>}
  *   `error` ya viene en español para mostrar; ante CORS o falta de red `kind` es "network" (la UI puede ofrecer abrir el enlace
- *   y usar "Importar mi copia").
+ *   y usar "Importar un archivo").
  */
 export async function fetchEditionFile(edition, opts = {}) {
   if (!edition || edition.importable !== true || typeof edition.url !== 'string') {
-    return { error: 'Esta edición no se puede descargar automáticamente. Abrí el enlace, conseguí el archivo y usá "Importar mi copia".', kind: 'unsupported' };
+    return { error: 'Esta edición no se puede descargar automáticamente. Abrí el enlace, conseguí el archivo y usá "Importar un archivo".', kind: 'unsupported' };
   }
   const x = parseUrl(edition.url);
   if (!x || x.protocol !== 'https:') return { error: 'El enlace no es seguro (https).', kind: 'unsupported' };
@@ -423,11 +464,11 @@ export async function fetchEditionFile(edition, opts = {}) {
   let res;
   try { res = await fetchImpl(edition.url, { signal: opts.signal, redirect: 'follow' }); } catch (e) {
     if (e && e.name === 'AbortError') return { error: 'Cancelaste la descarga.', kind: 'abort' };
-    return { error: 'No se pudo descargar el archivo: no hay conexión o el sitio no permite descargarlo desde la app. Abrí el enlace, bajalo y usá "Importar mi copia".', kind: 'network' };
+    return { error: 'No se pudo descargar el archivo: no hay conexión o el sitio no permite descargarlo desde la app. Abrí el enlace, bajalo y usá "Importar un archivo".', kind: 'network' };
   }
   if (!res.ok) return { error: `El sitio respondió con un error (HTTP ${res.status}). Abrí el enlace y probá desde ahí.`, kind: 'http' };
   const type = String((res.headers && res.headers.get && res.headers.get('content-type')) || '').toLowerCase();
-  if (type.includes('text/html')) return { error: 'El enlace abre una página web, no un archivo. Abrilo, descargá el archivo y usá "Importar mi copia".', kind: 'format' };
+  if (type.includes('text/html')) return { error: 'El enlace abre una página web, no un archivo. Abrilo, descargá el archivo y usá "Importar un archivo".', kind: 'format' };
   const len = Number(res.headers && res.headers.get && res.headers.get('content-length'));
   if (Number.isFinite(len) && len > MAX_FILE_BYTES) return { error: 'El archivo es demasiado grande (más de 25 MB).', kind: 'size' };
   let blob;

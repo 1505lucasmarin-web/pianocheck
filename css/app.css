@@ -1189,3 +1189,50 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 
 .draft-line{display:flex;align-items:center;gap:8px;padding:4px 14px;font-size:.82rem;color:var(--muted,#8a8272)}
 .ml-tools .ls-field input[type=search]{-webkit-appearance:none;appearance:none;background:var(--bg3);border:1px solid var(--line);border-radius:12px;color:var(--fg);font:inherit}
+
+/* ---- Búsqueda: caminos gratuitos (v13) ---- */
+.srch-sec.path{margin-top:20px;padding:14px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg2)}
+.srch-sec.path.main{border-color:#7a5f2c;background:linear-gradient(160deg,#3a2c1a,#2a2017)}
+.srch-sec.path .srch-h{display:flex;align-items:center;gap:10px;margin:0 0 4px}
+.srch-sec.path .srch-h .ic{color:var(--acc)}
+.expect{margin:0 0 10px;color:var(--mut);font-size:.9rem;line-height:1.4}
+.expect b{color:var(--fg);font-weight:600}
+.srch-sec.path .row.wrap{gap:8px;align-items:stretch}
+.srch-sec.path .row.wrap .btn{flex:1 1 auto}
+@media (min-width:700px){.srch-sec.path .row.wrap .btn{flex:0 0 auto}}
+.srch-sec.path .adjust{margin:2px 0 10px}
+.srch-sec.free-none{margin-top:18px}
+.srch-sec.free-none .srch-note{margin-bottom:8px}
+.srch-cats{margin-top:12px}
+.srch-cats .srch-h-s{font-size:.9rem;color:var(--mut);margin:0 0 6px;font-weight:600}
+.tag.paid{color:var(--warn);border-color:#7a5320}
+.tag.free{color:var(--ok);border-color:#3f6a49}
+.review-note-btn{margin-left:auto;flex:none}
+.notice .btn.sm{margin-left:auto;flex:none;min-height:36px;padding:4px 10px;background:#4a3a1f;border-color:#7a5f2c;color:#fbe9bd}
+
+/* ---- Transcribir / grabar melodía ---- */
+.tx-box{max-width:620px}
+.tx-stage[hidden]{display:none}
+.tx-priv{margin-top:2px}
+.rec-big{display:flex;align-items:center;justify-content:center;gap:12px;margin:12px 0 6px}
+.rec-big output{font:700 2.4rem var(--serif);font-variant-numeric:tabular-nums}
+.lvl{height:10px;border-radius:6px;background:var(--bg3);border:1px solid var(--line);overflow:hidden;margin:6px 0 10px}
+.lvl i{display:block;height:100%;width:0;background:var(--acc);transition:width .08s linear}
+.tx-prog-msg{margin:10px 0 6px;font:600 1.05rem var(--serif);text-align:center;overflow-wrap:anywhere}
+.bar-prog{height:12px;border-radius:7px;background:var(--bg3);border:1px solid var(--line);overflow:hidden;margin:6px 0 8px}
+.bar-prog i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+.bar-prog.indet i{width:35%;animation:indet 1.3s ease-in-out infinite}
+@keyframes indet{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+@media (prefers-reduced-motion:reduce){.bar-prog.indet i{animation:none;width:100%;opacity:.5}}
+.tx-sum{margin:6px 0 10px;padding:10px 12px;border-radius:12px;background:var(--bg3);border:1px solid var(--line);line-height:1.4}
+.tx-sum b{color:var(--acc)}
+.tx-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin:10px 0}
+.tx-ts select{min-height:56px;font:inherit;font-weight:700;background:var(--bg3);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:0 10px}
+.tx-warns{list-style:none;margin:6px 0;padding:0;display:grid;gap:6px}
+.tx-warns li{display:flex;gap:8px;align-items:flex-start;font-size:.9rem;color:var(--warn);line-height:1.35}
+.tx-warns li .ic{margin-top:2px}
+#tx-title-wrap{margin:10px 0}
+.take-src{margin:6px 0}
+#take-midi-btns{margin:6px 0 10px}
+#take-metro-row{margin:8px 0 12px}
+.take-src .seg.opts{margin-top:0}

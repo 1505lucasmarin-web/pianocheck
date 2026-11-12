@@ -3,15 +3,15 @@
 import { validateScore } from "./model.js";
 import { fromJSON as annoFromJSON } from "./annotations.js";
 
-export const ORIGIN_KINDS = ["ia", "importada", "incluida", "tarea", "arreglo"];
-export const ORIGIN_NAMES = { ia: "Creada con IA", importada: "Importada", incluida: "Incluida", tarea: "Tarea", arreglo: "Arreglo" };
-export const FILTERS = [["todas", "Todas"], ["ia", "Creadas con IA"], ["importada", "Importadas"], ["incluida", "Incluidas"], ["tarea", "Tareas"], ["arreglo", "Arreglos"], ["borrador", "Borradores"]];
+export const ORIGIN_KINDS = ["ia", "importada", "incluida", "tarea", "arreglo", "transcrita", "grabada"];
+export const ORIGIN_NAMES = { ia: "Creada con IA", importada: "Importada", incluida: "Incluida", tarea: "Tarea", arreglo: "Arreglo", transcrita: "Transcrita", grabada: "Grabada" };
+export const FILTERS = [["todas", "Todas"], ["ia", "Creadas con IA"], ["importada", "Importadas"], ["incluida", "Incluidas"], ["tarea", "Tareas"], ["arreglo", "Arreglos"], ["transcrita", "Transcritas"], ["grabada", "Grabadas"], ["borrador", "Borradores"]];
 export const SORTS = [["recientes", "Recientes"], ["titulo", "Título"], ["mejor", "Mejor resultado"]];
 
 export const isDraft = (s) => !!(s && s.draft === true);
 
 /**
- * De dónde salió una partitura: "ia" | "importada" | "incluida" | "tarea" | "arreglo".
+ * De dónde salió una partitura: "ia" | "importada" | "incluida" | "tarea" | "arreglo" | "transcrita" | "grabada".
  * Usa `origin` si está; en las viejas lo infiere (versión derivada → arreglo; con nivel → IA; ids incluidos → incluida; el resto → importada).
  * opts.bundledIds: Set de ids de las partituras que trae la app.
  */
@@ -20,7 +20,7 @@ export function originKind(s, { bundledIds = null } = {}) {
   const o = s.origin;
   if (o === "ia") return s.derivedFrom ? "arreglo" : "ia";
   if (o === "foto" || o === "imagenes" || o === "pdf" || o === "importada") return "importada";
-  if (o === "incluida" || o === "tarea" || o === "arreglo") return o;
+  if (o === "incluida" || o === "tarea" || o === "arreglo" || o === "transcrita" || o === "grabada") return o;
   if (s.derivedFrom) return "arreglo";
   if (s.level) return "ia";
   if (bundledIds && bundledIds.has(s.id)) return "incluida";

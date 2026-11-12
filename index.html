@@ -65,6 +65,7 @@
     <symbol id="i-comment" viewBox="0 0 24 24"><path d="M4 5h16v11H10l-4 4v-4H4z"/></symbol>
     <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 6L4 11l5 5M4 11h9a5 5 0 010 10h-3"/></symbol>
     <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 6l5 5-5 5M20 11h-9a5 5 0 000 10h3"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 4v16M15 7v10M19 10v4M21 12h0"/></symbol>
     <symbol id="i-rec" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 01-10 0zM7 6H4v2a3 3 0 003 3M17 6h3v2a3 3 0 01-3 3M12 14v4M8 20h8"/></symbol>
   </defs>
@@ -238,7 +239,7 @@
     </header>
     <div id="lt-review" role="group" aria-label="Reproductor" hidden></div>
     <div id="review-draft" class="draft-line" hidden><span class="tag draft">Borrador</span><span>Se guarda solo. «Guardar» lo confirma; «Descartar» lo borra.</span></div>
-    <div id="review-note" class="notice" role="note" hidden><svg class="ic"><use href="#i-info"/></svg><span id="review-note-t"></span></div>
+    <div id="review-note" class="notice" role="note" hidden><svg class="ic"><use href="#i-info"/></svg><span id="review-note-t"></span><button class="btn sm" id="review-note-listen" type="button" hidden><svg class="ic sm"><use href="#i-play"/></svg>Escuchar</button></div>
     <div id="review-issues" class="issues" role="group" aria-label="Avisos de importación" hidden>
       <svg class="ic is-ic" aria-hidden="true"><use href="#i-warn"/></svg>
       <div class="is-body"><b id="is-count">Aviso 1 de 1</b><span id="is-text" role="status" aria-live="polite"></span></div>
@@ -608,6 +609,10 @@
         <p class="hint">Tu API key queda sólo en este dispositivo y se envía únicamente al proveedor que elegiste.</p>
       </section>
       <section class="group-card">
+        <h2>Búsqueda de partituras</h2>
+        <label class="switch" style="align-items:flex-start"><input id="set-paid" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Mostrar ediciones pagas</b><span>Apagado (recomendado): la búsqueda sólo ofrece partituras gratuitas (dominio público, licencias abiertas o gratis de su autor) y nunca muestra tiendas. PianoCheck siempre tiene caminos gratuitos: crear con IA, transcribir un audio o grabar la melodía.</span></span></label>
+      </section>
+      <section class="group-card">
         <h2>Micrófono</h2>
         <label class="field">Sensibilidad: <output id="set-mic-sens-val">50</output>
           <input id="set-mic-sens" type="range" min="0" max="100" step="5" value="50" aria-label="Sensibilidad del micrófono">
@@ -702,6 +707,7 @@
       <div class="seg wide paths" role="group" aria-label="Cómo cargar la partitura" id="sheet-paths">
         <button data-path="ai" class="on" aria-pressed="true" aria-controls="path-ai">Buscar una canción</button>
         <button data-path="import" aria-pressed="false" aria-controls="path-import">Importar partitura</button>
+        <button data-path="audio" aria-pressed="false" aria-controls="path-audio">Desde un audio</button>
       </div>
 
       <section class="opt featured" id="path-ai" aria-labelledby="compose-h">
@@ -738,6 +744,16 @@
         <p class="hint">Lo que ya tenés en tu biblioteca y las partituras incluidas no necesitan API key. Buscar ediciones y generar de memoria sí (Ajustes).</p>
       </section>
 
+      <section id="path-audio" aria-labelledby="audio-h" hidden>
+        <h4 class="import-h" id="audio-h">Sin partitura: un audio o tocarla vos</h4>
+        <p class="hint import-sub">Todo se procesa en este dispositivo. PianoCheck no descarga audio de YouTube ni de otros servicios.</p>
+        <div class="opt-grid">
+          <button class="opt btn-opt" id="new-tx-file"><span class="opt-ic"><svg class="ic"><use href="#i-wave"/></svg></span><span class="opt-t"><b>Elegir un archivo de audio</b><span>mp3, m4a, wav u ogg que ya tengas.</span></span></button>
+          <button class="opt btn-opt" id="new-tx-mic"><span class="opt-ic"><svg class="ic"><use href="#i-mic"/></svg></span><span class="opt-t"><b>Grabar con el micrófono</b><span>Tocá o cantá la melodía, o poné un audio cerca.</span></span></button>
+          <button class="opt btn-opt" id="new-take"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>Grabar la melodía</b><span>Con el piano por MIDI (exacto) o con el micrófono, con metrónomo opcional.</span></span></button>
+        </div>
+      </section>
+
       <section id="path-import" aria-labelledby="import-h" hidden>
         <h4 class="import-h" id="import-h">Importar partitura</h4>
         <p class="hint import-sub">Ya tenés la partitura: sacale una foto o abrí el archivo.</p>
@@ -758,6 +774,82 @@
       <input type="file" id="file-xml" accept=".musicxml,.xml,.mxl,application/vnd.recordare.musicxml+xml,application/vnd.recordare.musicxml,application/xml,text/xml" hidden>
       <input type="file" id="file-task" hidden>
       <input type="file" id="file-midi" accept=".mid,.midi,audio/midi,audio/x-midi" hidden>
+    </div>
+  </div>
+
+  <div id="sheet-tx" class="overlay sheet" hidden role="dialog" aria-modal="true" aria-labelledby="tx-h">
+    <div class="dialog sheet-box tx-box">
+      <div class="sheet-head">
+        <h3 id="tx-h">Transcribir desde un audio</h3>
+        <button class="btn icon ghost" id="tx-close" aria-label="Cerrar"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="import-ctx" id="tx-ctx" role="note" hidden></p>
+      <p class="busy-err" id="tx-err" role="alert" hidden></p>
+
+      <div class="tx-stage" data-stage="choose">
+        <p class="hint tx-priv"><b>Todo se procesa en este dispositivo.</b> PianoCheck no descarga audio de YouTube ni de otros servicios: usá un audio tuyo o grabá con el micrófono.</p>
+        <div class="opt-grid">
+          <button class="opt btn-opt" id="tx-pick"><span class="opt-ic"><svg class="ic"><use href="#i-wave"/></svg></span><span class="opt-t"><b>Elegir un archivo de audio</b><span>mp3, m4a, wav u ogg que tengas en el dispositivo.</span></span></button>
+          <button class="opt btn-opt" id="tx-rec"><span class="opt-ic"><svg class="ic"><use href="#i-mic"/></svg></span><span class="opt-t"><b>Grabar con el micrófono</b><span>Por ejemplo, vos tocando o cantando la melodía, o un audio sonando cerca.</span></span></button>
+        </div>
+        <p class="hint" id="tx-engine-note"></p>
+        <p class="hint">Funciona mejor con una sola melodía clara (piano, voz o un instrumento solo). Con bandas completas el resultado es aproximado: revisalo en la pantalla siguiente.</p>
+        <input type="file" id="file-audio" accept="audio/*,.mp3,.m4a,.wav,.ogg,.oga,.opus,.aac,.flac" hidden>
+      </div>
+
+      <div class="tx-stage" data-stage="recording" hidden>
+        <div class="rec-big"><span class="rec-dot" aria-hidden="true"></span><output id="tx-clock" aria-live="off">0:00</output></div>
+        <div class="lvl" aria-hidden="true"><i id="tx-level"></i></div>
+        <p class="hint" id="tx-rec-hint">Tocá o cantá la melodía cerca del micrófono. Con auriculares el metrónomo no se graba.</p>
+        <div class="row center wrap"><button class="btn primary big" id="tx-rec-stop"><svg class="ic"><use href="#i-stop"/></svg>Terminar y transcribir</button><button class="btn big" id="tx-rec-cancel">Cancelar</button></div>
+      </div>
+
+      <div class="tx-stage" data-stage="progress" hidden>
+        <p class="tx-prog-msg" id="tx-prog-msg" role="status" aria-live="polite">Preparando…</p>
+        <div class="bar-prog" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="tx-prog"><i id="tx-prog-bar"></i></div>
+        <p class="hint" id="tx-prog-note"></p>
+        <div class="row center"><button class="btn big" id="tx-cancel">Cancelar</button></div>
+      </div>
+
+      <div class="tx-stage" data-stage="result" hidden>
+        <p class="tx-sum" id="tx-sum" role="status"></p>
+        <span class="field-t" id="lbl-tx-mode">Qué armar</span>
+        <div class="seg opts" role="group" aria-labelledby="lbl-tx-mode" id="tx-mode"><button data-mode="melodia">Sólo melodía</button><button data-mode="dos-manos">Dos manos</button></div>
+        <div class="tx-row">
+          <div class="stepper tx-bpm" role="group" aria-label="Tempo"><span class="stepper-l">Tempo (negras por minuto)</span><button class="btn icon" id="tx-bpm-dn" aria-label="Bajar tempo">&minus;</button><output id="tx-bpm" aria-live="polite">80</output><button class="btn icon" id="tx-bpm-up" aria-label="Subir tempo">+</button></div>
+          <label class="field-s tx-ts">Compás<select id="tx-ts"><option value="4/4">4/4</option><option value="3/4">3/4</option><option value="2/4">2/4</option><option value="6/8">6/8</option><option value="2/2">2/2</option><option value="12/8">12/8</option></select></label>
+        </div>
+        <ul class="tx-warns" id="tx-warns"></ul>
+        <label class="field-s" id="tx-title-wrap">Título<input id="tx-title" type="text" maxlength="120" autocomplete="off"></label>
+        <label class="switch" id="tx-acc-wrap" hidden><input id="tx-acc" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Agregar acompañamiento</b><span>Suma una mano izquierda sencilla según la armonía de la melodía.</span></span></label>
+        <div class="row wrap">
+          <button class="btn primary big grow" id="tx-open"><svg class="ic"><use href="#i-check"/></svg>Ir a Revisión</button>
+          <button class="btn big" id="tx-polish" hidden><svg class="ic sm"><use href="#i-sparkle"/></svg>Pulir con IA</button>
+        </div>
+        <p class="hint" id="tx-res-note">Va a Revisión como borrador: ahí podés escuchar y corregir notas antes de practicar.</p>
+        <div class="row center"><button class="btn" id="tx-again">Empezar de nuevo</button></div>
+      </div>
+
+      <div class="tx-stage" data-stage="take" hidden>
+        <h4 class="import-h">Grabá la melodía</h4>
+        <p class="hint">Tocala en el piano por MIDI (se guardan las notas y los tiempos exactos) o con el micrófono. Después podés agregarle acompañamiento.</p>
+        <div class="take-src" role="group" aria-label="Con qué grabás">
+          <div class="seg opts" id="take-src"><button data-src="midi">Piano MIDI</button><button data-src="mic">Micrófono</button></div>
+        </div>
+        <p class="hint" id="take-midi-note" role="status"></p>
+        <div class="row wrap" id="take-midi-btns"><button class="btn" id="take-usb"><svg class="ic sm"><use href="#i-plug"/></svg>Conectar USB</button><button class="btn" id="take-ble"><svg class="ic sm"><use href="#i-bt"/></svg>Conectar Bluetooth</button></div>
+        <label class="switch"><input id="take-metro" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Metrónomo durante la toma</b><span>Un compás de entrada y clic mientras tocás: se cuantiza mucho mejor. Con el micrófono, usá auriculares.</span></span></label>
+        <div class="tx-row" id="take-metro-row">
+          <div class="stepper tx-bpm" role="group" aria-label="Tempo de la toma"><span class="stepper-l">Tempo (negras por minuto)</span><button class="btn icon" id="take-bpm-dn" aria-label="Bajar tempo">&minus;</button><output id="take-bpm" aria-live="polite">80</output><button class="btn icon" id="take-bpm-up" aria-label="Subir tempo">+</button></div>
+        </div>
+        <div class="row center wrap"><button class="btn primary big" id="take-start"><svg class="ic"><use href="#i-rec"/></svg>Empezar a grabar</button></div>
+      </div>
+
+      <div class="tx-stage" data-stage="taking" hidden>
+        <div class="rec-big"><span class="rec-dot" aria-hidden="true"></span><output id="take-clock" aria-live="off">0:00</output></div>
+        <p class="tx-prog-msg" id="take-msg" role="status" aria-live="polite">Tocá la melodía.</p>
+        <div class="row center wrap"><button class="btn primary big" id="take-stop"><svg class="ic"><use href="#i-stop"/></svg>Terminar</button><button class="btn big" id="take-cancel">Cancelar</button></div>
+      </div>
     </div>
   </div>
 

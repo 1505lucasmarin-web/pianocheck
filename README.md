@@ -67,3 +67,9 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - Todo lo que llega a Revisión (IA, importación, foto, PDF) se guarda solo como "Borrador" (lógica en `js/mylib.js`). "Guardar" lo confirma, "Descartar" lo borra con confirmación; en el inicio aparece "Seguí con tu borrador".
 - Ajustes > "Exportar mi biblioteca" / "Importar biblioteca": archivo `.pianocheck-lib` con partituras, anotaciones e historial (sin API key); al importar se une sin duplicar por id.
 - Las partituras viven en este dispositivo y en esta dirección de la app.
+
+## Sin pagar partituras (v14)
+- **Búsqueda gratuita.** Por defecto sólo se ofrecen ediciones abiertas (IMSLP, Mutopia, Musopen, CPDL, OpenScore, Commons, archive.org o páginas gratis del autor); sin tiendas ni enlaces comerciales. Ajustes > "Mostrar ediciones pagas" (apagado) lo cambia. El único catálogo con enlace de búsqueda confirmado es Mutopia; si una edición abierta tiene archivo se importa directo, y si el sitio no permite la descarga queda "Abrir" + "Importar archivo descargado".
+- **Crear con IA** en dos pasos (hoja guía y luego la partitura), con verificación automática (suma de compases, notas en la tonalidad/acordes, registro tocable) y un único reintento. Si el modelo se niega, se muestra el motivo y los otros caminos. Siempre sale como borrador con aviso "Hecha con IA de memoria".
+- **Transcribir desde un audio** (archivo o micrófono) con Basic Pitch en el dispositivo: tempo y compás editables sin reprocesar, y "Pulir con IA" opcional. El motor (~1,7 MB) no va en la precarga: se baja la primera vez y queda en el caché `pianocheck-engine-v1`.
+- **Tocarla o tararearla vos**: la melodía se graba por MIDI (notas exactas, con grilla del metrónomo) o con el micrófono, y después se le agrega acompañamiento. Origen "Transcrita" / "Grabada" en Mi biblioteca.

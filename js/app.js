@@ -26,6 +26,7 @@ import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
 import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName } from "./mylib.js";
+import { createTxFlow } from "./txflow.js";
 import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
 
 const MAX_STREAK = 5;
@@ -48,7 +49,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar" };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar", showPaid: false };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -363,7 +364,7 @@ $("adjust-seg").addEventListener("click", (e) => { const b = e.target.closest("b
 setArrange("auto");
 function setSheetPath(p) {
   document.querySelectorAll("#sheet-paths button").forEach((b) => { const on = b.dataset.path === p; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
-  $("path-ai").hidden = p !== "ai"; $("path-import").hidden = p !== "import";
+  $("path-ai").hidden = p !== "ai"; $("path-import").hidden = p !== "import"; $("path-audio").hidden = p !== "audio";
 }
 document.querySelectorAll("#sheet-paths button").forEach((b) => b.addEventListener("click", () => setSheetPath(b.dataset.path)));
 /** o.path "ai"|"import"; o.query texto inicial; o.importFor {title, artist, sourceUrl}: lo importado se guarda con esos datos. */
@@ -552,7 +553,7 @@ for (const [btn, [inp, kind]] of Object.entries(importMap)) {
 }
 
 /* ---------- buscar una canción: resultados ---------- */
-// Orden: tu biblioteca → incluidas en PianoCheck → ediciones encontradas (IA con búsqueda web) → catálogos → "Generar de memoria" (secundario).
+// Orden (todos gratuitos): tu biblioteca → incluidas en PianoCheck → ediciones gratuitas encontradas (IA con búsqueda web) → Crear con IA → Transcribir desde un audio → Tocarla vos → Importar un archivo.
 // srch = { title, artist, sourceUrl, library, local, ai: "idle"|"loading"|"nokey"|"skipped"|"done", res, gen, edit, directFail, ctl, token }
 let srch = null, srchToken = 0;
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
@@ -587,7 +588,7 @@ function openSearch(q, o = {}) {
   if (srch && srch.ctl) srch.ctl.abort();
   const s = srch = {
     title: String(q.title || "").trim(), artist: String(q.artist || "").trim(), sourceUrl: String(q.sourceUrl || "").trim(),
-    library: [], local: null, ai: "idle", res: null, gen: null, edit: false, directFail: {}, ctl: null, token: ++srchToken,
+    library: [], local: null, ai: "idle", res: null, gen: null, edit: false, directFail: {}, ctl: null, token: ++srchToken, paid: !!settings.showPaid,
   };
   if (!s.title) { toast("Escribí el título de la canción."); return; }
   if (o.cached && Array.isArray(q.editions) && q.editions.length) {
@@ -603,7 +604,7 @@ function openSearch(q, o = {}) {
 async function runSearchLocal(s) {
   let lib = [];
   try { lib = (await store.list()) || []; } catch (e) { lib = []; }
-  const r = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: lib });   // sin IA: sólo biblioteca, incluidas y enlaces
+  const r = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: lib, freeOnly: !settings.showPaid });   // sin IA: sólo biblioteca, incluidas y enlaces
   if (s !== srch) return;
   s.library = lib; s.local = r;
   renderSearch();
@@ -615,7 +616,9 @@ async function runSearch(s) {
 }
 function refreshSearchLocal() { if (srch) runSearchLocal(srch); }
 function resumeSearchAfterSettings() {
-  const s = srch; if (!s || !settings.apiKey) return;
+  const s = srch; if (!s) return;
+  if (s.paid !== !!settings.showPaid) { s.paid = !!settings.showPaid; runSearchLocal(s); if (settings.apiKey) runSearchAi(s, true); else { s.ai = "nokey"; s.res = null; renderSearch(); } return; }
+  if (!settings.apiKey) return;
   if (s.ai === "nokey" || (s.res && s.res.errors.some((e) => e.kind === "auth"))) runSearchAi(s, true);
   else if (s.gen && s.gen.kind === "auth") { s.gen = null; renderSearch(); }
 }
@@ -624,8 +627,9 @@ async function runSearchAi(s, force) {
   if (s.local && (s.local.inLibrary.length || s.local.included.length) && !force) { s.ai = "skipped"; renderSearch(); return; }
   if (s.ctl) s.ctl.abort();
   const ctl = new AbortController(); s.ctl = ctl; s.ai = "loading"; s.res = null; renderSearch();
-  const res = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: s.library, ai: { provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model || undefined }, signal: ctl.signal, skipAiIfLocal: false });
+  const res = await searchSong({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl }, { library: s.library, ai: { provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model || undefined }, signal: ctl.signal, skipAiIfLocal: false, freeOnly: !settings.showPaid });
   if (s !== srch || ctl.signal.aborted) return;
+  s.paid = !!settings.showPaid;
   s.ctl = null; s.res = res; s.ai = "done";
   persistSearch();
   renderSearch();
@@ -635,42 +639,54 @@ const SCOPE_ES = { song: "Canción", album: "Cancionero o álbum que la incluye"
 const FORMAT_ES = { musicxml: "MusicXML", midi: "MIDI", pdf: "PDF", web: "Página web" };
 const spin = (t) => `<div class="srch-load" role="status"><span class="spinner sm" aria-hidden="true"></span><span>${t}</span></div>`;
 
+const isFreeEd = (e) => e && e.free === true;
 function editionHtml(ed, i, s) {
   const fail = s.directFail[ed.url];
+  const free = isFreeEd(ed);
+  const showFile = !ed.importable || !!fail;
   return `<li class="ed" data-i="${i}">
     <div class="ed-top"><b class="ed-t">${esc(ed.title)}</b>${ed.artist ? `<span class="ed-a">${esc(ed.artist)}</span>` : ""}</div>
     <div class="ed-src">Fuente: <b>${esc(ed.publisher)}</b>${hostOf(ed.url) && hostOf(ed.url) !== String(ed.publisher).toLowerCase() ? ` · ${esc(hostOf(ed.url))}` : ""}</div>
-    <div class="tags"><span class="tag scope ${ed.scope === "song" ? "song" : "album"}">${SCOPE_ES[ed.scope] || "Canción"}</span><span class="tag">${FORMAT_ES[ed.format] || "Página web"}</span></div>
+    <div class="tags"><span class="tag ${free ? "free" : "paid"}">${free ? (ed.access === "open" ? "Gratis · acceso libre" : "Gratis del autor") : "Comercial"}</span><span class="tag scope ${ed.scope === "song" ? "song" : "album"}">${SCOPE_ES[ed.scope] || "Canción"}</span><span class="tag">${FORMAT_ES[ed.format] || "Página web"}</span></div>
     ${ed.note ? `<p class="ed-note">${esc(ed.note)}</p>` : ""}
     ${fail ? `<p class="ed-fail" role="status">${ic("warn", "sm")}<span>${esc(fail)}</span></p>` : ""}
     <div class="row wrap">
-      ${ed.importable ? `<button class="btn primary" data-act="direct" aria-label="Importar directo ${esc(ed.title)}">${ic("share", "sm")}Importar directo</button>` : ""}
-      <a class="btn${ed.importable ? "" : " primary"}" href="${esc(ed.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir partitura de ${esc(ed.title)} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir partitura</a>
-      <button class="btn" data-act="import-ed" aria-label="Importar mi copia de ${esc(ed.title)}">${ic("pdf", "sm")}Importar mi copia</button>
+      ${ed.importable ? `<button class="btn primary" data-act="direct" aria-label="Importar ${esc(ed.title)}">${ic("share", "sm")}Importar</button>` : ""}
+      <a class="btn${ed.importable ? "" : " primary"}" href="${esc(ed.url)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir ${esc(ed.title)} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir</a>
+      ${showFile ? `<button class="btn" data-act="import-ed" aria-label="Importar archivo descargado de ${esc(ed.title)}">${ic("pdf", "sm")}${free ? "Importar archivo descargado" : "Importar un archivo"}</button>` : ""}
     </div></li>`;
 }
+function catalogLinksHtml(s) {
+  const links = s.local ? s.local.searchLinks : buildSearchLinks({ title: s.title, artist: s.artist }, { freeOnly: !settings.showPaid });
+  if (!links.length) return "";
+  return `<div class="srch-cats"><p class="srch-h-s">${settings.showPaid ? "Buscar en catálogos" : "Buscá vos en catálogos gratuitos"}</p><ul class="cat-links">${links.map((l) => `<li><a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${ic("ext", "sm")}${esc(l.label)}</a></li>`).join("")}</ul></div>`;
+}
 function editionsSection(s) {
-  const h = `<h3 class="srch-h">Ediciones encontradas</h3>`;
-  if (s.ai === "nokey") return `<section class="srch-sec" aria-label="Ediciones encontradas">${h}<div class="srch-note">${ic("info")}<div><p>Para buscar ediciones necesito tu API key de IA.</p><span>Lo de arriba y los enlaces de abajo funcionan sin ella.</span></div><button class="btn" data-act="settings">Ir a Ajustes</button></div></section>`;
-  if (s.ai === "loading" || s.ai === "idle") return `<section class="srch-sec" aria-label="Ediciones encontradas" aria-busy="true">${h}${spin("Buscando ediciones en la web…")}<div class="skel" aria-hidden="true"></div></section>`;
-  if (s.ai === "skipped") return `<section class="srch-sec" aria-label="Ediciones encontradas">${h}<div class="srch-note">${ic("info")}<div><p>Ya hay una versión para tocar, así que no busqué ediciones.</p></div><button class="btn" data-act="search-ai">Buscar ediciones igual</button></div></section>`;
+  const paid = !!settings.showPaid;
+  const title = paid ? "Ediciones encontradas" : "Ediciones gratuitas encontradas";
+  const h = `<h3 class="srch-h">${ic("book")}${title}</h3><p class="expect"><b>Qué esperar:</b> la partitura real, tal cual. Sólo si es de acceso libre (dominio público o licencia abierta) o su autor la regala; en canciones modernas casi nunca hay.</p>`;
+  const wrap = (inner, busyAttr = "") => `<section class="srch-sec path" aria-label="${title}"${busyAttr}>${h}${inner}${catalogLinksHtml(s)}</section>`;
+  if (s.ai === "nokey") return wrap(`<div class="srch-note">${ic("info")}<div><p>Para buscar ediciones gratuitas en la web necesito tu API key de IA.</p><span>Los otros caminos de abajo (transcribir, grabar, importar) funcionan sin ella.</span></div><button class="btn" data-act="settings">Ir a Ajustes</button></div>`);
+  if (s.ai === "loading" || s.ai === "idle") return wrap(`${spin("Buscando ediciones gratuitas en la web…")}<div class="skel" aria-hidden="true"></div>`, ` aria-busy="true"`);
+  if (s.ai === "skipped") return wrap(`<div class="srch-note">${ic("info")}<div><p>Ya hay una versión para tocar, así que no busqué ediciones.</p></div><button class="btn" data-act="search-ai">Buscar ediciones igual</button></div>`);
   const r = s.res || { editions: [], errors: [] };
-  const eds = r.editions || [];
+  const all = r.editions || [];
+  const eds = paid ? all : all.filter(isFreeEd);
   const errs = (r.errors || []).filter((e) => e.source === "ai");
-  let out = `<section class="srch-sec" aria-label="Ediciones encontradas">${h}`;
+  let out = "";
   if (eds.length) {
     if (eds.some((e) => e.scope !== "song")) out += `<p class="hint srch-hint">«${esc(s.title)}» puede ser también el nombre de un álbum. Las ediciones marcadas como cancionero o álbum incluyen la canción junto con otras.</p>`;
-    out += `<ul class="eds">${eds.map((e, i) => editionHtml(e, i, s)).join("")}</ul>`;
+    out += `<ul class="eds">${eds.map((e) => editionHtml(e, all.indexOf(e), s)).join("")}</ul>`;
   }
   if (errs.length) {
     const auth = errs.some((e) => e.kind === "auth");
     out += `<div class="srch-note warn" role="alert">${ic("warn")}<div><p>${esc(errs[0].message)}</p></div><div class="srch-btns">${auth ? `<button class="btn" data-act="settings">Ir a Ajustes</button>` : ""}${r.retryable ? `<button class="btn primary" data-act="retry-ai">${ic("restart", "sm")}Reintentar</button>` : ""}</div></div>`;
   } else if (!eds.length) {
-    out += `<div class="srch-note">${ic("info")}<div><p>No encontré ediciones verificables de esta canción.</p><span>Probá los catálogos de abajo o editá la búsqueda.</span></div></div>`;
+    out += `<div class="srch-note">${ic("info")}<div><p>No encontré una edición gratuita de esta canción.</p><span>Seguí con los caminos de abajo.</span></div></div>`;
   } else {
     out += `<div class="row srch-again"><button class="btn sm ghost" data-act="search-ai">${ic("restart", "sm")}Buscar de nuevo</button></div>`;
   }
-  return out + "</section>";
+  return wrap(out);
 }
 function genFailText(err) {
   const k = err && err.kind;
@@ -691,17 +707,17 @@ function renderSearch() {
   let h = `<section class="srch-head" aria-label="Canción buscada">
     <div class="srch-id"><span class="srch-k">Partitura de</span><h2 class="srch-title">${esc(s.title)}</h2>${s.artist ? `<p class="srch-artist">${esc(s.artist)}</p>` : ""}${lk}</div>
     ${s.edit ? `<div class="srch-edit"><label class="field-s">Título<input id="se-title" type="text" maxlength="120" autocomplete="off" value="${esc(s.editTitle ?? s.title)}"></label><label class="field-s">Artista (opcional)<input id="se-artist" type="text" maxlength="120" autocomplete="off" value="${esc(s.editArtist ?? s.artist)}"></label><div class="row wrap"><button class="btn primary" data-act="edit-go">${ic("search", "sm")}Buscar de nuevo</button><button class="btn" data-act="edit-cancel">Cancelar</button></div></div>`
-      : `<div class="row wrap"><button class="btn" data-act="edit">${ic("pencil", "sm")}Editar búsqueda</button><button class="btn" data-act="import-mine">${ic("pdf", "sm")}Importar mi copia</button></div>`}
+      : `<div class="row wrap"><button class="btn" data-act="edit">${ic("pencil", "sm")}Editar búsqueda</button><button class="btn" data-act="import-mine">${ic("pdf", "sm")}Importar un archivo</button></div>`}
   </section>`;
   if (s.gen && s.gen.status === "failed") {
-    const g = s.gen, none = !(s.res && s.res.editions && s.res.editions.length);
-    h += `<div class="srch-fail" role="alert">${ic("warn")}<div class="sf-t"><b>${esc(g.msg)}</b><span>No perdí tu búsqueda: seguís con «${esc(s.title)}»${s.artist ? " de " + esc(s.artist) : ""}${s.sourceUrl ? " y su enlace" : ""}.</span></div>
-      <div class="sf-btns">${none ? `<button class="btn primary" data-act="search-ai">${ic("search", "sm")}Buscar una edición</button>` : ""}<button class="btn${none ? "" : " primary"}" data-act="import-mine">${ic("pdf", "sm")}Importar una partitura</button><button class="btn" data-act="edit">${ic("pencil", "sm")}Editar la búsqueda</button>${g.kind === "auth" ? `<button class="btn" data-act="settings">Ir a Ajustes</button>` : ""}${g.retryable ? `<button class="btn" data-act="gen">${ic("restart", "sm")}Reintentar</button>` : ""}</div></div>`;
+    const g = s.gen;
+    h += `<div class="srch-fail" role="alert">${ic("warn")}<div class="sf-t"><b>${esc(g.msg)}</b>${g.detail ? `<span>${esc(g.detail)}</span>` : ""}<span>No perdí tu búsqueda: seguís con «${esc(s.title)}»${s.artist ? " de " + esc(s.artist) : ""}${s.sourceUrl ? " y su enlace" : ""}.${g.compose ? " Probá alguno de los otros caminos." : ""}</span></div>
+      <div class="sf-btns">${g.compose ? `<button class="btn primary" data-act="tx-file">${ic("wave", "sm")}Transcribir desde un audio</button><button class="btn" data-act="take">${ic("midi", "sm")}Tocarla vos</button><button class="btn" data-act="import-mine">${ic("pdf", "sm")}Importar un archivo</button>` : `<button class="btn primary" data-act="import-mine">${ic("pdf", "sm")}Importar un archivo</button>`}<button class="btn" data-act="edit">${ic("pencil", "sm")}Editar la búsqueda</button>${g.kind === "auth" ? `<button class="btn" data-act="settings">Ir a Ajustes</button>` : ""}${g.retryable ? `<button class="btn" data-act="gen">${ic("restart", "sm")}Reintentar</button>` : ""}</div></div>`;
   }
   // 1) tu biblioteca
   if (!local) h += `<section class="srch-sec" aria-label="En tu biblioteca" aria-busy="true"><h3 class="srch-h">En tu biblioteca</h3>${spin("Mirando tu biblioteca…")}</section>`;
   else if (local.inLibrary.length) {
-    h += `<section class="srch-sec" aria-label="En tu biblioteca"><h3 class="srch-h">En tu biblioteca</h3><ul class="eds">${local.inLibrary.map((m) => {
+    h += `<section class="srch-sec" aria-label="En tu biblioteca"><h3 class="srch-h">En tu biblioteca</h3><p class="expect"><b>Qué esperar:</b> exactamente la partitura que ya guardaste. Sin costo ni esfuerzo.</p><ul class="eds">${local.inLibrary.map((m) => {
       const sc = s.library.find((x) => x.id === m.scoreId) || {};
       const meta = [sc.derivedFrom ? "Versión de «" + (sc.derivedFrom.title || "otra") + "»" : "", sc.measures ? `${sc.measures.length} compases` : ""].filter(Boolean).join(" · ");
       return `<li class="ed lib" data-id="${esc(m.scoreId)}"><div class="ed-top"><b class="ed-t">${esc(m.title)}</b></div>${meta ? `<div class="ed-src">${esc(meta)}</div>` : ""}<div class="row wrap"><button class="btn primary" data-act="play-lib" aria-label="Tocar ${esc(m.title)}">${ic("hand", "sm")}Tocar</button><button class="btn" data-act="listen-lib" aria-label="Escuchar ${esc(m.title)}">${ic("play", "sm")}Escuchar</button></div></li>`;
@@ -711,7 +727,7 @@ function renderSearch() {
   if (local && local.included.length) {
     const byPiece = [];
     for (const m of local.included) { let g = byPiece.find((x) => x.id === m.pieceId); if (!g) byPiece.push(g = { id: m.pieceId, vs: [] }); g.vs.push(m); }
-    h += `<section class="srch-sec" aria-label="Incluidas en PianoCheck"><h3 class="srch-h">Incluidas en PianoCheck</h3><ul class="eds">${byPiece.map((g) => {
+    h += `<section class="srch-sec" aria-label="Incluidas en PianoCheck"><h3 class="srch-h">Incluidas en PianoCheck</h3><p class="expect"><b>Qué esperar:</b> arreglos de dominio público ya listos; la melodía es fiel y el arreglo es sencillo.</p><ul class="eds">${byPiece.map((g) => {
       const pc = PIECES.find((x) => x.id === g.id) || { title: g.vs[0].title, composer: "" };
       const [main, ...more] = g.vs;
       return `<li class="ed inc" data-p="${esc(g.id)}"><div class="ed-top"><b class="ed-t">${esc(pc.title)}</b>${pc.composer ? `<span class="ed-a">${esc(pc.composer)}</span>` : ""}</div>
@@ -720,17 +736,26 @@ function renderSearch() {
     }).join("")}</ul></section>`;
   }
   if (local && !local.inLibrary.length && !local.included.length) h += `<p class="srch-none">No está en tu biblioteca ni entre las partituras incluidas.</p>`;
-  // 3) ediciones
+  // 3) ediciones gratuitas (y catálogos gratuitos)
   h += editionsSection(s);
-  // 4) catálogos
-  const links = local ? local.searchLinks : buildSearchLinks({ title: s.title, artist: s.artist });
-  if (links.length) h += `<section class="srch-sec" aria-label="Buscar en catálogos"><h3 class="srch-h">Buscar en catálogos</h3><ul class="cat-links">${links.map((l) => `<li><a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${ic("ext", "sm")}${esc(l.label)}</a></li>`).join("")}</ul></section>`;
-  // 5) generar de memoria (secundario)
-  h += `<section class="srch-sec gen" aria-label="Generar de memoria"><h3 class="srch-h">Si no hay una versión para tocar</h3>
-    <p class="hint">La IA puede armar la canción de memoria. Puede diferir de la original: revisala antes de practicar.</p>
+  // 4) crear con IA
+  h += `<section class="srch-sec path main" aria-label="Crear con IA"><h3 class="srch-h">${ic("sparkle")}Crear con IA</h3>
+    <p class="expect"><b>Qué esperar:</b> la IA arma la canción de memoria en dos pasos (hoja guía con tonalidad, acordes y forma; después las notas) y se verifica sola. Suele acertar canciones conocidas, con errores: escuchala y corregila. Esfuerzo bajo. Necesita tu API key.</p>
     <details class="adjust"><summary>Ajustar arreglo <span class="adjust-now">${ARRANGE_MODES[composeArrange].name}</span></summary>
       <div class="seg wide opts adjust-seg" role="group" aria-label="Ajustar arreglo">${arrangeSegHtml()}</div><p class="hint gen-desc">${ARRANGE_MODES[composeArrange].desc}</p></details>
-    <button class="btn" data-act="gen">${ic("sparkle", "sm")}Generar de memoria</button></section>`;
+    <div class="row wrap"><button class="btn primary" data-act="gen">${ic("sparkle", "sm")}Crear con IA</button></div></section>`;
+  // 5) transcribir desde un audio
+  h += `<section class="srch-sec path" aria-label="Transcribir desde un audio"><h3 class="srch-h">${ic("wave")}Transcribir desde un audio</h3>
+    <p class="expect"><b>Qué esperar:</b> convierte un audio tuyo en notas, en este dispositivo. Muy bueno con una melodía clara; regular con voces o bandas. Esfuerzo medio. PianoCheck no descarga audio de YouTube ni de otros servicios.</p>
+    <div class="row wrap"><button class="btn" data-act="tx-file">${ic("wave", "sm")}Elegir un archivo de audio</button><button class="btn" data-act="tx-mic">${ic("mic", "sm")}Grabar con el micrófono</button></div></section>`;
+  // 6) tocarla o tararearla
+  h += `<section class="srch-sec path" aria-label="Tocarla o tararearla vos"><h3 class="srch-h">${ic("midi")}Tocarla o tararearla vos</h3>
+    <p class="expect"><b>Qué esperar:</b> grabás la melodía que sabés. Con piano MIDI es exacta; con micrófono se transcribe. Después le sumás acompañamiento. Esfuerzo medio: tenés que saberla.</p>
+    <div class="row wrap"><button class="btn" data-act="take">${ic("rec", "sm")}Grabar la melodía</button></div></section>`;
+  // 7) importar un archivo
+  h += `<section class="srch-sec path" aria-label="Importar un archivo que ya tengas"><h3 class="srch-h">${ic("pdf")}Importar un archivo que ya tengas</h3>
+    <p class="expect"><b>Qué esperar:</b> la fidelidad del archivo. Foto y PDF se leen con IA (con algún error); MusicXML y MIDI entran tal cual. Esfuerzo bajo.</p>
+    <div class="row wrap"><button class="btn" data-act="import-mine">${ic("pdf", "sm")}Importar un archivo</button></div></section>`;
   body.innerHTML = h;
   body.scrollTop = st;
   if (s.edit && !s.editFocused) { s.editFocused = true; const t = $("se-title"); if (t) t.focus(); }
@@ -763,7 +788,7 @@ async function importDirect(ed) {
   if (!alive()) return;
   busy.close();
   if (r.error) {
-    s.directFail[ed.url] = ["network", "http", "format", "unsupported"].includes(r.kind) ? "No pude bajar el archivo desde la app. Abrí la partitura, descargala y usá «Importar mi copia»." : r.error;
+    s.directFail[ed.url] = ["network", "http", "format", "unsupported"].includes(r.kind) ? "No pude bajar el archivo desde la app. Abrí la partitura, descargala y usá «Importar archivo descargado»." : r.error;
     renderSearch(); return;
   }
   delete s.directFail[ed.url];
@@ -771,7 +796,7 @@ async function importDirect(ed) {
   const file = new File([r.blob], r.filename, { type: r.blob.type });
   runImport(kind, [file], { title: s.title, artist: s.artist, sourceUrl: ed.url });
 }
-/** "Generar de memoria": si falla, no hay diálogo con sólo «Cerrar»: se vuelve a los resultados con la búsqueda intacta. */
+/** "Crear con IA" (hoja guía + partitura + verificación): si falla, no hay diálogo con sólo «Cerrar»: se vuelve a los resultados con la búsqueda intacta. */
 async function doGenerate() {
   const s = srch; if (!s) return;
   s.gen = null;
@@ -779,7 +804,7 @@ async function doGenerate() {
   lastImportKind = "compose";
   const fail = (err, kind) => {
     const c = kind || classifyFailure(err);
-    s.gen = { status: "failed", msg: genFailText(err), kind: c, retryable: c === "network" || c === "rate" };
+    s.gen = { status: "failed", msg: genFailText(err), kind: c, retryable: c === "network" || c === "rate", compose: !!(err && err.kind === "compose"), detail: err && err.kind === "compose" && err.reason ? err.reason : "" };
     renderSearch(); $("search-body").scrollTop = 0;
     const b = $("search-body").querySelector(".srch-fail .btn"); if (b) b.focus({ preventScroll: true });
   };
@@ -790,13 +815,15 @@ async function doGenerate() {
   try {
     const cm = await lazy("compose"), omr = await lazy("omr");
     const prov = settings.provider || "anthropic";
-    const score = await cm.composeScore({ query: s.title, artist: s.artist, sourceUrl: s.sourceUrl, level: m.level, style: m.style, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (t) => alive() && busy.log(t), signal: ctl.signal });
+    const r = await cm.composeStepwise({ query: s.title, artist: s.artist, sourceUrl: s.sourceUrl, level: m.level, style: m.style, web: true, provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (t) => alive() && busy.log(t), signal: ctl.signal });
     if (!alive()) return;
+    const score = r.score;
     score.id = score.id || newId();
     score.origin = "ia";
     if (s.artist) score.artist = s.artist;
     busy.close();
-    openReview(score, true, null, "Partitura armada por IA de memoria: puede tener diferencias con la original. Revisala antes de practicar.");
+    const rest = r.report && r.report.summary ? ` Quedó sin resolver: ${r.report.summary}.` : "";
+    openReview(score, true, null, `Hecha con IA de memoria: revisala con Escuchar antes de practicar.${rest}`, { listen: true });
     if (editState) editState.fromSearch = true;
   } catch (err) {
     if (!alive()) return;
@@ -817,6 +844,9 @@ $("search-body").addEventListener("click", async (e) => {
       openSearch({ title: t, artist: $("se-artist").value.trim(), sourceUrl: s.sourceUrl });
     }
     else if (act === "import-mine") importFromSearch(null);
+    else if (act === "tx-file") { tx.openChoose(txCtx(s)); $("file-audio").click(); }
+    else if (act === "tx-mic") { tx.openChoose(txCtx(s)); $("tx-rec").click(); }
+    else if (act === "take") tx.openTake(txCtx(s));
     else if (act === "import-ed") importFromSearch(s.res.editions[+li.dataset.i]);
     else if (act === "direct") await importDirect(s.res.editions[+li.dataset.i]);
     else if (act === "search-ai" || act === "retry-ai") { s.gen = s.gen && s.gen.status === "failed" ? s.gen : null; await runSearchAi(s, true); }
@@ -920,9 +950,10 @@ $("arr-ai").addEventListener("click", async () => {
 const DUR_NAME = { w: "redonda", h: "blanca", q: "negra", "8": "corchea", "16": "semicorchea", "32": "fusa" };
 const durText = (ev) => `${DUR_NAME[ev.d] || ev.d}${ev.dots ? " con puntillo" : ""}`;
 const tiemposText = (x) => { const r = Math.round(x * 100) / 100; return `${String(r).replace(".", ",")} ${r === 1 ? "tiempo" : "tiempos"}`; };
-function openReview(score, isNew, warnings, note) {
+function openReview(score, isNew, warnings, note, extra = {}) {
   editState = { score: clone(score), selected: null, hist: createHistory(60), isNew, warnings: warnings || [], tab: "pitch", issues: [], issueIdx: 0, cmMeasure: null };
   $("review-note").hidden = !note; $("review-note-t").textContent = note || "";
+  $("review-note-listen").hidden = !(note && extra.listen);
   $("review-title").value = score.title || "";
   $("review-bpm").value = score.bpm || 80;
   $("cm-box").hidden = true;
@@ -961,6 +992,7 @@ async function flushDraft() {
   if (es && es.draft) { es.score.title = $("review-title").value.trim() || es.score.title || "Sin título"; es.score.draft = true; try { await store.save(validateScore(es.score).score); } catch (e) { /* sin guardar */ } }
 }
 $("review-title").addEventListener("input", scheduleDraftSave);
+$("review-note-listen").addEventListener("click", () => $("review-play").click());
 $("review-discard").addEventListener("click", async () => {
   if (!editState || !editState.draft) return;
   if (!(await confirmDialog({ title: "¿Descartar este borrador?", text: "La partitura se borra de tu biblioteca. No se puede deshacer.", yes: "Descartar", no: "Seguir editando" }))) return;
@@ -1308,6 +1340,7 @@ function openSettings() {
   $("set-model").value = settings.model || "";
   $("set-kb").checked = !!settings.onscreenKeyboard;
   $("set-phrases").checked = settings.showPhrases !== false;
+  $("set-paid").checked = !!settings.showPaid;
   setMicSensUi(settings.micSensitivity);
   lazy("omr").then((m) => { if (m.DEFAULT_MODELS) $("set-model").placeholder = "por defecto: " + (m.DEFAULT_MODELS[$("set-provider").value] || ""); }).catch(() => {});
   show("settings");
@@ -1320,7 +1353,7 @@ $("set-mic-sens").addEventListener("input", () => { $("set-mic-sens-val").textCo
 $("btn-open-settings").addEventListener("click", openSettings);
 $("settings-back").addEventListener("click", () => (history.state && history.state.s ? history.back() : show(prevBeforeSettings, false)));
 $("settings-save").addEventListener("click", async () => {
-  settings = { ...settings, provider: $("set-provider").value, apiKey: $("set-key").value.trim(), model: $("set-model").value.trim(), onscreenKeyboard: $("set-kb").checked, showPhrases: $("set-phrases").checked, micSensitivity: micSensFromUi() };
+  settings = { ...settings, provider: $("set-provider").value, apiKey: $("set-key").value.trim(), model: $("set-model").value.trim(), onscreenKeyboard: $("set-kb").checked, showPhrases: $("set-phrases").checked, showPaid: $("set-paid").checked, micSensitivity: micSensFromUi() };
   try { await store.saveSettings(settings); toast("Ajustes guardados"); } catch (e) { toast("No se pudo guardar: " + e.message, 4500); return; }
   applyKeyboardSetting();
   if (current) applyPhrases();
@@ -1699,8 +1732,8 @@ function endCountIn() {
 }
 
 const midi = createMidiInput({
-  onNoteOn: (m, vel, ts) => handleNoteOn(m, ts),
-  onNoteOff: (m, ts) => handleNoteOff(m, ts),
+  onNoteOn: (m, vel, ts) => { if (tx.midiNoteOn(m, vel, ts)) return; handleNoteOn(m, ts); },
+  onNoteOff: (m, ts) => { if (tx.midiNoteOff(m, ts)) return; handleNoteOff(m, ts); },
   onPedal: (down, ts) => holdPedal(down, ts),
   onStatus: (s) => {
     midiConnected = !!s.connected;
@@ -1714,13 +1747,51 @@ const midi = createMidiInput({
     $("midi-status").title = $("midi-status").textContent;
     $("midi-status").classList.toggle("idle", !s.connected && !s.error);
     if (s.error) toast(s.error, 4500);
-    refreshInputPill(); syncInputSheet();
+    refreshInputPill(); syncInputSheet(); tx.midiChanged();
   },
 });
 if (!midi.supported.usb) { $("midi-usb").disabled = true; $("midi-usb").title = "Este navegador no soporta Web MIDI"; }
 if (!midi.supported.ble) { $("midi-ble").disabled = true; $("midi-ble").title = "Este navegador no soporta Web Bluetooth"; }
 $("midi-usb").addEventListener("click", () => midi.connectUsb().catch((e) => toast("USB: " + (e && e.message || e), 4500)));
 $("midi-ble").addEventListener("click", () => midi.connectBle().catch((e) => toast("Bluetooth: " + (e && e.message || e), 4500)));
+
+/* ---------- transcribir desde un audio y grabar la melodía (js/txflow.js) ---------- */
+const txCtx = (s) => ({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl });
+async function polishWithAi(score, c, mode) {
+  if (!settings.apiKey) { toast("Para pulir con IA hace falta tu API key (Ajustes).", 3600); return null; }
+  const token = ++importToken; const alive = () => token === importToken;
+  busy.open("Puliendo con IA");
+  const ctl = new AbortController(); composeAbort = ctl;
+  try {
+    const cm = await lazy("compose"), omr = await lazy("omr");
+    const prov = settings.provider || "anthropic";
+    const out = await cm.composeScore({ query: baseTitle(score.title), artist: score.artist || (c && c.artist) || "", sourceScore: score, level: "auto", style: mode === "melodia" ? "melodia" : "acompanamiento", provider: prov, apiKey: settings.apiKey, model: settings.model || (omr.DEFAULT_MODELS || {})[prov], onProgress: (t) => alive() && busy.log(t), signal: ctl.signal });
+    if (!alive()) return null;
+    busy.close();
+    out.id = newId(); out.origin = score.origin; out.title = score.title;
+    if (score.artist) out.artist = score.artist;
+    if (score.sourceUrl) out.sourceUrl = score.sourceUrl;
+    return out;
+  } catch (err) {
+    if (alive()) { busy.close(); toast((err && err.message) || "No se pudo pulir con IA.", 5000); }
+    return null;
+  } finally { if (composeAbort === ctl) composeAbort = null; }
+}
+const tx = createTxFlow({
+  $, toast, lazy,
+  getSettings: () => settings,
+  midi: { connected: () => midiConnected, usb: () => midi.connectUsb(), ble: () => midi.connectBle(), supported: midi.supported },
+  accompany: (sc) => { const out = addAccompaniment(sc); out.id = sc.id; out.title = sc.title; out.origin = sc.origin; if (sc.artist) out.artist = sc.artist; if (sc.sourceUrl) out.sourceUrl = sc.sourceUrl; delete out.level; return out; },
+  polish: polishWithAi,
+  openReview: ({ score, warnings, note, ctx }) => {
+    score.id = score.id || newId();
+    openReview(score, true, warnings, note, { listen: true });
+    if (ctx && editState) editState.fromSearch = true;
+  },
+});
+$("new-tx-file").addEventListener("click", () => { closeSheet(); tx.openChoose(null); $("file-audio").click(); });
+$("new-tx-mic").addEventListener("click", () => { closeSheet(); tx.openChoose(null); $("tx-rec").click(); });
+$("new-take").addEventListener("click", () => { closeSheet(); tx.openTake(null); });
 
 /* ---------- micrófono ---------- */
 let mic = null, midiConnected = false;
@@ -2902,6 +2973,9 @@ if (new URLSearchParams(location.search).has("debug")) {
     demo: (o) => { settings.onscreenKeyboard = true; applyKeyboardSetting(); startPractice(clone(demoScore), o || { hands: "both" }); },
     practice: (sc, o) => { settings.onscreenKeyboard = true; applyKeyboardSetting(); startPractice(validateScore(sc).score, o || {}); },
     search: (t, a) => openSearch({ title: t, artist: a || "" }),
+    settingsNow: () => settings, setSetting: (k, v) => { settings[k] = v; },
+    fakeMidi: (on) => { midiConnected = !!on; tx.midiChanged(); }, midiOn: (m, vel, ts) => { if (!tx.midiNoteOn(m, vel || 80, ts || performance.now())) handleNoteOn(m); }, midiOff: (m, ts) => { if (!tx.midiNoteOff(m, ts || performance.now())) handleNoteOff(m); },
+    tx: () => ({ stage: tx.stage, open: tx.isOpen, notes: tx.notes }),
     openReview: (sc, isNew) => openReview(validateScore(sc).score, isNew), refreshLibrary,
     holdAt: (i) => holdAll[i] || [], nextStep: () => (session ? steps[session.state.index] : null),
     state: () => ({ screen, mode: practiceMode, bpm: metroBpm, steps: steps.length, next: $("next-title") ? $("next-title").textContent : "" }),

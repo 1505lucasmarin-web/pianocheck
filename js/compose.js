@@ -2,6 +2,7 @@
 // Lógica pura (prompt, normalización) + llamada a Anthropic/Gemini reutilizando helpers de omr.js.
 import { validateScore, durBeats } from './model.js';
 import { extractJson, mapHttpError, textFromResponse, OmrError, DEFAULT_MODELS } from './omr.js';
+import { GUIDE_SYSTEM_PROMPT, GUIDE_MODE_ADDENDUM, buildGuideUserPrompt, buildScoreFromGuidePrompt, buildRetryPrompt, normalizeGuide, verifyScore, problemsSummaryEs } from './guide.js';
 
 export const LEVELS = ['principiante', 'intermedio', 'pro'];                    // niveles fijos (siguen aceptándose)
 export const COMPOSE_LEVELS = ['auto', ...LEVELS];                              // 'auto' = la IA elige la complejidad según la pieza (valor por defecto)
@@ -147,7 +148,12 @@ export function normalizeScore(raw) {
 
 const FAIL = 'La IA no pudo armar esta partitura';
 const SUGGEST = 'Probá con otra pieza o cargá una foto o un PDF de la partitura.';
-const composeFail = (reason) => new OmrError(`${FAIL}: ${String(reason || 'sin motivo').trim().replace(/[.\s]+$/, '')}. ${SUGGEST}`, 'compose');
+const composeFail = (reason) => {
+  const why = String(reason || 'sin motivo').trim().replace(/[.\s]+$/, '');
+  const e = new OmrError(`${FAIL}: ${why}. ${SUGGEST}`, 'compose');
+  e.reason = why;                                                              // motivo tal cual lo dijo el modelo (la UI lo muestra y ofrece otros caminos)
+  return e;
+};
 
 export function buildComposeRequest(provider, { apiKey, model, query, level, hands, artist, style, sourceScore }) {
   const user = buildComposeUserPrompt(query, level, hands, artist, { style, sourceScore });
@@ -231,4 +237,155 @@ export async function composeScore(opts = {}) {
   if (typeof opts.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(opts.sourceUrl.trim()) && opts.sourceUrl.trim().length <= 2000) r.score.sourceUrl = opts.sourceUrl.trim();
   if (!parsed.title || !String(parsed.title).trim()) r.score.title = String(query).trim().slice(0, 80);
   return r.score;
+}
+
+
+/* ================================================================== crear con IA por pasos (hoja guía → partitura → verificación) */
+// Dos llamadas con la IA del usuario, sin audio: (i) hoja guía (tonalidad, compás, tempo, forma, acordes por compás, contorno) y
+// (ii) partitura a partir de esa hoja. Verificación determinista y UN reintento automático con los problemas detectados.
+// Si el modelo dice que no conoce la pieza se respeta: se lanza composeFail (kind "compose") sin reformular ni insistir.
+const GEMINI_INTERACTIONS = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+const WEB_BLOCKED = ['pdfdrive.com', 'scribd.com', 'pdfcoffee.com', 'dokumen.pub', 'vdocuments.mx', 'libgen.is', 'z-lib.org', 'annas-archive.org'];
+export const COMPOSE_WEB_TOOL = 'web_search_20250305';
+const MAX_PAUSES = 3;
+
+/** Pedido genérico de texto. turns = [{role:'user'|'assistant', text}]. web: herramienta de búsqueda web del proveedor (sólo para datos de la pieza). */
+export function buildModelRequest(provider, { apiKey, model, system, turns, web = false, maxTokens = 16000, anthropicMessages }) {
+  if (provider === 'anthropic') {
+    const body = { model, max_tokens: maxTokens, system, messages: anthropicMessages || turns.map((t) => ({ role: t.role, content: t.text })) };
+    if (web) body.tools = [{ type: COMPOSE_WEB_TOOL, name: 'web_search', max_uses: 3, blocked_domains: WEB_BLOCKED }];
+    return { url: ANTHROPIC_URL, init: { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' }, body: JSON.stringify(body) } };
+  }
+  if (web) {   // Gemini con búsqueda: sólo la API Interactions (ver catalog.js); las instrucciones van dentro de `input`
+    const input = `${system}\n\n` + turns.map((t) => (t.role === 'user' ? t.text : `Previous answer:\n${t.text}`)).join('\n\n');
+    return { url: GEMINI_INTERACTIONS, init: { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey }, body: JSON.stringify({ model, input, tools: [{ type: 'google_search' }] }) } };
+  }
+  return {
+    url: `${GEMINI_BASE}${encodeURIComponent(model)}:generateContent`,
+    init: {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: turns.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.text }] })), generationConfig: { temperature: 0.3, maxOutputTokens: 32768 } }),
+    },
+  };
+}
+
+async function callModel(provider, req, fetchImpl, signal) {
+  const post = async (r) => {
+    let res;
+    try { res = await fetchImpl(r.url, { ...r.init, signal }); } catch (e) {
+      if (e && e.name === 'AbortError') throw new OmrError('Cancelaste el pedido.', 'abort');
+      throw new OmrError('No hay conexión con internet (o el navegador bloqueó la llamada). Verificá tu conexión y reintentá.', 'network');
+    }
+    const body = await res.text();
+    if (!res.ok) {
+      if (res.status === 400 && req.web && /web.?search|google_search|tool/i.test(body)) throw new OmrError('La búsqueda web no está disponible con esta cuenta o este modelo.', 'unsupported');
+      throw mapHttpError(res.status, provider, body);
+    }
+    try { return JSON.parse(body); } catch (e) { throw new OmrError('La respuesta del servidor no se pudo leer.', 'parse'); }
+  };
+  const wrap = (fn) => { try { return fn(); } catch (e) {
+    if (e && e.kind === 'refusal') throw composeFail('el modelo rechazó el pedido');
+    if (e && e.kind === 'truncated') throw composeFail('la respuesta se cortó por ser demasiado larga; probá con una pieza más corta');
+    throw e;
+  } };
+  if (provider === 'anthropic' && req.web) {
+    let text = ''; let msgs = null;
+    for (let i = 0; i <= MAX_PAUSES; i++) {
+      const json = await post(buildModelRequest('anthropic', { ...req, anthropicMessages: msgs || undefined }));
+      text = wrap(() => textFromResponse('anthropic', json));
+      if (json.stop_reason !== 'pause_turn') break;
+      msgs = [...(msgs || req.turns.map((t) => ({ role: t.role, content: t.text }))), { role: 'assistant', content: json.content }];
+    }
+    return text;
+  }
+  const json = await post(buildModelRequest(provider, req));
+  if (provider === 'gemini' && req.web) {
+    let out = '';
+    for (const st of Array.isArray(json.steps) ? json.steps : []) {
+      if (!st || st.type !== 'model_output') continue;
+      for (const c of Array.isArray(st.content) ? st.content : []) if (c && c.type === 'text') out += c.text || '';
+    }
+    return out;
+  }
+  return wrap(() => textFromResponse(provider, json));
+}
+
+function parseOrFail(text, what) {
+  let parsed;
+  try { parsed = extractJson(text); } catch (e) {
+    if (!/[{[]/.test(String(text || ''))) {
+      const snippet = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+      throw composeFail(snippet || 'la respuesta vino vacía');
+    }
+    throw new OmrError(`No se pudo interpretar ${what} de la IA. Reintentá o probá con otra pieza.`, 'parse');
+  }
+  return parsed;
+}
+
+/**
+ * Crear con IA por pasos. Devuelve { score, guide, report:{ retried, problems, remaining, web } }.
+ * Opciones como composeScore, más `web` (true: la IA puede buscar en la web SÓLO datos de la pieza; si el proveedor no la soporta se sigue sin ella).
+ */
+export async function composeStepwise(opts = {}) {
+  const { query, provider = 'anthropic', apiKey, onProgress = () => {}, signal } = opts;
+  const level = COMPOSE_LEVELS.includes(opts.level) ? opts.level : 'auto';
+  const style = STYLES.includes(opts.style) ? opts.style : opts.hands === 'melodia' ? 'melodia' : opts.hands === 'dos-manos' ? 'acompanamiento' : 'auto';
+  const fetchImpl = opts.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+  if (provider !== 'anthropic' && provider !== 'gemini') throw new OmrError('Proveedor de IA desconocido.', 'config');
+  if (!query || !String(query).trim()) throw new OmrError('Escribí qué canción querés tocar.', 'config');
+  if (!apiKey || !String(apiKey).trim()) throw new OmrError('Falta la API key. Cargala en Ajustes.', 'auth');
+  if (!fetchImpl) throw new OmrError('Este navegador no soporta llamadas de red.', 'config');
+  const model = opts.model || DEFAULT_MODELS[provider];
+  const key = String(apiKey).trim();
+  const report = { retried: false, problems: [], remaining: [], web: false };
+
+  // 1) hoja guía
+  onProgress('Paso 1 de 2: armando la hoja guía (tonalidad, compás, acordes y forma)…');
+  const gTurns = [{ role: 'user', text: buildGuideUserPrompt(query, opts.artist) }];
+  let gText;
+  if (opts.web) {
+    try { gText = await callModel(provider, { apiKey: key, model, system: GUIDE_SYSTEM_PROMPT, turns: gTurns, web: true, maxTokens: 8000 }, fetchImpl, signal); report.web = true; } catch (e) {
+      if (!(e && (e.kind === 'unsupported' || e.kind === 'bad'))) throw e;      // la búsqueda no está disponible: se sigue sin ella (no es insistir con la pieza)
+    }
+  }
+  if (gText == null) gText = await callModel(provider, { apiKey: key, model, system: GUIDE_SYSTEM_PROMPT, turns: gTurns, maxTokens: 8000 }, fetchImpl, signal);
+  const gRaw = parseOrFail(gText, 'la hoja guía');
+  const g = normalizeGuide(gRaw);
+  if (!g.ok) throw composeFail(g.error);
+  const guide = g.guide;
+
+  // 2) partitura a partir de la hoja guía
+  onProgress(`Paso 2 de 2: escribiendo la partitura (${guide.measures.length} compases)…`);
+  const system = COMPOSE_SYSTEM_PROMPT + GUIDE_MODE_ADDENDUM;
+  const userPrompt = buildScoreFromGuidePrompt(guide, STYLE_LINE[style], LEVEL_LINE[level]);
+  const turns = [{ role: 'user', text: userPrompt }];
+  const text1 = await callModel(provider, { apiKey: key, model, system, turns }, fetchImpl, signal);
+  let parsed = parseOrFail(text1, 'la partitura');
+  if (parsed && !Array.isArray(parsed) && typeof parsed.error === 'string' && parsed.error.trim()) throw composeFail(parsed.error);   // la negativa se respeta
+  if (!parsed || Array.isArray(parsed) || !Array.isArray(parsed.measures)) throw composeFail('no devolvió compases');
+
+  // 3) verificación determinista y UN reintento
+  onProgress('Verificando compases, notas y rango…');
+  let ver = verifyScore(parsed, guide, { style });
+  report.problems = ver.problems;
+  if (!ver.ok) {
+    report.retried = true;
+    onProgress(`Corrigiendo ${ver.total} problema${ver.total > 1 ? 's' : ''} detectado${ver.total > 1 ? 's' : ''}…`);
+    const text2 = await callModel(provider, { apiKey: key, model, system, turns: [...turns, { role: 'assistant', text: text1 }, { role: 'user', text: buildRetryPrompt(ver.problems) }] }, fetchImpl, signal);
+    let p2 = null;
+    try { p2 = extractJson(text2); } catch (e) { p2 = null; }
+    if (p2 && !Array.isArray(p2) && Array.isArray(p2.measures)) {
+      const v2 = verifyScore(p2, guide, { style });
+      if (v2.total <= ver.total) { parsed = p2; ver = v2; }                   // sólo se acepta si no empeora
+    }
+    report.remaining = ver.problems;
+  }
+  const r = normalizeScore(parsed);
+  if (!r.ok) throw composeFail('no encontró notas para tocar');
+  if (level !== 'auto') r.score.level = level;
+  if (typeof opts.sourceUrl === 'string' && /^https?:\/\/\S+$/i.test(opts.sourceUrl.trim()) && opts.sourceUrl.trim().length <= 2000) r.score.sourceUrl = opts.sourceUrl.trim();
+  if (!parsed.title || !String(parsed.title).trim()) r.score.title = (guide.title || String(query).trim()).slice(0, 80);
+  r.score.bpm = r.score.bpm || guide.bpm;
+  report.summary = problemsSummaryEs(report.remaining);
+  return { score: r.score, guide, report };
 }
