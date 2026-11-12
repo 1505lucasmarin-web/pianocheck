@@ -10,6 +10,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/welcome.css">
 </head>
 <body>
 <!-- Íconos (sprite inline: sin red, sin fuentes de íconos) -->
@@ -74,14 +75,20 @@
   <section id="screen-library" class="screen" aria-label="Biblioteca">
     <header class="bar">
       <h1 class="brand"><svg class="logo" width="32" height="32" aria-hidden="true"><use href="#i-logo"/></svg>PianoCheck</h1>
+      <nav id="welcome-nav" aria-label="Empezar con PianoCheck" hidden>
+        <button type="button" class="btn ghost" id="welcome-theory">Teoría</button>
+        <button type="button" class="btn ghost" id="welcome-connect"><svg class="ic sm" aria-hidden="true"><use href="#i-plug"/></svg>Conectar piano</button>
+      </nav>
       <button class="btn icon ghost" id="btn-open-settings" aria-label="Ajustes"><svg class="ic"><use href="#i-sliders"/></svg></button>
     </header>
     <main class="content wide">
-      <form id="lib-search" class="lib-search" role="search" aria-label="Buscar una canción">
-        <label class="sr" for="lib-search-q">Buscar una canción o pegar un enlace</label>
-        <div class="ls-field"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="lib-search-q" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Canción o enlace"></div>
-        <button class="btn primary" type="submit">Buscar</button>
-      </form>
+      <div id="library-search-slot">
+        <form id="lib-search" class="lib-search" role="search" aria-label="Buscar una canción">
+          <label class="sr" for="lib-search-q">Buscar una canción o pegar un enlace</label>
+          <div class="ls-field"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="lib-search-q" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="400" placeholder="Título o enlace"></div>
+          <button class="btn primary" type="submit">Buscar</button>
+        </form>
+      </div>
       <section id="search-card" class="continue sc-resume" hidden aria-labelledby="search-card-h">
         <div class="continue-t"><span class="continue-k" id="search-card-h">Búsqueda pendiente</span><b id="search-card-title"></b><span id="search-card-sub" class="continue-sub"></span></div>
         <div class="row"><button class="btn primary big" id="search-card-go"></button><button class="btn icon ghost" id="search-card-x" aria-label="Descartar la búsqueda pendiente"><svg class="ic"><use href="#i-x"/></svg></button></div>
@@ -90,19 +97,60 @@
         <div class="continue-t"><span class="continue-k" id="continue-h">Continuar práctica</span><b id="continue-title"></b><span id="continue-sub" class="continue-sub"></span></div>
         <button class="btn primary big" id="continue-go"><svg class="ic"><use href="#i-play"/></svg>Continuar</button>
       </section>
-      <section id="empty-state" class="hero" hidden>
-        <h2 class="hero-title">Tu piano te escucha y te corrige</h2>
-        <p class="hero-sub">Tocá una partitura nota por nota. Si te equivocás, te lo marca al instante.</p>
-        <ol class="steps">
-          <li><span class="step-ic"><svg class="ic"><use href="#i-images"/></svg></span><div><b>Cargá una partitura</b><span>Buscá una canción, sacale una foto o importá un archivo.</span></div></li>
-          <li><span class="step-ic"><svg class="ic"><use href="#i-plug"/></svg></span><div><b>Conectá tu piano</b><span>Por USB, Bluetooth o con el micrófono.</span></div></li>
-          <li><span class="step-ic"><svg class="ic"><use href="#i-play"/></svg></span><div><b>Tocá</b><span>Avanzás a tu ritmo y ves cada acierto.</span></div></li>
-        </ol>
-        <div class="row wrap hero-cta">
-          <button class="btn primary big" id="empty-demo"><svg class="ic"><use href="#i-play"/></svg>Probar con la demo</button>
-          <button class="btn big" id="empty-new"><svg class="ic"><use href="#i-plus"/></svg>Nueva partitura</button>
+      <section id="empty-state" class="welcome" aria-labelledby="welcome-title" hidden>
+        <div class="welcome-hero">
+          <div class="welcome-photo" aria-hidden="true"></div>
+          <div class="welcome-copy">
+            <h2 id="welcome-title">Buscá tu canción,<br><em>tocala a tu ritmo.</em></h2>
+            <p>Encontrá una partitura para piano, escuchala y practicá con correcciones nota por nota.</p>
+            <div id="welcome-search-slot"></div>
+            <div class="welcome-actions">
+              <button type="button" class="btn" id="welcome-start"><svg class="ic sm" aria-hidden="true"><use href="#i-midi"/></svg>Probar teclado</button>
+              <button type="button" class="btn" id="empty-new"><svg class="ic sm" aria-hidden="true"><use href="#i-plus"/></svg>Importar partitura</button>
+            </div>
+          </div>
         </div>
-        <button class="btn link-btn" id="empty-demo-kb"><svg class="ic sm"><use href="#i-midi"/></svg>Probar con el teclado de pantalla</button>
+        <section class="welcome-demo" aria-labelledby="welcome-piece">
+          <div class="welcome-piece">
+            <h3 id="welcome-piece">Oda a la alegría</h3>
+            <p>Beethoven · Primer compás</p>
+            <div class="welcome-piece-actions">
+              <button type="button" class="btn ghost" id="welcome-listen"><svg class="ic sm" aria-hidden="true"><use href="#i-play"/></svg>Escuchar</button>
+              <button type="button" class="btn ghost welcome-full" id="welcome-full">Practicar pieza completa<svg class="ic sm" aria-hidden="true"><use href="#i-chevr"/></svg></button>
+            </div>
+          </div>
+          <div class="welcome-paper" id="welcome-paper">
+            <svg viewBox="0 0 234 80" role="img" aria-label="Primer compás en clave de sol: Mi, Mi, Fa, Sol">
+              <path class="welcome-staff" d="M7 19h220m-220 10h220m-220 10h220m-220 10h220m-220 10h220m0-40v40"/>
+              <path class="welcome-clef" d="M27 71c8 3 14-3 12-11L27 21c-3-11 2-17 6-16 8 2 5 13 1 19C25 37 16 40 16 49c0 7 6 11 13 11 8 0 14-4 14-11s-6-11-12-8c-5 2-6 7-3 10"/>
+              <g class="welcome-note" data-welcome-note="0" transform="translate(68 59)"><rect x="-14" y="-47" width="31" height="61" rx="5"/><ellipse rx="7" ry="4.4" transform="rotate(-18)"/><path d="M6 -1v-30"/></g>
+              <g class="welcome-note" data-welcome-note="1" transform="translate(111 59)"><rect x="-14" y="-47" width="31" height="61" rx="5"/><ellipse rx="7" ry="4.4" transform="rotate(-18)"/><path d="M6 -1v-30"/></g>
+              <g class="welcome-note" data-welcome-note="2" transform="translate(154 54)"><rect x="-14" y="-42" width="31" height="61" rx="5"/><ellipse rx="7" ry="4.4" transform="rotate(-18)"/><path d="M6 -1v-30"/></g>
+              <g class="welcome-note" data-welcome-note="3" transform="translate(197 49)"><rect x="-14" y="-37" width="31" height="61" rx="5"/><ellipse rx="7" ry="4.4" transform="rotate(-18)"/><path d="M6 -1v-30"/></g>
+            </svg>
+          </div>
+          <div class="welcome-play">
+            <div class="welcome-progress">
+              <span id="welcome-count">Nota 1 de 4</span>
+              <button type="button" class="btn ghost" id="welcome-repeat" hidden><svg class="ic sm" aria-hidden="true"><use href="#i-restart"/></svg>Repetir</button>
+            </div>
+            <div class="welcome-keys" id="welcome-keys" role="group" aria-label="Teclado de la demo">
+              <button type="button" data-midi="60">Do</button>
+              <button type="button" data-midi="61" class="welcome-sharp" style="--key-left:20%" aria-label="Do sostenido"></button>
+              <button type="button" data-midi="62">Re</button>
+              <button type="button" data-midi="63" class="welcome-sharp" style="--key-left:40%" aria-label="Re sostenido"></button>
+              <button type="button" data-midi="64" class="is-next">Mi</button>
+              <button type="button" data-midi="65">Fa</button>
+              <button type="button" data-midi="66" class="welcome-sharp" style="--key-left:80%" aria-label="Fa sostenido"></button>
+              <button type="button" data-midi="67">Sol</button>
+            </div>
+            <p class="welcome-feedback" id="welcome-feedback" role="status">Tocá Mi para empezar.</p>
+          </div>
+        </section>
+        <div class="welcome-tools" role="group" aria-label="Herramientas para practicar con la demo">
+          <button type="button" class="btn ghost" id="welcome-pulse"><svg class="ic sm" aria-hidden="true"><use href="#i-metro"/></svg>Modo a pulso</button>
+          <button type="button" class="btn ghost" id="welcome-annotate"><svg class="ic sm" aria-hidden="true"><use href="#i-pencil"/></svg>Anotar partitura</button>
+        </div>
       </section>
 
       <section id="theory-card" class="theory-entry" aria-labelledby="theory-card-h">

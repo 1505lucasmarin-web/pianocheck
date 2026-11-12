@@ -1,0 +1,167 @@
+#welcome-nav { display: flex; gap: 4px; }
+#welcome-nav .btn { padding-inline: 10px; font-size: .875rem; white-space: nowrap; }
+
+.welcome {
+  --welcome-bg: #1b1512;
+  --welcome-gold: #f3bd69;
+  --welcome-muted: #dfccb6;
+  margin: 18px 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--welcome-bg);
+}
+.welcome-hero { position: relative; isolation: isolate; }
+.welcome-photo {
+  position: absolute;
+  inset: 0 0 0 37%;
+  z-index: -1;
+  background: linear-gradient(90deg, var(--welcome-bg), #1b1512b3 14%, transparent 46%),
+    url("../images/piano-portada.jpg") center 54% / cover no-repeat;
+}
+.welcome-copy {
+  max-width: 55%;
+  padding: clamp(40px, 6vw, 66px) 16px clamp(42px, 6vw, 68px) clamp(22px, 5%, 54px);
+}
+#welcome-title {
+  margin: 0;
+  color: #fff1de;
+  font: 400 clamp(2.6rem, 5.6vw, 4.15rem) / .99 var(--serif);
+  letter-spacing: -.055em;
+}
+#welcome-title em { color: var(--welcome-gold); font-weight: 400; }
+.welcome-copy p { max-width: 35ch; margin: 18px 0 0; color: var(--welcome-muted); }
+.welcome-copy .lib-search { max-width: 410px; margin: 20px 0 0; }
+.welcome-copy .lib-search .btn { background: var(--welcome-gold); border-color: var(--welcome-gold); }
+.welcome-copy .ls-field input { background: #231b16; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.welcome-actions .btn { font-size: .84rem; border-radius: 8px; padding-inline: 10px; }
+
+.welcome-demo {
+  display: grid;
+  grid-template-columns: minmax(160px, .85fr) minmax(190px, 1.05fr) minmax(218px, 1fr);
+  align-items: center;
+  gap: clamp(16px, 2.6vw, 28px);
+  padding: 20px clamp(18px, 5%, 54px);
+  border-top: 1px solid var(--line);
+  background: #29201a;
+}
+.welcome-piece h3 {
+  margin: 0;
+  font: 400 clamp(1.35rem, 2.7vw, 1.9rem) / 1.1 var(--serif);
+  letter-spacing: -.03em;
+}
+.welcome-piece p { margin: 5px 0 0; font-size: .82rem; color: var(--welcome-muted); }
+.welcome-piece-actions { display: flex; flex-wrap: wrap; gap: 0 4px; margin: 2px 0 0 -8px; }
+.welcome-piece-actions .btn { padding-inline: 8px; gap: 4px; font-size: .8rem; }
+.welcome-piece-actions .welcome-full { color: var(--welcome-gold); }
+.welcome-paper {
+  display: grid;
+  min-width: 0;
+  min-height: 98px;
+  place-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8ecd4;
+  color: #33261d;
+}
+.welcome-paper svg { width: 100%; max-width: 280px; height: auto; }
+.welcome-staff, .welcome-clef { fill: none; stroke: #685646; }
+.welcome-clef { stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; }
+.welcome-note rect { fill: transparent; }
+.welcome-note ellipse { fill: currentColor; }
+.welcome-note path { fill: none; stroke: currentColor; stroke-width: 1.7; }
+.welcome-note.is-next rect { fill: #efc0738f; }
+.welcome-note.is-hit { color: #25613b; }
+.welcome-note.is-miss { color: #922e25; }
+.welcome-note.is-miss rect { fill: #ecaa8eaa; }
+.welcome-progress { display: flex; justify-content: space-between; align-items: center; height: 44px; }
+.welcome-progress span, .welcome-feedback { font-size: .8rem; }
+.welcome-progress span { color: var(--welcome-muted); }
+#welcome-repeat { padding-inline: 7px; font-size: .8rem; }
+.welcome-keys { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; position: relative; }
+.welcome-keys button {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  height: 72px;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 3px solid #ceb694;
+  border-radius: 2px 2px 5px 5px;
+  color: #382a20;
+  background: #fbf0da;
+  font: 650 .78rem var(--sans);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.welcome-keys .welcome-sharp {
+  position: absolute;
+  top: 0;
+  left: var(--key-left);
+  transform: translateX(-50%);
+  z-index: 1;
+  width: max(23px, 10%);
+  height: 44px;
+  border-bottom-color: #0f0d0c;
+  background: #332822;
+}
+.welcome-keys button:hover { filter: brightness(1.08); }
+.welcome-keys button:focus-visible { outline: 2px solid #fff1de; outline-offset: 2px; z-index: 2; }
+.welcome-keys button.is-next { background: var(--welcome-gold); border-bottom-color: #bd8538; }
+.welcome-keys button.is-hit { background: #afd3af; border-bottom-color: #739473; }
+.welcome-keys button.is-miss { background: #f3a38b; border-bottom-color: #ae624e; }
+.welcome-feedback { min-height: 1.6em; margin: 6px 0 0; color: #fae1b5; }
+.welcome-feedback.is-miss { color: #ffbca7; }
+.welcome-feedback.is-done { color: #bde1bc; }
+.welcome-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  padding: 4px clamp(12px, 4%, 46px);
+  border-top: 1px solid var(--line);
+}
+.welcome-tools .btn { color: var(--welcome-muted); padding-inline: 8px; font-size: .82rem; }
+
+@media (max-width: 760px) {
+  .welcome-demo { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 18px; }
+  .welcome-piece { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
+  .welcome-piece p { margin: 0; }
+  .welcome-piece-actions { margin: 0 0 0 auto; }
+}
+@media (max-width: 570px) {
+  #screen-library .bar { gap: 3px; padding-inline: 8px; }
+  #screen-library .brand { gap: 5px; font-size: 1.12rem; }
+  #screen-library .brand .logo { width: 25px; height: 25px; }
+  #welcome-nav { gap: 0; }
+  #welcome-nav .btn { padding-inline: 5px; font-size: .75rem; }
+  #welcome-connect .ic { display: none; }
+  .welcome { margin-top: 11px; }
+  .welcome-hero { display: grid; }
+  .welcome-copy { max-width: none; padding: 27px 18px 13px; }
+  #welcome-title { font-size: clamp(2.15rem, 9.6vw, 3.3rem); }
+  .welcome-copy p { margin-top: 12px; }
+  .welcome-copy .lib-search { margin-top: 14px; }
+  .welcome-photo {
+    position: relative;
+    order: 2;
+    inset: auto;
+    height: clamp(132px, 40vw, 210px);
+    background: linear-gradient(var(--welcome-bg), transparent 28%),
+      url("../images/piano-portada.jpg") center 59% / cover no-repeat;
+  }
+  .welcome-demo { grid-template-columns: 1fr; padding: 15px 15px 12px; }
+  .welcome-piece { display: block; }
+  .welcome-piece p { margin-top: 3px; }
+  .welcome-piece-actions { margin-left: -8px; }
+  .welcome-paper { min-height: 75px; padding-block: 4px; }
+  .welcome-paper svg { max-height: 78px; }
+}
+@media (max-width: 350px) {
+  #screen-library .brand { font-size: 1rem; }
+  #screen-library .brand .logo { width: 22px; height: 22px; }
+  #welcome-nav .btn { padding-inline: 3px; }
+  .welcome-actions .btn { padding-inline: 7px; gap: 4px; }
+  .welcome-actions .ic { width: 15px; height: 15px; }
+}
