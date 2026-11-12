@@ -47,5 +47,10 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - **Dónde me equivoqué**: la nota esperada queda marcada con ✕ (color + símbolo, contraste AA en los tres temas) y una nota «fantasma» a la altura que tocaste; el panel dice «Tocaste Re4 · Se esperaba Mi4» (se anuncia con aria-live). El cursor no avanza hasta corregir; al corregir la marca queda como historial discreto. En A pulso el pulso sigue y los errores quedan donde ocurrieron (✕ equivocada, ○ omitida); tocá la marca para ver el detalle. Resultado lista los errores de la toma.
 - **Anotar** (botón del lápiz en Práctica y «Anotar» en Revisión): lápiz (3 colores), resaltador, texto de hasta 60 caracteres, goma, deshacer/rehacer. Los gestos dibujan; para moverte, dos dedos o los botones ‹ › (con lápiz activo se ignoran los dedos). La evaluación queda en pausa mientras anotás. Las marcas se anclan al compás (`js/annotations.js`, puro y con tests; UI en `js/annotate-ui.js`), se guardan en IndexedDB (clave `anno:<id>` del store de ajustes), viajan en las tareas `.pianocheck` y sobreviven a recargar, rotar, cambiar tamaño y pasar de continua a por página. El ojo las oculta/muestra con un toque (ajuste `hideMarks`).
 
+## Reproductor (modo escucha)
+- Play en Práctica, en cada tarjeta de la Biblioteca, en Revisión y en los resultados de búsqueda («Escuchar»). La partitura suena de principio a fin (o el bucle/rango activo) con cursor, compás resaltado y piano guía; la evaluación y el micrófono quedan en pausa y vuelven al detener.
+- Transporte: Play/Pausa, Detener, barra por compás, tocar un compás para saltar, velocidad 50/75/100/125 % con BPM resultante, repetir, manos, silenciar la mano que practicás, metrónomo, cuenta de entrada, volumen y «Tocar encima» (se ve en el piano guía, no se puntúa). Atajos: espacio y flechas.
+- Núcleo puro en `js/playback.js` (eventos, ligaduras, rango, mano, agenda con anticipación sobre `AudioContext.currentTime`), sintetizador en `js/synth.js` (timbres «Piano» y «Suave», en Ajustes), interfaz en `js/listen.js`. Android: Media Session y Wake Lock mientras suena.
+
 ## Tests
 `node --test test/*.test.mjs`

@@ -723,6 +723,7 @@ export function createRenderer(container, opts = {}) {
   const endDrag = (ev) => {
     if (!drag || ev.pointerId !== drag.id) return;
     const d = drag; drag = null;
+    if (d.moved) { wasDrag = true; setTimeout(() => { wasDrag = false; }, 60); }
     if (!d.moved || !cs) return;
     cs.view.classList.remove("cs-dragging");
     const s = d.samples, a = s[0], b = s[s.length - 1];
@@ -958,6 +959,17 @@ export function createRenderer(container, opts = {}) {
     } catch (e) { /* ignorar */ }
   }
 
+  // toque en un compás (p. ej. para saltar ahí al escuchar): no se dispara al arrastrar la partitura
+  let measureCb = null, wasDrag = false;
+  root.addEventListener("click", (ev) => {
+    if (!measureCb || annotating || wasDrag) return;
+    const sysEl = ev.target.closest && ev.target.closest(".system"); if (!sysEl) return;
+    const s = systems[+sysEl.dataset.sys]; if (!s || !s.mx) return;
+    let p;
+    try { const pt = s.svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY; p = pt.matrixTransform(s.svg.getScreenCTM().inverse()); } catch (e) { return; }
+    for (let mi = s.from; mi <= s.to; mi++) { const m = s.mx[mi]; if (m && p.x >= m.x && p.x <= m.x + m.w) { measureCb(mi); return; } }
+  });
+
   // toque: nota más cercana al punto tocado
   root.addEventListener("click", (ev) => {
     if (!tapCb || annotating) return;
@@ -1009,6 +1021,7 @@ export function createRenderer(container, opts = {}) {
   return {
     draw, setCursor, follow, getLayout: () => curLayout, getOverlay: () => annoSvg, onDraw(cb) { drawCb = cb; if (cb && annoSvg) cb({ svg: annoSvg, layout: curLayout }); }, setAnnotating, panBy, scrollPos, markStep, markError, resolveError, hasError: (i) => errs.has(i), onErrorTap(cb) { errCb = cb; }, clearMarks, setSelected, setPhrases, setRange, scrollToMeasure, setLook, setBadges, setFocusMeasure, setTag,
     onNoteTap(cb) { tapCb = cb; },
+    onMeasureTap(cb) { measureCb = cb; },
     onBadgeTap(cb) { badgeCb = cb; },
     redraw,
     destroy() { ro.disconnect(); root.remove(); },

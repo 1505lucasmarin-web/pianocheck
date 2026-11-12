@@ -10,7 +10,8 @@ import { findPhrases, phraseAt, repeatNotice, measureRangeText } from "./phrases
 import { phraseColor } from "./render.js";
 import { buildShareUrl, decodeCfg, extractToken, maskKey, PROVIDER_NAMES } from "./share.js";
 import { sameKind, normRange, isWholeRange, rangeText, passageSteps, currentPair, hardestMeasures, coverage, measureSummary, harderHand, handsWithNotes, attemptKey, equivalentAttempts, bestEquivalent, nextAction, mergePractice, latestPractice } from "./passage.js";
-import { buildEvents, createPlayer } from "./playback.js";
+import { createPlayer } from "./playback.js";
+import { createListen } from "./listen.js";
 import { createTheory } from "./teoria.js";
 import { parseMusicLink, resolveSong } from "./links.js";
 import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from "./catalog.js";
@@ -44,7 +45,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8 };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -88,7 +89,7 @@ function show(name, push = true) {
   screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
   $("app").dataset.screen = name;
   if (prev === "practice" && name !== "practice") leavePractice();
-  if (prev === "review" && name !== "review") annoR.exit(true);
+  if (prev === "review" && name !== "review") { annoR.exit(true); lcR.close("silent"); }
   if (prev === "settings" && name !== "settings") { hideShareQr(); stopScan(); }
   if (prev === "theory" && name !== "theory") leaveTheory();
   if (prev === "search" && name === "library" && srch && srch.ctl) srch.ctl.abort();
@@ -124,6 +125,39 @@ const annoHidden = { getHidden: () => !!settings.hideMarks, setHidden: (v) => { 
 const annoP = createAnnotateUI({ renderer: practiceR, host: $("practice-anno"), area: $("practice-area"), persist: annoPersist, toast, ...annoHidden, hint: "Dibujá sobre la partitura. Con dos dedos o con los botones de desplazamiento te movés. La evaluación queda en pausa mientras anotás.", onActive: (on, silent) => practiceAnnoMode(on, silent) });
 const annoR = createAnnotateUI({ renderer: reviewR, host: $("review-anno"), area: $("review-area"), persist: annoPersist, toast, ...annoHidden, onActive: (on) => { $("review-annotate").setAttribute("aria-pressed", String(on)); if (on) { editState && (editState.selected = null); updateEditUi(); } } });
 $("review-annotate").addEventListener("click", () => { if (annoR.isActive()) annoR.exit(); else annoR.enter(); });
+/* ---------- reproductor (Play): motor compartido + barra de transporte en Práctica y en Revisión ---------- */
+const player = createPlayer({ timbre: "piano" });
+const lprefs = { get: (k) => settings[k], set: (p) => { Object.assign(settings, p); store.saveSettings(p).catch(() => {}); } };
+/** Último paso (del render) cuyo instante ya pasó. */
+function stepAtBeat(list, beat) {
+  let lo = 0, hi = list.length - 1, best = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].t <= beat + 1e-6) { best = list[mid]; lo = mid + 1; } else hi = mid - 1; }
+  return best;
+}
+let lcLastCursor = -2;
+const lcP = createListen({ player, host: $("lt-practice"), kind: "practice", prefs: lprefs, toast, title: () => (current && current.title) || "",
+  adapter: {
+    score: () => current, practiceHands: () => hands, stepAt: (b) => stepAtBeat(allSteps, b),
+    onOpen: () => listenEnter(), onClose: (r) => listenLeave(r), onFrame: (f) => listenFrame(f), onPlaying: (p) => listenPlaying(p),
+    onPractice: () => lcP.close("practice"),
+  } });
+let reviewSteps = [];
+const lcR = createListen({ player, host: $("lt-review"), kind: "review", prefs: lprefs, toast, title: () => (editState && editState.score.title) || "",
+  adapter: {
+    score: () => (editState ? editState.score : null), practiceHands: () => "both", stepAt: (b) => stepAtBeat(reviewSteps, b),
+    onOpen: () => { $("review-play").classList.add("on"); },
+    onClose: () => { $("review-play").classList.remove("on"); reviewR.setCursor(null); },
+    onFrame: (f) => { if (f.step) reviewR.setCursor(f.step.i); },
+    onPlaying: (p) => { const b = $("review-play"); b.querySelector("use").setAttribute("href", p ? "#i-pause" : "#i-play"); b.setAttribute("aria-label", p ? "Pausar la escucha" : "Escuchar la partitura (Play)"); if (p) requestWake(); },
+  } });
+function reviewListen() {
+  if (!editState) return;
+  if (lcR.isOpen) { lcR.toggle(); return; }
+  if (annoR.isActive()) annoR.exit();
+  const bpm = Math.max(30, Math.min(240, +$("review-bpm").value || editState.score.bpm || 80));
+  lcR.open({ bpm, autoplay: true });
+}
+$("review-play").addEventListener("click", reviewListen);
 let annoPaused = false;
 function practiceAnnoMode(on, silent) {
   $("btn-anno").setAttribute("aria-pressed", String(on)); $("practice-pause").disabled = on;
@@ -182,7 +216,8 @@ function cardHtml(s, demo, sum) {
     : `<div class="sc-none">Sin intentos todavía</div>`;
   const title = esc(s.title || "Sin título");
   return `<li class="card" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${lvl}</div><div class="tags">${tags}</div>${res}
-    <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("play", "sm")}Practicar</button>
+    <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("hand", "sm")}Practicar</button>
+    <button class="btn listen-btn" data-act="listen" aria-label="Escuchar ${title}">${ic("play", "sm")}Escuchar</button>
     ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
     ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
 }
@@ -231,6 +266,7 @@ async function onCardClick(e) {
   const card = btn.closest(".card"), id = card.dataset.id, act = btn.dataset.act;
   try {
     if (act === "practice") startPractice(await resolveScore(id));
+    else if (act === "listen") startPractice(await resolveScore(id), { listen: true });
     else if (act === "demokb") await startOnscreen(await resolveScore(id));
     else if (act === "edit") openReview(await resolveScore(id), false);
     else if (act === "task") openTaskSheet(await resolveScore(id));
@@ -623,7 +659,7 @@ function renderSearch() {
     h += `<section class="srch-sec" aria-label="En tu biblioteca"><h3 class="srch-h">En tu biblioteca</h3><ul class="eds">${local.inLibrary.map((m) => {
       const sc = s.library.find((x) => x.id === m.scoreId) || {};
       const meta = [sc.derivedFrom ? "Versión de «" + (sc.derivedFrom.title || "otra") + "»" : "", sc.measures ? `${sc.measures.length} compases` : ""].filter(Boolean).join(" · ");
-      return `<li class="ed lib" data-id="${esc(m.scoreId)}"><div class="ed-top"><b class="ed-t">${esc(m.title)}</b></div>${meta ? `<div class="ed-src">${esc(meta)}</div>` : ""}<div class="row"><button class="btn primary" data-act="play-lib" aria-label="Tocar ${esc(m.title)}">${ic("play", "sm")}Tocar</button></div></li>`;
+      return `<li class="ed lib" data-id="${esc(m.scoreId)}"><div class="ed-top"><b class="ed-t">${esc(m.title)}</b></div>${meta ? `<div class="ed-src">${esc(meta)}</div>` : ""}<div class="row wrap"><button class="btn primary" data-act="play-lib" aria-label="Tocar ${esc(m.title)}">${ic("hand", "sm")}Tocar</button><button class="btn" data-act="listen-lib" aria-label="Escuchar ${esc(m.title)}">${ic("play", "sm")}Escuchar</button></div></li>`;
     }).join("")}</ul></section>`;
   }
   // 2) incluidas en PianoCheck
@@ -635,7 +671,7 @@ function renderSearch() {
       const [main, ...more] = g.vs;
       return `<li class="ed inc" data-p="${esc(g.id)}"><div class="ed-top"><b class="ed-t">${esc(pc.title)}</b>${pc.composer ? `<span class="ed-a">${esc(pc.composer)}</span>` : ""}</div>
         <div class="ed-src">${esc(main.label === "Solo melodía" ? "Melodía sencilla" : main.label)}${more.length ? " · hay una versión con acompañamiento" : ""} · dominio público</div>
-        <div class="row wrap"><button class="btn primary" data-act="play-piece" data-v="${esc(main.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(main.label)}">${ic("play", "sm")}Tocar</button>${more.map((v) => `<button class="btn" data-act="play-piece" data-v="${esc(v.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(v.label)}">${esc(v.label)}</button>`).join("")}</div></li>`;
+        <div class="row wrap"><button class="btn primary" data-act="play-piece" data-v="${esc(main.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(main.label)}">${ic("hand", "sm")}Tocar</button><button class="btn" data-act="listen-piece" data-v="${esc(main.versionId)}" aria-label="Escuchar ${esc(pc.title)}: ${esc(main.label)}">${ic("play", "sm")}Escuchar</button>${more.map((v) => `<button class="btn" data-act="play-piece" data-v="${esc(v.versionId)}" aria-label="Tocar ${esc(pc.title)}: ${esc(v.label)}">${esc(v.label)}</button>`).join("")}</div></li>`;
     }).join("")}</ul></section>`;
   }
   if (local && !local.inLibrary.length && !local.included.length) h += `<p class="srch-none">No está en tu biblioteca ni entre las partituras incluidas.</p>`;
@@ -742,6 +778,8 @@ $("search-body").addEventListener("click", async (e) => {
     else if (act === "settings") openSettings();
     else if (act === "play-lib") playLocalScore(await resolveScore(li.dataset.id));
     else if (act === "play-piece") await playPiece(li.dataset.p, btn.dataset.v);
+    else if (act === "listen-lib") { clearLastSearch(); startPractice(await resolveScore(li.dataset.id), { listen: true }); }
+    else if (act === "listen-piece") { const base = getPieceScore(li.dataset.p, btn.dataset.v); if (!base) { toast("No encontré esa versión."); return; } clearLastSearch(); startPractice(validateScore(base).score, { listen: true }); }
   } catch (err) { toast("Error: " + err.message, 4000); }
 });
 $("search-back").addEventListener("click", goLibrary);
@@ -843,7 +881,9 @@ function openReview(score, isNew, warnings, note) {
   $("cm-box").hidden = true;
   show("review");
   reviewR.clearMarks(); reviewR.setCursor(null); reviewR.setFocusMeasure(null);
-  reviewR.draw(editState.score, []);
+  lcR.close("silent");
+  reviewSteps = buildSteps(editState.score, "both");
+  reviewR.draw(editState.score, reviewSteps);
   annoR.setScore(score.id, score.measures.length);
   refreshReviewPhrases();
   refreshReview();
@@ -935,7 +975,9 @@ function commit(r, { keepSel = false } = {}) {
 }
 function redrawReview() {
   const st = $("review-score").scrollTop;
-  reviewR.draw(editState.score, []);
+  reviewSteps = buildSteps(editState.score, "both");
+  reviewR.draw(editState.score, reviewSteps);
+  if (lcR.isOpen) lcR.invalidate();
   annoR.prune(editState.score.measures.length);
   $("review-score").scrollTop = st;
   refreshReviewPhrases();
@@ -1167,7 +1209,17 @@ async function loadSettings() {
   settings = { ...DEFAULT_SETTINGS, ...s };
   applyLook();
   applyKeyboardSetting();
+  player.setTimbre(settings.timbre); player.setVolume(settings.listenVolume == null ? 0.8 : settings.listenVolume);
+  syncTimbreUi();
 }
+function syncTimbreUi() { document.querySelectorAll("#set-timbre button").forEach((b) => { const on = b.dataset.timbre === (settings.timbre || "piano"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }); }
+$("set-timbre").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  settings.timbre = b.dataset.timbre === "suave" ? "suave" : "piano";
+  store.saveSettings({ timbre: settings.timbre }).catch(() => {}); player.setTimbre(settings.timbre); syncTimbreUi();
+  // pequeña muestra para comparar el timbre (sólo con el gesto de tocar el botón)
+  player.unlock().then((ok) => { if (ok) player.play([60, 64, 67, 72].map((m, i) => ({ step: i, beat: i, at: i * 0.18, dur: 0.9, midi: m, hand: "rh" }))); }).catch(() => {});
+});
 function openSettings() {
   prevBeforeSettings = screen === "settings" ? prevBeforeSettings : screen;
   $("set-provider").value = settings.provider || "anthropic";
@@ -1456,8 +1508,8 @@ function trackPhrase() {
 }
 
 /* ---------- hojas de Práctica (Conexión, Tempo, Bucle, Lectura, Sesión) ---------- */
-const SHEET_TITLES = { input: "Conexión", tempo: "Tempo", loop: "Bucle", look: "Lectura", hands: "Manos y sesión" };
-const SHEET_OPENERS = { input: "input-pill", tempo: "btn-tempo", loop: "btn-loop", look: "btn-look", hands: "hands-link" };
+const SHEET_TITLES = { input: "Conexión", tempo: "Tempo", loop: "Bucle", look: "Lectura", hands: "Manos y sesión", listen: "Escucha" };
+const SHEET_OPENERS = { input: "input-pill", tempo: "btn-tempo", loop: "btn-loop", look: "btn-look", hands: "hands-link", listen: "lt-opts" };
 let sheetName = null, sheetFrom = null;
 function openPSheet(name, opener) {
   if (sheetName === name) { closePSheet(); return; }
@@ -1472,6 +1524,7 @@ function openPSheet(name, opener) {
   if (name === "tempo") { $("countin-toggle").checked = !!settings.countIn; syncModeUi(); }
   if (name === "input") syncInputSheet();
   if (name === "hands") syncHandsUi();
+  if (name === "listen") syncListenSheet();
   $("ps-box").focus({ preventScroll: true });
 }
 function closePSheet(silent) {
@@ -1685,6 +1738,7 @@ function startPractice(score, o = {}) {
   metro.setBeats((score.timeSig || [4, 4])[0]);
   buildPips((score.timeSig || [4, 4])[0]);
   kb.setRange(...Object.values(scoreRange(score)));
+  if (lcP.isOpen) lcP.close("silent");
   kbOpen = false; paused = false; listening = false; closePSheet(true);
   session = null; pulse = null; pulseRun = null; // evita avisos de frases de la sesión anterior
   practiceR.setBadges(commentBadges(score));
@@ -1695,7 +1749,8 @@ function startPractice(score, o = {}) {
   resetSession();
   syncKbFold(); updateConnectHint(); refreshInputPill(); syncMetroUi();
   requestWake();
-  if (passage && !passage.loop) toast(`Seguís desde el compás ${passage.from + 1}`, 2400);
+  if (passage && !passage.loop && !o.listen) toast(`Seguís desde el compás ${passage.from + 1}`, 2400);
+  if (o.listen) openListen();
 }
 function resetSession() {
   attemptSaved = false; kb.setHint(null); curPhrase = "-"; hidePhraseNote(); hideStuck(); missView = null;
@@ -2099,56 +2154,89 @@ $("st-measure").addEventListener("click", () => {
   practiceR.setCursor(steps[k0].i); updatePracticeUi(); syncKeyboard(true); refreshNext(); trackPhrase();
 });
 
-/* ----- escuchar el pasaje (Web Audio) ----- */
-const player = createPlayer();
-let micPaused = false, listenSteps = [];
-function mapToPractice(beat) {   // paso de práctica (índice del render) que corresponde a ese instante
-  let best = null;
-  for (const s of allSteps) { if (s.t <= beat + 1e-6) best = s; else break; }
-  return best ? best.i : null;
-}
-function startListening({ range, hands: hs, slow }) {
-  if (!current) return;
-  stopListening(true);
-  const r = range ? normRange(range, N()) : null;
-  const hsteps = passageSteps(buildSteps(current, hs || hands), r);
-  if (!hsteps.length) { toast("No hay notas en ese pasaje con esa mano."); return; }
-  const events = buildEvents(current, hsteps, { bpm: metroBpm, speed: slow ? 0.6 : 1 });
-  const byStep = new Map();
-  events.forEach((e) => { (byStep.get(e.step) || byStep.set(e.step, []).get(e.step)).push(e); });
+/* ----- modo escucha en Práctica (Play, "Escuchar pasaje" de la ayuda y del bucle): la evaluación queda en pausa mientras dura ----- */
+let micPaused = false;
+function listenEnter() {
+  listening = true; lcLastCursor = -2;
+  $("screen-practice").classList.add("listening");
   hideStuck(); setPaused(false, true); kb.setHint(null); missView = null;
   if (isPulso()) { stopPulse(); metro.stop(); syncMetroUi(); }
   if (mic && mic.running) { micPaused = true; stopMic(); }
-  listening = true; endCountIn();
+  endCountIn();
   if (metro.isRunning) { metro.stop(); syncMetroUi(); }
-  const label = r ? `Escuchando compases ${rangeText(r)}${slow ? " · lento" : ""}` : "Escuchando";
-  setNext(label, "♪", "listen", "Tocá Detener para volver");
-  $("practice-pause").setAttribute("aria-pressed", "false");
-  $("pause-t").textContent = "Detener"; $("practice-pause").querySelector("use").setAttribute("href", "#i-stop");
-  try {
-    player.play(events, {
-      onStep: (e) => {
-        const g = mapToPractice(e.beat); if (g != null) practiceR.setCursor(g);
-        const grp = byStep.get(e.step) || [];
-        if (settings.guide !== false) kb.setTargets(grp.map((x) => ({ midi: x.midi, hand: x.hand }))), kb.focus(grp.map((x) => x.midi));
-        setNext(label, names(grp.map((x) => x.midi).sort((a, b) => a - b)), "listen", "Tocá Detener para volver");
-      },
-      onEnd: () => stopListening(),
-    });
-  } catch (err) { listening = false; toast(err.message || "No se pudo reproducir el audio.", 3600); stopListening(true); return; }
-  if (sheetName === "loop") syncLoopSheet();
 }
-function stopListening(silent) {
-  if (!listening) return;
-  listening = false; player.stop();
-  $("pause-t").textContent = paused ? "Continuar" : "Pausar"; $("practice-pause").querySelector("use").setAttribute("href", paused ? "#i-play" : "#i-pause");
+function listenFrame(f) {
+  if (f.step && f.step.i !== lcLastCursor) { lcLastCursor = f.step.i; practiceR.setCursor(f.step.i); }
+  if (settings.guide !== false) {
+    const ts = f.notes.map((x) => ({ midi: x.midi, hand: x.hand }));
+    kb.setTargets(ts); if (ts.length) kb.focus(ts.map((x) => x.midi));
+  }
+  $("measure-now").textContent = `Compás ${f.measure + 1} de ${N()}`;
+  $("hands-t").textContent = "Escuchando";
+}
+function listenPlaying(p) {
+  const b = $("btn-listen");
+  b.querySelector("use").setAttribute("href", p ? "#i-pause" : "#i-play");
+  b.setAttribute("aria-label", p ? "Pausar la escucha" : "Escuchar la partitura (Play)");
+  b.setAttribute("aria-pressed", String(!!p));
+  b.querySelector(".lbl").textContent = p ? "Pausar" : "Escuchar";
+  if (p) requestWake();
+}
+function listenLeave(reason) {
+  listening = false; lcLastCursor = -2;
+  $("screen-practice").classList.remove("listening");
+  listenPlaying(false);
   if (micPaused) { micPaused = false; startMic().catch(() => {}); }
   const s = curStep();
   if (s && session) practiceR.setCursor(s.i);
-  kb.setTargets([]); syncKeyboard(true); refreshNext();
-  if (sheetName === "loop" && !silent) syncLoopSheet();
-  if (isPulso() && !silent && screen === "practice") resetSession();   // A pulso: después de escuchar se vuelve a empezar la toma
+  kb.setTargets([]); syncKeyboard(true); updatePracticeUi(); refreshNext();
+  if (sheetName === "loop" && reason !== "silent") syncLoopSheet();
+  if (isPulso() && reason !== "silent" && screen === "practice") resetSession();   // A pulso: después de escuchar se vuelve a empezar la toma
 }
+/** Play: toda la pieza (o el bucle / rango activo) con el cursor, el piano guía y la partitura siguiendo la música. */
+function openListen(o = {}) {
+  if (!current) return;
+  closePSheet(true);
+  const r = passage ? { from: passage.from, to: passage.to } : null;
+  lcP.open({ range: r, bpm: current.bpm || 80, repeat: isLoop() ? true : undefined, autoplay: true, ...o });
+}
+/** "Escuchar pasaje" (ayuda al trabarse y selector de bucle): mismo motor, al tempo de práctica y con salida automática al terminar. */
+function startListening({ range, hands: hs, slow }) {
+  if (!current) return;
+  const r = range ? normRange(range, N()) : null;
+  lcP.open({ range: r, bpm: metroBpm, speed: slow ? 0.6 : 1, hands: hs || hands, repeat: false, autoplay: true, autoExit: true, temp: true });
+}
+function stopListening(silent) {
+  if (!listening) return;
+  lcP.close(silent ? "silent" : "stop");
+}
+$("btn-listen").addEventListener("click", () => {
+  if (!current) return;
+  if (lcP.isOpen) { lcP.toggle(); return; }
+  if (annoP.isActive()) annoP.exit();
+  openListen();
+});
+practiceR.onMeasureTap((m) => { if (lcP.isOpen) lcP.seekMeasure(m); });
+/* opciones de escucha (hoja «Escucha») */
+function syncListenSheet() {
+  const o = lcP.options, bpm = lcP.bpm || (current && current.bpm) || 80;
+  document.querySelectorAll("#ls-speed button").forEach((b) => { const v = +b.dataset.speed, on = v === o.speed; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); b.innerHTML = `${Math.round(v * 100)} %<small>♩ ${Math.round(bpm * v)}</small>`; });
+  $("ls-bpm").textContent = `Tempo de la pieza: ♩ ${bpm} · ahora ♩ ${Math.round(bpm * o.speed)} BPM`;
+  document.querySelectorAll("#ls-hands button").forEach((b) => { const on = b.dataset.hands === o.hands; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  const both = hands === "both";
+  $("ls-mute").checked = !!o.muteMine && !both; $("ls-mute").disabled = both;
+  $("ls-mute-sub").textContent = both ? "Para tocarla vos encima. Disponible cuando practicás con una sola mano." : `Deja de sonar la ${hands === "rh" ? "derecha" : "izquierda"} para que la toques vos encima.`;
+  $("ls-metro").checked = !!o.metro; $("ls-count").checked = !!o.countIn; $("ls-along").checked = !!o.along;
+  $("ls-vol").value = Math.round(o.volume * 100);
+  $("ls-range").textContent = lcP.range ? `Suena: compases ${rangeText(lcP.range)}${o.repeat ? " (en bucle)" : ""}.` : `Suena: toda la pieza${o.repeat ? " (en bucle)" : ""}.`;
+}
+$("ls-speed").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { lcP.setSpeed(+b.dataset.speed); syncListenSheet(); } });
+$("ls-hands").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { lcP.setHands(b.dataset.hands); syncListenSheet(); } });
+$("ls-mute").addEventListener("change", (e) => lcP.setMuteMine(e.target.checked));
+$("ls-metro").addEventListener("change", (e) => lcP.setMetro(e.target.checked));
+$("ls-count").addEventListener("change", (e) => lcP.setCountIn(e.target.checked));
+$("ls-along").addEventListener("change", (e) => { lcP.setAlong(e.target.checked); if (e.target.checked) toast("Tocar encima: tus notas se ven en el piano guía y no se puntúan.", 3600); });
+$("ls-vol").addEventListener("input", (e) => lcP.setVolume(+e.target.value / 100));
 
 /* ----- cambiar de mano / reiniciar / terminar ----- */
 function syncHandsUi() {
@@ -2182,6 +2270,7 @@ $("practice-back").addEventListener("click", () => goLibrary());
 function handleNoteOn(m, ts) {
   if (screen === "theory") { theory.noteOn(m); return; }
   if (screen === "practice" && annoP.isActive()) return;   // anotando: la evaluación está en pausa
+  if (screen === "practice" && listening) { if (lcP.along && lcP.isOpen) kb.flash(m, "ok"); return; }   // escuchando: no se evalúa; con «Tocar encima» se ve en el piano guía
   if (screen === "practice" && isPulso()) { const now = performance.now(); pulseNote(m, Number.isFinite(ts) && Math.abs(ts - now) < 2000 ? ts : now); return; }
   if (screen !== "practice" || !session || paused || listening || countingIn) return;
   const ev = session.noteOn(m);
@@ -2495,6 +2584,23 @@ $("result-lib").addEventListener("click", () => { show("library", false); });
   }
 })();
 
+/* Atajos de teclado (escritorio): espacio = Play/Pausa; flechas = compás anterior / siguiente mientras se escucha. */
+document.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target, tag = t && t.tagName;
+  if (tag === "INPUT" && t.type !== "range" && t.type !== "checkbox" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+  if (!$("confirm").hidden || !$("busy").hidden || !$("sheet-new").hidden) return;
+  const lc = screen === "practice" ? lcP : screen === "review" ? lcR : null;
+  if (!lc) return;
+  if (e.key === " " || e.code === "Space") {
+    if (tag === "BUTTON" || tag === "A" || (tag === "INPUT" && t.type === "checkbox")) return;   // el espacio activa el botón enfocado
+    e.preventDefault();
+    if (lc.isOpen) lc.toggle();
+    else if (screen === "practice") { if (current && !annoP.isActive()) openListen(); }
+    else reviewListen();
+  } else if (lc.isOpen && tag !== "INPUT" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); lc.step(e.key === "ArrowLeft" ? -1 : 1); }
+});
+
 /* Gancho de verificación: sólo existe con ?debug en la URL (no altera nada en uso normal). */
 if (new URLSearchParams(location.search).has("debug")) {
   window.__pc = {
@@ -2510,6 +2616,7 @@ if (new URLSearchParams(location.search).has("debug")) {
     scroll: () => practiceR.scrollPos(),
     pruneReview: (n) => annoR.prune(n),
     annoReview: () => ({ layout: reviewR.getLayout(), marks: annoR.store.marks(), active: annoR.isActive() }),
+    lc: lcP, lcR, player, listen: (sc) => startPractice(validateScore(sc).score, { listen: true }),
     practiceStep: () => (typeof curStep === "function" ? curStep() : null),
   };
 }

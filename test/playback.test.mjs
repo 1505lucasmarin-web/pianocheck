@@ -39,29 +39,34 @@ test('buildEvents: las ligaduras suman a la nota inicial', () => {
   assert.deepEqual(ev.map((e) => [e.midi, e.at, e.dur]), [[60, 0, 6], [62, 6, 2]]);
 });
 
-// AudioContext falso: cuenta osciladores y registra stop()
+// AudioContext falso: cuenta osciladores y registra stop(); el reloj avanza en tiempo real
 function fakeAC() {
   const made = { osc: 0, started: 0, stopped: 0 };
-  class P { constructor() { this.value = 0; } setValueAtTime() {} exponentialRampToValueAtTime() {} linearRampToValueAtTime() {} cancelScheduledValues() {} }
-  class Node { connect() {} }
+  class P { constructor() { this.value = 0; } setValueAtTime() {} exponentialRampToValueAtTime() {} linearRampToValueAtTime() {} setTargetAtTime() {} cancelScheduledValues() {} }
+  class Node { connect() {} disconnect() {} }
+  const t0 = performance.now();
   class AC {
-    constructor() { this.currentTime = 0; this.state = 'running'; this.destination = new Node(); }
+    constructor() { this.state = 'running'; this.sampleRate = 8000; this.destination = new Node(); }
+    get currentTime() { return (performance.now() - t0) / 1000; }
     createGain() { const n = new Node(); n.gain = new P(); return n; }
-    createDynamicsCompressor() { return new Node(); }
-    createOscillator() { made.osc++; const o = new Node(); o.frequency = new P(); o.start = () => { made.started++; }; o.stop = () => { made.stopped++; }; return o; }
+    createDynamicsCompressor() { const n = new Node(); ['threshold', 'knee', 'ratio', 'attack', 'release'].forEach((k) => { n[k] = new P(); }); return n; }
+    createBiquadFilter() { const n = new Node(); n.frequency = new P(); n.Q = new P(); return n; }
+    createBuffer(c, n) { return { getChannelData: () => new Float32Array(n) }; }
+    createBufferSource() { const n = new Node(); n.start = () => {}; n.stop = () => {}; return n; }
+    createOscillator() { made.osc++; const o = new Node(); o.frequency = new P(); o.detune = new P(); o.start = () => { made.started++; }; o.stop = () => { made.stopped++; }; return o; }
   }
   return { AC, made };
 }
 
-test('createPlayer: programa osciladores (3 por nota), avisa los pasos y se puede detener', async () => {
+test('createPlayer (compatibilidad): programa las notas, avisa los pasos y se puede detener', async () => {
   const { AC, made } = fakeAC();
   const pl = createPlayer({ AudioContext: AC });
   const ev = buildEvents(demoScore, ps, { bpm: 6000, speed: 1 });   // muy rápido: dura ~40 ms
   const seen = []; let ended = 0;
   const total = pl.play(ev, { onStep: (e) => seen.push(e.step), onEnd: () => { ended++; } });
   assert.ok(total > 0 && pl.playing);
-  assert.equal(made.osc, ev.length * 3);        // todo entra en la primera tanda
-  assert.equal(made.started, made.osc);
+  assert.equal(pl.voices, ev.length);            // todo entra en la primera tanda (varios osciladores por nota: parciales + martillo)
+  assert.ok(made.osc >= ev.length * 3);
   await new Promise((r) => setTimeout(r, 600));
   assert.equal(ended, 1); assert.equal(pl.playing, false);
   assert.deepEqual(seen, [...new Set(ev.map((e) => e.step))]);
