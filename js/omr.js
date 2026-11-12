@@ -1,6 +1,7 @@
 // Lectura de partituras por IA (foto/PDF → Score). Llamada directa desde el navegador con la API key del usuario.
 import { durBeats, keyToMidi, validateScore } from './model.js';
 import { timedNotesToEvents } from './importers.js';
+import { splitScoreImage } from './omr-systems.js';
 
 // Verificados en la documentación oficial (noviembre 2026):
 //  - Anthropic (platform.claude.com/docs/en/models/overview): claude-sonnet-5-5 (todos los modelos actuales aceptan imagen).
@@ -47,13 +48,17 @@ Example for a piece in G major, 3/4, whose first measure has a treble-clef quart
 Reply with the JSON object only.`;
 
 /** Texto del mensaje de usuario que acompaña a la imagen de una página. */
-export function buildUserPrompt(page, total, previous) {
+export function buildUserPrompt(page, total, previous, fragment) {
   const extra = total > 1
     ? ` This is document page ${page} of ${total}. Transcribe only the music visible on this page. If a new movement begins, use its printed title and markings.`
     : '';
   const context = previous ? ` If markings are absent and this continues the previous movement, use previous meter ${JSON.stringify(previous.timeSig || [4, 4])}, key ${previous.keySig || 'C'} and tempo ${previous.bpm || 90}.` : '';
-  return `Transcribe this piano score page into the JSON schema described in the instructions.${extra}${context} Remember: real sounding pitches with the key signature applied, correct octaves for each clef, chords as single events, ties as "tie": true, and every measure summing to the time signature. JSON only.`;
+  const scope = fragment?.count > 1 ? ` This crop contains system ${fragment.index} of ${fragment.count} from the page. Read only the measures visible in this crop. A tie continuation may start in the preceding crop. Do not add any measure outside this image.` : '';
+  return `Transcribe this piano score image into the JSON schema described in the instructions.${extra}${scope}${context} Remember: real sounding pitches with the key signature applied, correct octaves for each clef, chords as single events, ties as "tie": true, and every sequential staff summing to the time signature. JSON only.`;
 }
+
+const COMPACT_FORMAT = `
+For this retry use compact JSON without indentation and with the same title, bpm, timeSig, keySig and measures object fields. Use only rhTimed and lhTimed for the two staves. Instead of objects for timed notes, use tuples [onset,duration,pitch] or [onset,duration,pitch,tie,finger]. tie is 1 for a continuation or 0; finger is 1–5 when printed. Omit optional trailing values when absent. Use decimal quarter-note beats. Do not enumerate rests. Keep every measure and every printed pitch; do not summarize. Example: {"timeSig":[4,4],"measures":[{"rhTimed":[[0.5,0.25,"g/4",0,1]],"lhTimed":[[0,2,"c/4"],[0.25,1.75,"e/4"]]}]}.`;
 
 /* ------------------------------------------------------------------ JSON */
 
@@ -98,7 +103,7 @@ function findBalanced(s, start) {
 }
 
 /** Une los resultados por página: metadatos de la primera página que los tenga, compases concatenados. */
-export function mergePages(pages) {
+export function mergePages(pages, { includeMeasures = true } = {}) {
   const out = { title: '', bpm: undefined, timeSig: undefined, keySig: undefined, measures: [] };
   for (const raw of pages) {
     const p = Array.isArray(raw) ? { measures: raw } : (raw || {});
@@ -106,7 +111,7 @@ export function mergePages(pages) {
     if (out.bpm === undefined && Number(p.bpm) > 0) out.bpm = Number(p.bpm);
     if (!out.timeSig && Array.isArray(p.timeSig) && p.timeSig.length === 2) out.timeSig = p.timeSig;
     if (!out.keySig && typeof p.keySig === 'string' && p.keySig) out.keySig = p.keySig;
-    if (Array.isArray(p.measures)) {
+    if (includeMeasures && Array.isArray(p.measures)) {
       for (const m of p.measures) {
         if (!m || typeof m !== 'object') continue;
         const [n, d] = out.timeSig || [4, 4];
@@ -115,7 +120,8 @@ export function mergePages(pages) {
           const sequential = Array.isArray(m[name]) ? m[name] : [];
           const timed = m[name + 'Timed'];
           if (!Array.isArray(timed) || !timed.length) return sequential;
-          const notes = timed.filter((x) => x && keyToMidi(x.k) != null && Number.isFinite(x.t) && Number.isFinite(x.b))
+          const decoded = timed.map((x) => Array.isArray(x) ? { t: x[0], b: x[1], k: x[2], tie: x[3] === 1, f: x[4] } : x);
+          const notes = decoded.filter((x) => x && keyToMidi(x.k) != null && Number.isFinite(x.t) && Number.isFinite(x.b))
             .map((x) => ({ key: x.k.trim().toLowerCase(), start: x.t, dur: x.b, tie: x.tie === true, finger: x.f }));
           const implied = Object.values({ rh: m.rh, lh: m.lh }).map((v) => Array.isArray(v) ? v.reduce((a, e) => a + durBeats(e), 0) : 0);
           const length = m.pickup === true ? Math.min(bar, Math.max(...implied, ...notes.map((x) => x.start + x.dur))) : bar;
@@ -206,7 +212,7 @@ export async function imageToBase64(blob, maxSide = 2000) {
 
 /* ------------------------------------------------------------------ proveedores */
 
-export function buildAnthropicRequest({ apiKey, model, image, page, total, previous }) {
+export function buildAnthropicRequest({ apiKey, model, image, page, total, previous, fragment }) {
   return {
     url: ANTHROPIC_URL,
     init: {
@@ -220,12 +226,12 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total, previ
       body: JSON.stringify({
         model,
         max_tokens: 16000,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_PROMPT + (fragment ? COMPACT_FORMAT : ''),
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
-            { type: 'text', text: buildUserPrompt(page, total, previous) },
+            { type: 'text', text: buildUserPrompt(page, total, previous, fragment) },
           ],
         }],
       }),
@@ -233,19 +239,19 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total, previ
   };
 }
 
-export function buildGeminiRequest({ apiKey, model, image, page, total, previous }) {
+export function buildGeminiRequest({ apiKey, model, image, page, total, previous, fragment }) {
   return {
     url: `${GEMINI_BASE}${encodeURIComponent(model)}:generateContent`,
     init: {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT + (fragment ? COMPACT_FORMAT : '') }] },
         contents: [{
           role: 'user',
           parts: [
             { inline_data: { mime_type: image.mediaType, data: image.data } },
-            { text: buildUserPrompt(page, total, previous) },
+            { text: buildUserPrompt(page, total, previous, fragment) },
           ],
         }],
         generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 32768 },
@@ -267,7 +273,7 @@ export function textFromResponse(provider, json) {
     const br = json.promptFeedback && json.promptFeedback.blockReason;
     throw new OmrError(br ? `Gemini bloqueó la imagen (${br}).` : 'Gemini no devolvió ninguna respuesta.', 'refusal');
   }
-  if (cand.finishReason === 'MAX_TOKENS') throw new OmrError('La respuesta de la IA se cortó por ser demasiado larga. Probá con una página con menos compases.', 'truncated');
+  if (cand.finishReason === 'MAX_TOKENS') throw new OmrError('La respuesta de la IA se cortó por ser demasiado larga.', 'truncated');
   return ((cand.content && cand.content.parts) || []).map((p) => p.text || '').join('');
 }
 
@@ -303,26 +309,64 @@ export async function recognizeScore(images, options = {}) {
   const key = String(apiKey).trim();
 
   const pages = [];
+  const split = options.splitImage || splitScoreImage;
   for (let i = 0; i < images.length; i++) {
     signal?.throwIfAborted();
     const page = images.pageNumbers?.[i] || i + 1;
     const total = images.totalPages || images.length;
     const label = total > 1 ? ` (página ${page} de ${total})` : '';
     onProgress(`Preparando imagen${label}…`);
-    const image = await imageToBase64(images[i]);
-    onProgress(`Leyendo la partitura con IA${label}… puede tardar un minuto`);
-    let text;
+    let previous = pages.length ? mergePages(pages, { includeMeasures: false }) : undefined;
+    async function read(blob, fragment) {
+      signal?.throwIfAborted();
+      const image = await imageToBase64(blob);
+      signal?.throwIfAborted();
+      const suffix = fragment?.count > 1 ? ` · sistema ${fragment.index} de ${fragment.count}` : '';
+      onProgress(`Leyendo la partitura con IA${label}${suffix}…`);
+      const text = await callProvider(provider, { apiKey: key, model, image, page, total, previous, fragment }, fetchImpl, signal);
+      let parsed;
+      try { parsed = extractJson(text); } catch {
+        throw new OmrError('No se pudo interpretar la respuesta de la IA. Reintentá o probá con una foto más nítida.', 'parse');
+      }
+      if (Array.isArray(parsed)) parsed = { measures: parsed };
+      const withContext = { timeSig: previous?.timeSig, ...parsed };
+      if (!validateScore(mergePages([withContext])).ok) {
+        throw new OmrError('La IA no encontró notas. Verificá que la página tenga música o elegí otro rango.', 'empty');
+      }
+      pages.push(parsed);
+      previous = {
+        timeSig: parsed.timeSig || previous?.timeSig,
+        keySig: parsed.keySig || previous?.keySig,
+        bpm: parsed.bpm || previous?.bpm,
+      };
+    }
     try {
-      text = await callProvider(provider, { apiKey: key, model, image, page, total, previous: pages.at(-1) }, fetchImpl, signal);
+      // Los PDFs con muchos sistemas se leen por bandas desde el principio.
+      let parts = [];
+      if (images.pageNumbers) {
+        try { parts = await split(images[i]); } catch { /* la imagen completa sigue disponible */ }
+      }
+      if (parts.length < 4) {
+        try { await read(images[i]); continue; }
+        catch (e) {
+          if (e.kind !== 'truncated') throw e;
+          if (!parts.length && !images.pageNumbers) {
+            try { parts = await split(images[i]); } catch { /* reintentar la página en formato compacto */ }
+          }
+        }
+      }
+      const chunks = parts.length > 1 ? parts : [images[i]];
+      for (let j = 0; j < chunks.length; j++) {
+        try { await read(chunks[j], { index: j + 1, count: chunks.length }); }
+        catch (e) {
+          if (e.kind !== 'truncated') throw e;
+          const where = chunks.length > 1 ? ` (sistema ${j + 1} de ${chunks.length})` : '';
+          throw new OmrError(`La IA agotó su límite incluso con el formato compacto${where}. Probá con otro modelo en Ajustes o importá una edición MusicXML o MIDI.`, 'truncated');
+        }
+      }
     } catch (e) {
       throw new OmrError(e.message + label, e.kind);
     }
-    let parsed;
-    try { parsed = extractJson(text); } catch (e) {
-      throw new OmrError(`No se pudo interpretar la respuesta de la IA${label}. Reintentá o probá con una foto más nítida.`, 'parse');
-    }
-    if (!validateScore(mergePages([parsed])).ok) throw new OmrError(`La IA no encontró notas${label}. Verificá que la página tenga música o elegí otro rango.`, 'empty');
-    pages.push(parsed);
   }
   onProgress('Armando la partitura…');
   const merged = mergePages(pages);

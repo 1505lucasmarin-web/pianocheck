@@ -92,7 +92,7 @@ test('recognizeScore: errores claros', async () => {
   await assert.rejects(recognizeScore([blob()], opts(async () => { throw new TypeError('Failed to fetch'); })), /conexión/);
   await assert.rejects(recognizeScore([blob()], opts(async () => resp(200, { content: [{ type: 'text', text: 'no sé' }] }))), /interpretar/);
   await assert.rejects(recognizeScore([blob()], opts(async () => resp(200, { content: [{ type: 'text', text: '{"measures":[]}' }] }))), /no encontró notas/);
-  await assert.rejects(recognizeScore([blob()], opts(async () => resp(200, { stop_reason: 'max_tokens', content: [] }))), /cortó/);
+  await assert.rejects(recognizeScore([blob()], opts(async () => resp(200, { stop_reason: 'max_tokens', content: [] }))), /agotó su límite/);
   await assert.rejects(recognizeScore([blob()], { provider: 'anthropic', apiKey: '', fetchImpl: async () => {} }), /API key/);
   await assert.rejects(recognizeScore([], opts(async () => {})), /imágenes/);
 });
@@ -110,4 +110,24 @@ test('OMR: conserva la digitación impresa y liga el bajo sin eliminar el ataque
   const s = await recognizeScore([blob()], { apiKey: 'fake', fetchImpl });
   assert.deepEqual(s.measures[0].lh[0], { k: ['c/4'], d: '16', f: [5] });
   assert.deepEqual(s.measures[0].lh[1], { k: ['c/4', 'e/4'], d: 'q', dots: 2, ties: ['c/4'], f: [0, 3] });
+});
+
+test('OMR: descarta la respuesta cortada y reúne los sistemas en orden con el compás anterior', async () => {
+  const messages = [];
+  const fragment = (pitch) => ({ content: [{ type: 'text', text: JSON.stringify({ measures: [{ rhTimed: [[0, 1, pitch, 0, 3]] }] }) }] });
+  const fetchImpl = async (_url, req) => {
+    const body = JSON.parse(req.body);
+    messages.push(body);
+    const n = messages.length;
+    return resp(200, n === 1 ? { content: [{ type: 'text', text: JSON.stringify(PAGE1) }] }
+      : n === 2 ? { stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"measures":[' }] }
+      : fragment(n === 3 ? 'a/4' : 'b/4'));
+  };
+  const score = await recognizeScore([blob(), blob()], { apiKey: 'fake', fetchImpl, splitImage: async () => [blob(), blob()] });
+  assert.equal(messages.length, 4);
+  assert.match(messages[2].system, /compact JSON/);
+  assert.match(messages[2].messages[0].content[1].text, /system 1 of 2.*previous meter \[3,4\]/);
+  assert.match(messages[3].messages[0].content[1].text, /system 2 of 2/);
+  assert.deepEqual(score.measures.map((m) => m.rh[0].k), [['g/4', 'b/4'], ['a/4'], ['b/4']]);
+  assert.deepEqual(score.measures[1].rh[0].f, [3]);
 });
