@@ -24,6 +24,7 @@ import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask
 import { buildSummary } from "./summary.js";
 import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
+import { mountWelcome } from "./welcome.js";
 
 const MAX_STREAK = 5;
 const $ = (id) => document.getElementById(id);
@@ -83,11 +84,13 @@ function confirmDialog({ title, text, yes = "Eliminar", no = "Cancelar", danger 
 
 /* ---------- navegación ---------- */
 const screens = ["library", "search", "review", "practice", "result", "settings", "theory"];
+const welcome = mountWelcome($("empty-state"));
 function show(name, push = true) {
   const prev = screen;
   screen = name;
   screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
   $("app").dataset.screen = name;
+  if (prev === "library" && name !== "library") welcome.stop();
   if (prev === "practice" && name !== "practice") leavePractice();
   if (prev === "review" && name !== "review") { annoR.exit(true); lcR.close("silent"); }
   if (prev === "settings" && name !== "settings") { hideShareQr(); stopScan(); }
@@ -227,7 +230,13 @@ async function refreshLibrary() {
   let list = [], sums = {};
   try { list = (await store.list()) || []; sums = await store.summaries(); } catch (e) { $("library-list").innerHTML = `<li class="empty">No se pudo leer la biblioteca: ${esc(e.message)}</li>`; return; }
   list = list.slice().sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-  $("empty-state").hidden = list.length > 0;
+  const isEmpty = list.length === 0;
+  $("empty-state").hidden = !isEmpty;
+  $("welcome-nav").hidden = !isEmpty;
+  $("theory-card").hidden = isEmpty;
+  const searchSlot = $(isEmpty ? "welcome-search-slot" : "library-search-slot");
+  const searchForm = $("lib-search");
+  if (searchForm.parentElement !== searchSlot) searchSlot.append(searchForm);
   $("library-section").hidden = list.length === 0;
   $("demo-section").hidden = list.length === 0;
   const ids = new Set(list.map((x) => x.id)); ids.add(demoScore.id);
@@ -281,14 +290,34 @@ async function onCardClick(e) {
 }
 $("library-list").addEventListener("click", onCardClick);
 $("demo-list").addEventListener("click", onCardClick);
-$("empty-demo").addEventListener("click", async () => { try { const s = await addDemo(); startPractice(s); } catch (err) { toast("Error: " + err.message, 4000); } });
-$("empty-demo-kb").addEventListener("click", async () => { try { await startOnscreen(await addDemo()); } catch (err) { toast("Error: " + err.message, 4000); } });
+function startWelcomePractice(options = {}) {
+  startPractice(clone(demoScore), { hands: "rh", ...options });
+}
+$("welcome-full").addEventListener("click", async () => {
+  try {
+    if (midiConnected || mic?.running || settings.onscreenKeyboard) startWelcomePractice();
+    else await startOnscreen(clone(demoScore), { hands: "rh" });
+  } catch (err) { toast("Error: " + err.message, 4000); }
+});
+$("welcome-listen").addEventListener("click", () => startWelcomePractice({ hands: "both", listen: true }));
+$("welcome-connect").addEventListener("click", () => {
+  startWelcomePractice();
+  openPSheet("input");
+});
+$("welcome-pulse").addEventListener("click", () => {
+  startWelcomePractice();
+  openPSheet("tempo");
+});
+$("welcome-annotate").addEventListener("click", () => {
+  startWelcomePractice();
+  annoP.enter();
+});
 /** Entra a Práctica con el teclado de pantalla ya activado (sin pasar por Ajustes). Queda guardado en el ajuste. */
-async function startOnscreen(score) {
+async function startOnscreen(score, options) {
   settings.onscreenKeyboard = true;
   store.saveSettings({ onscreenKeyboard: true }).catch(() => {});
   applyKeyboardSetting();
-  startPractice(score);
+  startPractice(score, options);
   toast("Teclado de pantalla activado", 2200);
 }
 $("continue-go").addEventListener("click", async () => {
@@ -334,7 +363,7 @@ function openSheet(o = {}) {
 }
 function closeSheet() { $("sheet-new").hidden = true; sheetOpener && sheetOpener.focus && screen === "library" && sheetOpener.focus(); }
 $("btn-new").addEventListener("click", () => openSheet());
-$("empty-new").addEventListener("click", () => openSheet());
+$("empty-new").addEventListener("click", () => openSheet({ path: "import" }));
 $("sheet-close").addEventListener("click", closeSheet);
 $("sheet-new").addEventListener("click", (e) => { if (e.target === $("sheet-new")) closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("sheet-new").hidden && $("confirm").hidden && $("busy").hidden) closeSheet(); });
@@ -1439,7 +1468,9 @@ async function openTheory() {
   await theory.open();
 }
 function leaveTheory() { theory.leave(); closePSheet(true); stopMic(); $("toast").hidden = true; }
-$("open-theory").addEventListener("click", () => openTheory().catch((e) => toast("Error: " + e.message, 4000)));
+for (const id of ["open-theory", "welcome-theory"]) {
+  $(id).addEventListener("click", () => openTheory().catch((e) => toast("Error: " + e.message, 4000)));
+}
 $("th-back").addEventListener("click", () => goLibrary());
 $("th-body").addEventListener("click", (e) => theory.onBodyClick(e));
 $("th-aux").addEventListener("click", () => theory.onAux());
