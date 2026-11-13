@@ -26,6 +26,7 @@ import { setDuration, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, 
 import { detectIssues, needsImportCheck } from "./issues.js";
 import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
 import { buildSummary } from "./summary.js";
+import { summarizeMistakes, measuresToPractice, groupRanges } from "./mistakes.js";
 import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
@@ -2159,7 +2160,7 @@ function resetSession() {
   attemptSaved = false; kb.setHint(null); curPhrase = "-"; hidePhraseNote(); hideStuck(); missView = null;
   clearTimeout(finishTimer); clearTimeout(lapTimer); stopPulse(); stopListening(true); endCountIn(); setPaused(false, true);
   lastNoteMeasure = -1; hideMeasureNote(); pulseRun = null; pulse = null; session = null;
-  errLog = []; errDetail = null; clearTimeout(errDetailT);
+  errLog = []; mistakes = []; errDetail = null; clearTimeout(errDetailT);
   resetHolds();
   laps = []; agg = { clean: 0, dirty: 0, wrong: 0 }; trace = { clean: [], dirty: [], errors: [] }; handMiss = { rh: 0, lh: 0 };
   allSteps = buildSteps(current, hands);
@@ -2324,6 +2325,7 @@ function pulseTick() {
 function pulseError(entry, kind, played, text, hand, expected = entry.midi) {
   if (entry.lap < markedLap) return;
   if (!hand) markPulse(entry, "dirty");
+  if (kind === "wrong") { const t = nearestMissing(played, Array.isArray(expected) ? expected : [expected]); if (t != null) recordMistake(entry.measure, t, played); }
   practiceR.markError(entry.i, { kind, played, expected, text, hand });
   logError({ measure: entry.measure, kind, text });
   announceError(text, entry.measure);
@@ -2380,7 +2382,11 @@ function pulseNote(m, ts, src) {
           const expected = target[hand].filter((n) => missing.includes(n));
           showHandFeedback(where, hit, hand);
           pulseError(where, "wrong", m, withHand(errMsg(m, expected), hand), hand, expected);
-        } else if (!practiceR.hasError(where.i)) logError({ measure: where.measure, kind: "wrong", text: errMsg(m, missing.length ? missing : where.midi) });
+        } else {
+          const t = nearestMissing(m, missing.length ? missing : where.midi);
+          if (t != null) recordMistake(where.measure, t, m);
+          if (!practiceR.hasError(where.i)) logError({ measure: where.measure, kind: "wrong", text: errMsg(m, missing.length ? missing : where.midi) });
+        }
       } else {
         if (r.entry) { markPulse(r.entry, "dirty"); practiceR.setTag(r.entry.i, "otra nota", "miss"); }
         pulseError(where, "wrong", m, errMsg(m, where.midi));
@@ -2568,6 +2574,13 @@ function expectedNow() {
 let nextOverride = null;   // { label, name } temporal (p. ej. "Vuelta 2 limpia")
 let errDetail = null, errDetailT = 0;   // detalle de una marca de error que se tocó: { kind, measure, text }
 let errLog = [];                          // errores de la toma (para la lista de Resultado)
+let mistakes = [];                        // notas erradas de la toma: { measure (base 0), expected (midi más cercana), played }
+/** Registra una nota errada para «Errores que se repiten» (expected = midi de la nota esperada más cercana). */
+function recordMistake(measure, expected, played) {
+  if (!Number.isInteger(expected) || !Number.isInteger(played) || !Number.isInteger(measure)) return;
+  mistakes.push({ measure, expected, played });
+  if (mistakes.length > 300) mistakes.shift();
+}
 const errMsg = (played, expected) => `Tocaste ${played == null ? "otra nota" : midiName(played)} · Se esperaba ${names(expected)}`;
 /** Anuncia (aria-live polite) y muestra el detalle de un error. */
 function announceError(text, measure) {
@@ -2924,6 +2937,7 @@ function handleNoteOn(m, ts, src) {
       missView = { played: midiName(m), next: names(expected), sub: guide && mv ? mv.text : "", msg, measure: meas };
       if (!split || hand) practiceR.markError(gi, { kind: "wrong", played: m, expected, text: msg, hand });
       logError({ measure: meas, kind: "wrong", text: msg });
+      if (t != null) recordMistake(meas, t, m);
       announceError(msg, meas);
       if (hand) handMiss[hand]++;
       else if (!split) handMiss[target.rh.length ? "rh" : "lh"]++;
@@ -2972,10 +2986,12 @@ async function showResult() {
   const run = collectRun();
   const n = N(), range = passage && !isWholeRange(passage, n) ? { from: passage.from, to: passage.to } : null;
   const cov = coverage(steps, run.done);
-  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal, mode: "espera", weak: hardestMeasures(run.results, steps, run.errors).slice(0, 3).map((h) => ({ measure: h.measure, errors: h.errors })), ...holdRec() };
+  const mist = summarizeMistakes(mistakes);
+  const rec = { scoreId: current && current.id, accuracy: run.accuracy, status: run.status, total: steps.length, index: run.done, clean: run.clean, dirty: run.dirty, wrong: run.wrong, hands, range, loop: isLoop(), bpm: metroBpm, laps: laps.length, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal, mode: "espera", weak: hardestMeasures(run.results, steps, run.errors).slice(0, 3).map((h) => ({ measure: h.measure, errors: h.errors })), mistakes: mist.map((i) => i.text), ...holdRec() };
   const { prev, saved } = await saveAttempt(rec);
   if (screen !== "practice") return;
   lastRun = { passage: passage ? { ...passage } : null, hands, bpm: metroBpm, mode: "espera" };
+  renderMistakes(mist);
   show("result"); setResultMode("espera");
   lastResult = { rec: saved, attempts: [...prev, saved], n, title: current && current.title };
   const fin = run.status === "finished", stp = run.st.status === "stopped" && !isLoop();
@@ -3015,7 +3031,7 @@ async function showResult() {
     btn.onclick = () => runAction(act);
   }
   resultMeasure = null; $("strip-offer").hidden = true;
-  renderErrList();
+  renderErrList(); renderMistakes(mist);
   renderStrip(measureSummary(run.results, steps, n), run.errors);
   $((act.type === "none" ? "result-retry" : "result-action-btn")).focus();
 }
@@ -3026,6 +3042,20 @@ function renderErrList() {
   $("res-errors-t").textContent = `Errores de esta toma (${errLog.length})`;
   $("res-errors-list").innerHTML = errLog.map((e) => `<li><span class="sym" aria-hidden="true">${e.kind === "omit" ? "○" : e.kind === "dur" ? "⊢" : "✕"}</span><b>Compás ${e.measure + 1}</b><span>${esc(e.text)}</span></li>`).join("");
 }
+/* «Errores que se repiten»: pares esperada → tocada que aparecieron 2 veces o más, con los compases para practicar. */
+let mistakeRanges = [];   // rangos (base 0) de la tarjeta actual; el primero va en el botón principal
+function renderMistakes(items) {
+  const box = $("res-mistakes");
+  box.hidden = !items.length;
+  mistakeRanges = items.length ? groupRanges(measuresToPractice(items)) : [];
+  $("res-mistakes-list").innerHTML = items.map((i) => `<li><span>${esc(i.text)}</span>${i.hint ? `<span class="rm-hint">${esc(i.hint)}</span>` : ""}</li>`).join("");
+  const more = mistakeRanges.slice(1).map((r, k) => `<button type="button" class="btn" data-k="${k + 1}">${r.from === r.to ? `Compás ${r.from + 1}` : `Compases ${rangeText(r)}`}</button>`).join("");
+  $("res-mistakes-more").innerHTML = more;
+  $("res-mistakes-more").hidden = !more;
+}
+function practiceMistakeRange(r) { if (r) returnToPractice({ passage: { from: r.from, to: r.to, loop: true } }); }
+$("res-mistakes-go").addEventListener("click", () => practiceMistakeRange(mistakeRanges[0]));
+$("res-mistakes-more").addEventListener("click", (e) => { const b = e.target.closest("button[data-k]"); if (b) practiceMistakeRange(mistakeRanges[Number(b.dataset.k)]); });
 /* ---------- Resultado: textos según el modo, comparación, resumen para el profe y toma de audio ---------- */
 let lastResult = null;   // { rec (intento guardado), attempts, n, title }
 function setResultMode(mode) {
@@ -3077,10 +3107,11 @@ async function showPulseResult() {
   const fin = loop ? res.laps > 0 : sum.total >= steps.length && steps.length > 0;
   const range = passage && !isWholeRange(passage, n) ? { from: passage.from, to: passage.to } : null;
   const cov = coverage(steps, loop ? (res.laps > 0 ? steps.length : sum.total) : sum.total);
+  const mist = summarizeMistakes(mistakes);
   const rec = {
     scoreId: current && current.id, accuracy: sum.pctCorrect, status: fin ? "finished" : "playing", total: steps.length, index: Math.min(steps.length, sum.total),
     clean: sum.ontime, dirty: sum.total - sum.ontime, wrong: sum.wrongNotes, hands, range, loop, bpm: metroBpm, laps: res.laps, measuresDone: cov.measuresDone, measuresTotal: cov.measuresTotal,
-    mode: "pulso", onTimePct: sum.pctOnTime, trendMs: sum.trendMs, hits: sum.hit, omitted: sum.missed, winMs: sum.win, weak: sum.weak.map((w) => ({ measure: w.measure, errors: w.bad })), ...holdRec(),
+    mode: "pulso", onTimePct: sum.pctOnTime, trendMs: sum.trendMs, hits: sum.hit, omitted: sum.missed, winMs: sum.win, weak: sum.weak.map((w) => ({ measure: w.measure, errors: w.bad })), mistakes: mist.map((i) => i.text), ...holdRec(),
   };
   const { prev, saved } = await saveAttempt(rec);
   if (screen !== "practice") return;
@@ -3112,7 +3143,7 @@ async function showPulseResult() {
   $("result-retry-t").textContent = loop ? "Repetir el bucle" : "Reintentar";
   if (sum.total) { $("result-action-t").textContent = act.title; btn.textContent = act.cta; btn.dataset.type = act.type; btn.onclick = () => runAction(act); }
   resultMeasure = null; $("strip-offer").hidden = true;
-  renderErrList();
+  renderErrList(); renderMistakes(mist);
   renderStrip(measureStates(res.scored, steps, n));
   $((sum.total === 0 ? "result-retry" : "result-action-btn")).focus();
 }
