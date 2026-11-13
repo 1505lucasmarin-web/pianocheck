@@ -420,6 +420,11 @@ export async function practiceSecondsOf(scoreId) {
   return _scoreSeconds(await getPracticeLog(), scoreId);
 }
 
+/* ---- páginas ya preparadas de un PDF pendiente (para no volver a convertirlo al retomar) ---- */
+export async function getPdfPages(jobId) { return (await run('settings', 'readonly', (s) => s.get('pdfpages:' + jobId))) || null; }
+export async function savePdfPages(jobId, pages) { await run('settings', 'readwrite', (s) => s.put(pages, 'pdfpages:' + jobId)); }
+export async function deletePdfPages(jobId) { if (jobId) await run('settings', 'readwrite', (s) => s.delete('pdfpages:' + jobId)); }
+
 /* ---- apoyo de la sincronización ---- */
 export async function getSyncMeta() { return (await run('settings', 'readonly', (s) => s.get('sync'))) || null; }
 export async function saveSyncMeta(m) { await run('settings', 'readwrite', (s) => (m ? s.put(JSON.parse(JSON.stringify(m)), 'sync') : s.delete('sync'))); }

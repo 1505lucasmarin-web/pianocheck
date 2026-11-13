@@ -553,7 +553,7 @@ $("pdf-resume-discard").addEventListener("click", async () => {
   const job = pendingPdf;
   if (!job) return;
   if (!await confirmDialog({ title: "¿Descartar la importación?", text: "Se borra el avance guardado de este PDF.", yes: "Descartar", no: "Conservar" })) return;
-  try { await (await lazy("store")).updatePendingPdfImport(job.id, () => null); await refreshPendingPdf(); }
+  try { const st = await lazy("store"); await st.updatePendingPdfImport(job.id, () => null); st.deletePdfPages(job.id).catch(() => {}); await refreshPendingPdf(); }
   catch { toast("No se pudo descartar el avance guardado."); }
 });
 async function runImport(kind, files, ctxOverride, savedPdf) {
@@ -585,6 +585,7 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
             if (!replace) { busy.close(); renderPendingPdf(old); return; }
           }
           const next = { id: newId(), hash, file: files[0], range: pdfRange, context: ctx, completed: {} };
+          if (old) pdfStore.deletePdfPages(old.id).catch(() => {});
           try { await pdfStore.savePendingPdfImport(next); }
           catch { throw new Error("No se pudo guardar el PDF en este dispositivo. Liberá espacio y reintentá."); }
           job = next;
@@ -610,11 +611,19 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
       const imp = await lazy("importers"), omr = await lazy("omr");
       let blobs = [];
       if (kind === "pdf") {
-        busy.log("Convirtiendo el PDF a imágenes…");
-        blobs = await imp.pdfToImages(files[0], {
-          range: pdfRange, signal: ctl.signal,
-          onPage: (page, total) => alive() && busy.log(`Preparando página ${page} de ${total}…`),
-        });
+        let cached = null;
+        if (job) { try { cached = await pdfStore.getPdfPages(job.id); } catch { cached = null; } }
+        if (cached && Array.isArray(cached.images) && cached.images.length && cached.range === pdfRange) {
+          busy.log("Usando las páginas ya preparadas…");
+          blobs = Object.assign(cached.images, { pageNumbers: cached.pageNumbers, totalPages: cached.totalPages, blank: cached.blank || [] });
+        } else {
+          busy.log("Convirtiendo el PDF a imágenes…");
+          blobs = await imp.pdfToImages(files[0], {
+            range: pdfRange, signal: ctl.signal,
+            onPage: (page, total) => alive() && busy.log(`Preparando página ${page} de ${total}…`),
+          });
+          if (job) pdfStore.savePdfPages(job.id, { images: [...blobs], pageNumbers: blobs.pageNumbers, totalPages: blobs.totalPages, blank: blobs.blank, range: pdfRange }).catch(() => {});   // si no entra, se prepara de nuevo la próxima vez
+        }
         if (blobs.blank.length) importWarnings.push(`Páginas sin contenido visible: ${blobs.blank.join(", ")}.`);
       } else {
         for (let i = 0; i < files.length; i++) { busy.log(`Preparando imagen ${i + 1} de ${files.length}…`); blobs.push(await imp.prepareImage(files[i])); }
@@ -672,6 +681,7 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
       if (!existing) await store.save(v.score);
       if (!alive()) return;
       await pdfStore.updatePendingPdfImport(job.id, () => null);
+      pdfStore.deletePdfPages(job.id).catch(() => {});
       if (!alive()) return;
       renderPendingPdf(null);
       if (existing) v.score = existing;

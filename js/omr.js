@@ -450,6 +450,14 @@ export async function recognizeScore(images, options = {}) {
             results[j] = await read(chunks[j], fragments[j], context);
             break;
           } catch (e) {
+            if (e.kind === 'empty' && chunks.length > 1) {
+              // Un sistema sin notas (texto, pie de página, banda vacía): se salta y se recuerda, no se corta toda la importación.
+              results[j] = { measures: [] };
+              if (checkpoint) { try { await checkpoint.save(pageKey(fragments[j]), results[j]); } catch { /* se vuelve a intentar al retomar */ } }
+              onPart({ type: 'state', page, id: pageKey(fragments[j]), state: checkpoint ? 'saved' : 'done' });
+              onWarning(`${where[0].toUpperCase() + where.slice(1)}${label} no tenía notas y se salteó. Si faltan compases, agregalos a mano en Revisión.`);
+              break;
+            }
             if (e.kind !== 'truncated') throw e;
             const partial = salvageTruncated(e.partial);
             if (partial) {

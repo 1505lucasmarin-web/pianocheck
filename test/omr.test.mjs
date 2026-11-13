@@ -190,3 +190,18 @@ test('OMR: una respuesta cortada conserva sus compases completos y la importaci�
   assert.match(warnings.join(' '), /sistema 3 de 4.*se cortó/);
   assert.match(warnings.join(' '), /No se pudo leer el sistema 4 de 4/);
 });
+
+test('OMR: un sistema sin notas se saltea, se guarda como hecho y no corta la importación', async () => {
+  const images = Object.assign([blob()], { pageNumbers: [3], totalPages: 4 });
+  const warnings = [], saved = {};
+  const one = (k) => JSON.stringify({ timeSig: [4, 4], measures: [{ rhTimed: [[0, 4, k]] }] });
+  const fetchImpl = async (_url, req) => {
+    const system = Number(/system (\d+) of 4/.exec(JSON.parse(req.body).messages[0].content[1].text)[1]);
+    return resp(200, { content: [{ type: 'text', text: system === 2 ? JSON.stringify({ measures: [] }) : one(system === 1 ? 'c/4' : 'd/4') }] });
+  };
+  const checkpoint = { completed: {}, async save(id, parsed) { saved[id] = parsed; this.completed[id] = parsed; } };
+  const score = await recognizeScore(images, { apiKey: 'fake', fetchImpl, splitImage: async () => [blob(), blob(), blob(), blob()], onWarning: (m) => warnings.push(m), checkpoint });
+  assert.equal(score.measures.length, 3);
+  assert.match(warnings.join(' '), /sistema 2 de 4.*no tenía notas/i);
+  assert.deepEqual(saved['3:2/4'], { measures: [] });
+});
