@@ -225,7 +225,7 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total, previ
       },
       body: JSON.stringify({
         model,
-        max_tokens: 16000,
+        max_tokens: 32000,
         system: SYSTEM_PROMPT + (fragment ? COMPACT_FORMAT : ''),
         messages: [{
           role: 'user',
@@ -237,6 +237,40 @@ export function buildAnthropicRequest({ apiKey, model, image, page, total, previ
       }),
     },
   };
+}
+
+/**
+ * En Gemini los tokens de razonamiento cuentan dentro de maxOutputTokens: sin límite, una lectura puede
+ * cortarse (MAX_TOKENS) antes de escribir la partitura. Gemini 3+ usa thinkingLevel; 2.5 usa thinkingBudget.
+ */
+export function geminiThinking(model) {
+  const m = String(model || '').toLowerCase();
+  if (/gemini-2\.5/.test(m)) return { thinkingConfig: { thinkingBudget: 1024 } };
+  if (/gemini-(?:[3-9]|\d{2,})/.test(m)) return { thinkingConfig: { thinkingLevel: 'low' } };
+  return {};
+}
+
+/** Rescata los compases completos de una respuesta JSON cortada por el límite de tokens. Devuelve null si no hay ninguno. */
+export function salvageTruncated(text) {
+  if (typeof text !== 'string') return null;
+  const at = text.search(/"measures"\s*:\s*\[/);
+  if (at < 0) return null;
+  const open = text.indexOf('[', at);
+  let depth = 0, inStr = false, esc = false, lastEnd = -1;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') { depth--; if (depth === 1 && c === '}') lastEnd = i; if (depth === 0) break; }
+  }
+  if (lastEnd < 0) return null;
+  const start = text.indexOf('{');
+  if (start < 0 || start > at) return null;
+  try {
+    const obj = JSON.parse(text.slice(start, lastEnd + 1) + ']}');
+    return Array.isArray(obj.measures) && obj.measures.length ? obj : null;
+  } catch { return null; }
 }
 
 export function buildGeminiRequest({ apiKey, model, image, page, total, previous, fragment }) {
@@ -254,7 +288,7 @@ export function buildGeminiRequest({ apiKey, model, image, page, total, previous
             { text: buildUserPrompt(page, total, previous, fragment) },
           ],
         }],
-        generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 32768 },
+        generationConfig: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: 32768, ...geminiThinking(model) },
       }),
     },
   };
@@ -264,7 +298,7 @@ export function buildGeminiRequest({ apiKey, model, image, page, total, previous
 export function textFromResponse(provider, json) {
   if (provider === 'anthropic') {
     const text = (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-    if (json.stop_reason === 'max_tokens') throw new OmrError('La respuesta de la IA se cortó por ser demasiado larga. Probá con una página con menos compases.', 'truncated');
+    if (json.stop_reason === 'max_tokens') throw Object.assign(new OmrError('La respuesta de la IA se cortó por ser demasiado larga. Probá con una página con menos compases.', 'truncated'), { partial: text });
     if (json.stop_reason === 'refusal') throw new OmrError('La IA rechazó procesar esta imagen.', 'refusal');
     return text;
   }
@@ -273,8 +307,12 @@ export function textFromResponse(provider, json) {
     const br = json.promptFeedback && json.promptFeedback.blockReason;
     throw new OmrError(br ? `Gemini bloqueó la imagen (${br}).` : 'Gemini no devolvió ninguna respuesta.', 'refusal');
   }
-  if (cand.finishReason === 'MAX_TOKENS') throw new OmrError('La respuesta de la IA se cortó por ser demasiado larga.', 'truncated');
-  return ((cand.content && cand.content.parts) || []).map((p) => p.text || '').join('');
+  const out = ((cand.content && cand.content.parts) || []).filter((p) => !p.thought).map((p) => p.text || '').join('');
+  if (cand.finishReason === 'MAX_TOKENS') {
+    const thoughts = json.usageMetadata && json.usageMetadata.thoughtsTokenCount;
+    throw Object.assign(new OmrError('La respuesta de la IA se cortó por ser demasiado larga.', 'truncated'), { partial: out, thoughts });
+  }
+  return out;
 }
 
 async function callProvider(provider, opts, fetchImpl, signal) {
@@ -313,7 +351,7 @@ async function readPool(indices, limit, read) {
  * onPart recibe el plan de cada página y los estados reales de cada parte.
  */
 export async function recognizeScore(images, options = {}) {
-  const { provider = 'anthropic', apiKey, onProgress = () => {}, onPart = () => {}, signal, checkpoint } = options;
+  const { provider = 'anthropic', apiKey, onProgress = () => {}, onPart = () => {}, onWarning = () => {}, signal, checkpoint } = options;
   const fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   if (provider !== 'anthropic' && provider !== 'gemini') throw new OmrError('Proveedor de IA desconocido.', 'config');
   if (!apiKey || !String(apiKey).trim()) throw new OmrError('Falta la API key. Cargala en Ajustes.', 'auth');
@@ -404,17 +442,34 @@ export async function recognizeScore(images, options = {}) {
       plan(fragments);
       const results = new Array(chunks.length);
       let complete = 0;
+      const salvaged = new Set();
       async function readChunk(j, context) {
-        try {
-          results[j] = await read(chunks[j], fragments[j], context);
-          complete++;
-          onProgress(`Página ${page} de ${total} · ${complete} de ${chunks.length} sistemas listos.`);
+        const where = chunks.length > 1 ? `el sistema ${j + 1} de ${chunks.length}` : 'la página';
+        for (let attempt = 0; ; attempt++) {
+          try {
+            results[j] = await read(chunks[j], fragments[j], context);
+            break;
+          } catch (e) {
+            if (e.kind !== 'truncated') throw e;
+            const partial = salvageTruncated(e.partial);
+            if (partial) {
+              // Se cortó a mitad: quedan los compases completos que llegó a escribir.
+              results[j] = partial; salvaged.add(j);
+              onPart({ type: 'state', page, id: pageKey(fragments[j]), state: checkpoint ? 'saved' : 'done' });
+              if (checkpoint) { try { await checkpoint.save(pageKey(fragments[j]), partial); } catch { /* el rescate sigue en memoria */ } }
+              onWarning(`La lectura de ${where}${label} se cortó: revisá que no falten ni sobren compases ahí.`);
+              break;
+            }
+            if (attempt < 1) continue;   // un reintento antes de saltearlo
+            if (j === 0) throw new OmrError(`La IA agotó su límite al leer ${where}. Probá con otro modelo en Ajustes.`, 'truncated');
+            results[j] = { measures: [] };
+            onPart({ type: 'state', page, id: pageKey(fragments[j]), state: 'failed' });
+            onWarning(`No se pudo leer ${where}${label}: faltan esos compases. Podés agregarlos a mano en Revisión.`);
+            break;
+          }
         }
-        catch (e) {
-          if (e.kind !== 'truncated') throw e;
-          const where = chunks.length > 1 ? ` (sistema ${j + 1} de ${chunks.length})` : '';
-          throw new OmrError(`La IA agotó su límite incluso con el formato compacto${where}. Probá con otro modelo en Ajustes o importá una edición MusicXML o MIDI.`, 'truncated');
-        }
+        complete++;
+        onProgress(`Página ${page} de ${total} · ${complete} de ${chunks.length} sistemas listos.`);
       }
       // El primer sistema aporta el compás, la armadura y el tempo para los demás.
       await readChunk(0, previous);
@@ -424,7 +479,13 @@ export async function recognizeScore(images, options = {}) {
         bpm: results[0].bpm || previous?.bpm,
       };
       await readPool(chunks.slice(1).map((_, i) => i + 1), concurrency, (j) => readChunk(j, context));
-      pages.push(...results);
+      // Una respuesta cortada puede venir de una lectura desbocada: no dejar más compases que un sistema normal.
+      if (salvaged.size) {
+        const normal = results.filter((r, j) => !salvaged.has(j) && r?.measures?.length).map((r) => r.measures.length);
+        const cap = normal.length ? Math.max(...normal) : 8;
+        for (const j of salvaged) if (results[j].measures.length > cap) results[j] = { ...results[j], measures: results[j].measures.slice(0, cap) };
+      }
+      pages.push(...results.filter((r) => r && (r.measures?.length || !Array.isArray(r.measures))));
     } catch (e) {
       throw new OmrError(e.message + label, e.kind);
     }

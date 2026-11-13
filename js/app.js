@@ -612,6 +612,7 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
         provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model,
         checkpoint, concurrency: job?.serial ? 1 : undefined,
         signal: ctl.signal,
+        onWarning: (msg) => { if (!importWarnings.includes(msg)) importWarnings.push(msg); },
         onPart: (event) => { if (job && alive()) pdfProgress.update(event); },
         onProgress: (m) => { if (alive() && (!job || m === "Armando la partitura…")) busy.log(m); },
       });

@@ -163,3 +163,30 @@ test('OMR: limita el paralelo, guarda respuestas desordenadas y retoma sólo lo 
   assert.equal(peak, 3);
   assert.deepEqual(score.measures.map((m) => m.rh[0].k[0]), pitches);
 });
+
+test('OMR: una respuesta cortada conserva sus compases completos y la importación sigue con aviso', async () => {
+  const { salvageTruncated, geminiThinking } = await import('../js/omr.js');
+  assert.equal(salvageTruncated('{"measures":['), null);
+  assert.equal(salvageTruncated('nada'), null);
+  const cut = '{"timeSig":[4,4],"measures":[{"rhTimed":[[0,1,"c/4"]]},{"rhTimed":[[0,1,"d/4"]],"lhTimed":[[0,4,"c/3"]]},{"rhTimed":[[0,1,"e/';
+  assert.equal(salvageTruncated(cut).measures.length, 2);
+  assert.deepEqual(geminiThinking('gemini-3.8-flash'), { thinkingConfig: { thinkingLevel: 'low' } });
+  assert.deepEqual(geminiThinking('gemini-2.5-flash'), { thinkingConfig: { thinkingBudget: 1024 } });
+  assert.deepEqual(geminiThinking('otro'), {});
+
+  const images = Object.assign([blob()], { pageNumbers: [2], totalPages: 4 });
+  const warnings = [];
+  const one = (k) => JSON.stringify({ timeSig: [4, 4], measures: [{ rhTimed: [[0, 4, k]] }] });
+  const fetchImpl = async (_url, req) => {
+    const system = Number(/system (\d+) of 4/.exec(JSON.parse(req.body).messages[0].content[1].text)[1]);
+    if (system === 3) return resp(200, { stop_reason: 'max_tokens', content: [{ type: 'text', text: '{"measures":[{"rhTimed":[[0,4,"e/4"]]},{"rhTimed":[[0,4,"e/4"]]},{"rhTimed":[[0,4,"e/4"]]},{"rhTimed":[[0,' }] });
+    if (system === 4) return resp(200, { stop_reason: 'max_tokens', content: [] });
+    return resp(200, { content: [{ type: 'text', text: one(system === 1 ? 'c/4' : 'd/4') }] });
+  };
+  const score = await recognizeScore(images, { apiKey: 'fake', fetchImpl, splitImage: async () => [blob(), blob(), blob(), blob()], onWarning: (m) => warnings.push(m) });
+  // sistema 3 rescatado y recortado a lo que mide un sistema normal (1 compás); sistema 4 salteado
+  assert.deepEqual(score.measures.map((m) => m.rh[0].k[0]), ['c/4', 'd/4', 'e/4']);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings.join(' '), /sistema 3 de 4.*se cortó/);
+  assert.match(warnings.join(' '), /No se pudo leer el sistema 4 de 4/);
+});
