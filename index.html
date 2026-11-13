@@ -122,6 +122,7 @@
           <div><dt>Racha</dt><dd id="pc-streak">—</dd></div>
         </dl>
         <div class="pc-chart" id="pc-chart"></div>
+        <button class="link-btn pc-progress" id="pc-progress" type="button" hidden>Ver mi progreso</button>
       </section>
       <section id="empty-state" class="welcome" aria-labelledby="welcome-title" hidden>
         <div class="welcome-hero">
@@ -639,16 +640,48 @@
     </main>
   </section>
 
-  <!-- 4b. Progreso: lista de tomas de una partitura -->
+  <!-- 4b. Progreso de una partitura: evolución, comparación de dos tomas, piano-roll, escucha y lista de tomas -->
   <section id="screen-progress" class="screen" hidden aria-label="Progreso">
     <header class="bar">
       <button class="btn icon ghost" id="progress-back" aria-label="Volver"><svg class="ic"><use href="#i-back"/></svg></button>
       <div class="bar-title" id="progress-title">Progreso</div>
     </header>
-    <main class="content">
-      <p class="hint" id="progress-sub"></p>
-      <ol class="take-list" id="progress-list" aria-label="Tomas guardadas"></ol>
-      <p class="hint" id="progress-empty" hidden>Todavía no hay tomas de esta partitura. Cada intento de práctica que llega al Resultado se guarda aquí.</p>
+    <main class="content wide pg" id="progress-main">
+      <section class="pg-head" aria-label="Resumen y tomas a comparar">
+        <p class="pg-stats" id="pg-stats"></p>
+        <div class="pg-filters" id="pg-filters" role="group" aria-label="Qué tomas ver"></div>
+        <p class="hint pg-note" id="pg-note" hidden></p>
+      </section>
+      <div class="pg-empty" id="pg-empty" hidden></div>
+      <div id="pg-body" hidden>
+        <div class="pg-grid">
+          <section class="pg-card pg-evo-card" aria-labelledby="pg-evo-t">
+            <div class="pg-card-h"><h3 id="pg-evo-t">Tu evolución</h3><div class="seg" id="pg-metric" role="group" aria-label="Qué métrica ver"></div></div>
+            <div class="pg-evo-box" id="pg-evo"></div>
+            <p class="pg-tip" id="pg-evo-tip" aria-live="polite"></p>
+            <details class="pg-data"><summary>Ver datos</summary><div id="pg-evo-table"></div></details>
+          </section>
+          <section class="pg-card pg-cmp-card" aria-labelledby="pg-cmp-t">
+            <h3 id="pg-cmp-t">Comparar dos tomas</h3>
+            <div class="pg-pick" id="pg-pick"></div>
+            <div class="pg-presets" id="pg-presets" role="group" aria-label="Comparaciones rápidas"></div>
+            <p class="pg-headline" id="pg-headline" role="status"></p>
+            <div class="pg-diffs" id="pg-diffs"></div>
+            <h4 class="pg-sub">Compás por compás</h4>
+            <div class="pg-mstrip" id="pg-mstrip" role="group" aria-label="Compás por compás"></div>
+            <div class="pg-mdetail" id="pg-mdetail" aria-live="polite"></div>
+          </section>
+        </div>
+        <section class="pg-card" aria-labelledby="pg-roll-t">
+          <h3 id="pg-roll-t">Verlo</h3>
+          <div id="pg-roll"></div>
+          <div class="pg-listen" id="pg-listen"></div>
+        </section>
+        <section class="pg-card" aria-labelledby="pg-takes-t">
+          <h3 id="pg-takes-t">Tus tomas</h3>
+          <div id="pg-takes"></div>
+        </section>
+      </div>
     </main>
   </section>
 

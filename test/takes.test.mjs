@@ -137,3 +137,20 @@ test("pruneTakes conserva todo lo de los últimos 14 días y, de lo anterior, la
   const drop = pruneTakes(takes, { now });
   assert.deepEqual(drop.sort(), ["viejoA", "viejoD"]);
 });
+
+test("una toma favorita (keep: true) sobrevive a la retención automática y se normaliza", () => {
+  const now = Date.parse("2026-11-13T12:00:00");
+  const mk = (id, day, acc, at, extra = {}) => ({ id, day, scoreId: "p", hands: "both", range: null, at, summary: { accuracy: acc }, ...extra });
+  const takes = [
+    mk("viejaFav", "2026-10-01", 10, "2026-10-01T08:00:00Z", { keep: true }),   // peor precisión, pero favorita
+    mk("viejoA", "2026-10-01", 50, "2026-10-01T09:00:00Z"),
+    mk("viejoB", "2026-10-01", 90, "2026-10-01T10:00:00Z"),                       // la mejor del día
+    mk("viejoC", "2026-10-01", 60, "2026-10-01T11:00:00Z"),                       // la última del día
+  ];
+  const drop = pruneTakes(takes, { now });
+  assert.ok(!drop.includes("viejaFav"), "la favorita no se borra");
+  assert.deepEqual(drop.sort(), ["viejoA"]);
+  const t = buildTake({ scoreId: "p", events: [[0, 60], [100, 61], [200, 62], [300, 63], [400, 64]], keep: true });
+  assert.equal(t.keep, true);
+  assert.equal(buildTake({ scoreId: "p", events: [[0, 60], [100, 61], [200, 62], [300, 63], [400, 64]] }).keep, false);
+});
