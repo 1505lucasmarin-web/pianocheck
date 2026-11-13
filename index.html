@@ -208,6 +208,13 @@
       <button class="btn primary" id="mylib-new"><svg class="ic sm"><use href="#i-plus"/></svg><span class="ml-lbl">Nueva</span></button>
     </header>
     <main class="content wide">
+      <section id="backup-remind" class="backup-remind" hidden aria-labelledby="backup-h">
+        <p id="backup-h"><b>Tus partituras viven sólo en este dispositivo.</b> Hacé una copia.</p>
+        <div class="row wrap">
+          <button class="btn primary" id="backup-now" type="button"><svg class="ic sm"><use href="#i-share"/></svg>Exportar ahora</button>
+          <button class="btn ghost" id="backup-later" type="button">Más tarde</button>
+        </div>
+      </section>
       <form id="ml-form" class="ml-tools" role="search" aria-label="Buscar en mi biblioteca">
         <label class="sr" for="ml-q">Buscar por título o artista</label>
         <div class="ls-field"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="ml-q" type="search" autocomplete="off" spellcheck="false" maxlength="120" placeholder="Buscar por título o artista"></div>
@@ -225,6 +232,12 @@
           <button class="btn" id="mlE-demo"><svg class="ic sm"><use href="#i-play"/></svg>Probar la demo</button>
         </div>
         <p class="hint ml-note" id="ml-note">Las partituras se guardan en este dispositivo y en esta dirección de la app. Si antes usaste otra dirección o instalación, no aparecen acá.</p>
+      </section>
+      <section id="ml-start" class="ml-start" hidden aria-labelledby="ml-start-h">
+        <h2 id="ml-start-h">Para empezar</h2>
+        <p class="hint">Piezas de dominio público incluidas en PianoCheck. Se guardan en tu biblioteca al tocarlas.</p>
+        <ul id="ml-start-list" class="cards"></ul>
+        <div class="row center"><button class="btn" id="ml-start-all" type="button" hidden></button></div>
       </section>
     </main>
   </section>
@@ -778,9 +791,9 @@
         <p class="hint import-sub">Ya tenés la partitura: sacale una foto o abrí el archivo.</p>
         <p class="import-ctx" id="import-ctx" role="note" hidden></p>
         <div class="opt-grid">
-          <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span>Fotografiá una hoja de tu partitura.</span></span></button>
-          <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span>Elegí fotos o capturas de tu galería.</span></span></button>
-          <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span>Leemos partituras impresas y escaneadas.</span></span></button>
+          <button class="opt btn-opt" id="imp-photo"><span class="opt-ic"><svg class="ic"><use href="#i-camera"/></svg></span><span class="opt-t"><b>Sacar foto</b><span class="tag needs-key" hidden>Necesita API key</span><span>Fotografiá una hoja de tu partitura.</span></span></button>
+          <button class="opt btn-opt" id="imp-images"><span class="opt-ic"><svg class="ic"><use href="#i-images"/></svg></span><span class="opt-t"><b>Imágenes</b><span class="tag needs-key" hidden>Necesita API key</span><span>Elegí fotos o capturas de tu galería.</span></span></button>
+          <button class="opt btn-opt" id="imp-pdf"><span class="opt-ic"><svg class="ic"><use href="#i-pdf"/></svg></span><span class="opt-t"><b>PDF</b><span class="tag needs-key" hidden>Necesita API key</span><span>Leemos partituras impresas y escaneadas.</span></span></button>
           <button class="opt btn-opt" id="imp-xml"><span class="opt-ic"><svg class="ic"><use href="#i-xml"/></svg></span><span class="opt-t"><b>MusicXML</b><span>Archivo de MuseScore y similares. Sin internet.</span></span></button>
           <button class="opt btn-opt" id="imp-task"><span class="opt-ic"><svg class="ic"><use href="#i-clip"/></svg></span><span class="opt-t"><b>Tarea del profe</b><span>Archivo .pianocheck que te mandaron. Sin internet.</span></span></button>
           <button class="opt btn-opt" id="imp-midi"><span class="opt-ic"><svg class="ic"><use href="#i-midi"/></svg></span><span class="opt-t"><b>MIDI</b><span>Archivo .mid. Sin internet.</span></span></button>
@@ -846,7 +859,7 @@
         <label class="switch" id="tx-acc-wrap" hidden><input id="tx-acc" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Agregar acompañamiento</b><span>Suma una mano izquierda sencilla según la armonía de la melodía.</span></span></label>
         <div class="row wrap">
           <button class="btn primary big grow" id="tx-open"><svg class="ic"><use href="#i-check"/></svg>Ir a Revisión</button>
-          <button class="btn big" id="tx-polish" hidden><svg class="ic sm"><use href="#i-sparkle"/></svg>Pulir con IA</button>
+          <button class="btn big" id="tx-polish" hidden><svg class="ic sm"><use href="#i-sparkle"/></svg>Pulir con IA <span class="tag needs-key" hidden>Necesita API key</span></button>
         </div>
         <p class="hint" id="tx-res-note">Va a Revisión como borrador: ahí podés escuchar y corregir notas antes de practicar.</p>
         <div class="row center"><button class="btn" id="tx-again">Empezar de nuevo</button></div>

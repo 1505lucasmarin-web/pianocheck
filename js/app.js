@@ -15,6 +15,8 @@ import { sameKind, normRange, isWholeRange, rangeText, passageSteps, currentPair
 import { clickUnit, createPlayer } from "./playback.js";
 import { createListen } from "./listen.js";
 import { createTheory } from "./teoria.js";
+import { streakDays } from "./lessons.js";
+import { masteredKeys, theoryDays, theoryDayKey } from "./store.js";
 import { parseMusicLink, resolveSong } from "./links.js";
 import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from "./catalog.js";
 import { PIECES, getPieceScore } from "./pieces.js";
@@ -28,7 +30,7 @@ import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
 import { createPdfProgress } from "./pdf-progress.js";
-import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName } from "./mylib.js";
+import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName, shouldRemindBackup, BACKUP_EVERY_DAYS } from "./mylib.js";
 import { createTxFlow } from "./txflow.js";
 import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
 
@@ -666,8 +668,9 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
   } finally { if (alive() && needsAi) composeAbort = null; }
 }
 const importMap = { "imp-photo": ["file-photo", "photo"], "imp-images": ["file-images", "images"], "imp-pdf": ["file-pdf", "pdf"], "imp-xml": ["file-xml", "xml"], "imp-midi": ["file-midi", "midi"], "imp-task": ["file-task", "task"] };
+const NEEDS_KEY_IMPORT = new Set(["photo", "images", "pdf"]);   // leen con IA
 for (const [btn, [inp, kind]] of Object.entries(importMap)) {
-  $(btn).addEventListener("click", () => { closeSheet(); $(inp).click(); });
+  $(btn).addEventListener("click", () => { if (NEEDS_KEY_IMPORT.has(kind) && !hasApiKey()) { askForKey(); return; } closeSheet(); $(inp).click(); });
   $(inp).addEventListener("change", (e) => { const f = e.target.files; runImport(kind, f); e.target.value = ""; });
 }
 
@@ -783,9 +786,9 @@ function catalogLinksHtml(s) {
 function editionsSection(s) {
   const paid = !!settings.showPaid;
   const title = paid ? "Ediciones encontradas" : "Ediciones gratuitas encontradas";
-  const h = `<h3 class="srch-h">${ic("book")}${title}</h3><p class="expect"><b>Qué esperar:</b> la partitura real, tal cual. Sólo si es de acceso libre (dominio público o licencia abierta) o su autor la regala; en canciones modernas casi nunca hay.</p>`;
+  const h = `<h3 class="srch-h">${ic("book")}${title}${keyTag()}</h3><p class="expect"><b>Qué esperar:</b> la partitura real, tal cual. Sólo si es de acceso libre (dominio público o licencia abierta) o su autor la regala; en canciones modernas casi nunca hay.</p>`;
   const wrap = (inner, busyAttr = "") => `<section class="srch-sec path" aria-label="${title}"${busyAttr}>${h}${inner}${catalogLinksHtml(s)}</section>`;
-  if (s.ai === "nokey") return wrap(`<div class="srch-note">${ic("info")}<div><p>Para buscar ediciones gratuitas en la web necesito tu API key de IA.</p><span>Los otros caminos de abajo (transcribir, grabar, importar) funcionan sin ella.</span></div><button class="btn" data-act="settings">Ir a Ajustes</button></div>`);
+  if (s.ai === "nokey") return wrap(`<div class="srch-note">${ic("info")}<div><p>Para buscar ediciones gratuitas en la web necesito tu API key de IA.</p><span>Los otros caminos de abajo (transcribir, grabar, importar) funcionan sin ella.</span></div><button class="btn" data-act="need-key">Ir a Ajustes</button></div>`);
   if (s.ai === "loading" || s.ai === "idle") return wrap(`${spin("Buscando ediciones gratuitas en la web…")}<div class="skel" aria-hidden="true"></div>`, ` aria-busy="true"`);
   if (s.ai === "skipped") return wrap(`<div class="srch-note">${ic("info")}<div><p>Ya hay una versión para tocar, así que no busqué ediciones.</p></div><button class="btn" data-act="search-ai">Buscar ediciones igual</button></div>`);
   const r = s.res || { editions: [], errors: [] };
@@ -858,7 +861,7 @@ function renderSearch() {
   // 3) ediciones gratuitas (y catálogos gratuitos)
   h += editionsSection(s);
   // 4) crear con IA
-  h += `<section class="srch-sec path main" aria-label="Crear con IA"><h3 class="srch-h">${ic("sparkle")}Crear con IA</h3>
+  h += `<section class="srch-sec path main" aria-label="Crear con IA"><h3 class="srch-h">${ic("sparkle")}Crear con IA${keyTag()}</h3>
     <p class="expect"><b>Qué esperar:</b> la IA arma la canción de memoria en dos pasos (hoja guía con tonalidad, acordes y forma; después las notas) y se verifica sola. Suele acertar canciones conocidas, con errores: escuchala y corregila. Esfuerzo bajo. Necesita tu API key.</p>
     <details class="adjust"><summary>Ajustar arreglo <span class="adjust-now">${ARRANGE_MODES[composeArrange].name}</span></summary>
       <div class="seg wide opts adjust-seg" role="group" aria-label="Ajustar arreglo">${arrangeSegHtml()}</div><p class="hint gen-desc">${ARRANGE_MODES[composeArrange].desc}</p></details>
@@ -883,6 +886,12 @@ function renderSearch() {
 async function playLocalScore(sc) {
   clearLastSearch();
   startPractice(validateScore(sc).score);
+}
+/** Escuchar una pieza incluida (sin tocarla): la misma vista de práctica en modo escucha. */
+function listenPiece(pieceId, versionId) {
+  const base = getPieceScore(pieceId, versionId);
+  if (!base) { toast("No encontré esa versión."); return; }
+  startPractice(validateScore(base).score, { listen: true });
 }
 async function playPiece(pieceId, versionId) {
   const base = getPieceScore(pieceId, versionId);
@@ -927,7 +936,7 @@ async function doGenerate() {
     renderSearch(); $("search-body").scrollTop = 0;
     const b = $("search-body").querySelector(".srch-fail .btn"); if (b) b.focus({ preventScroll: true });
   };
-  if (!settings.apiKey) { fail({ kind: "auth" }, "auth"); return; }
+  if (!hasApiKey()) { askForKey(); return; }
   busy.open("Armando la partitura");
   const ctl = new AbortController(); composeAbort = ctl;
   const m = ARRANGE_MODES[composeArrange] || ARRANGE_MODES.auto;
@@ -971,10 +980,11 @@ $("search-body").addEventListener("click", async (e) => {
     else if (act === "search-ai" || act === "retry-ai") { s.gen = s.gen && s.gen.status === "failed" ? s.gen : null; await runSearchAi(s, true); }
     else if (act === "gen") await doGenerate();
     else if (act === "settings") openSettings();
+    else if (act === "need-key") askForKey();
     else if (act === "play-lib") playLocalScore(await resolveScore(li.dataset.id));
     else if (act === "play-piece") await playPiece(li.dataset.p, btn.dataset.v);
     else if (act === "listen-lib") { clearLastSearch(); startPractice(await resolveScore(li.dataset.id), { listen: true }); }
-    else if (act === "listen-piece") { const base = getPieceScore(li.dataset.p, btn.dataset.v); if (!base) { toast("No encontré esa versión."); return; } clearLastSearch(); startPractice(validateScore(base).score, { listen: true }); }
+    else if (act === "listen-piece") { clearLastSearch(); listenPiece(li.dataset.p, btn.dataset.v); }
   } catch (err) { toast("Error: " + err.message, 4000); }
 });
 $("search-back").addEventListener("click", goLibrary);
@@ -1461,6 +1471,7 @@ async function loadSettings() {
   const s = await store.settings();
   settings = { ...DEFAULT_SETTINGS, ...s };
   settings.midiTransport = s.midiTransport !== false;
+  syncKeyUi();
   applyLook();
   applyKeyboardSetting();
   player.setTimbre(settings.timbre); player.setVolume(settings.listenVolume == null ? 0.8 : settings.listenVolume);
@@ -1487,6 +1498,20 @@ function openSettings() {
   lazy("omr").then((m) => { if (m.DEFAULT_MODELS) $("set-model").placeholder = "por defecto: " + (m.DEFAULT_MODELS[$("set-provider").value] || ""); }).catch(() => {});
   show("settings");
 }
+/* ---------- API key: etiquetas «Necesita API key» y aviso ---------- */
+const hasApiKey = () => !!String(settings.apiKey || "").trim();
+/** Muestra u oculta todas las etiquetas «Necesita API key» según haya o no clave. */
+function syncKeyUi() { const need = !hasApiKey(); document.querySelectorAll(".needs-key").forEach((el) => { el.hidden = !need; }); }
+const keyTag = () => `<span class="tag needs-key"${hasApiKey() ? " hidden" : ""}>Necesita API key</span>`;
+/** Sin API key: aviso breve con «Ir a Ajustes», que abre Ajustes con el foco en el campo de la clave. */
+async function askForKey() {
+  const go = await confirmDialog({ title: "Falta tu API key", text: "Esta función usa IA y necesita tu API key. Se guarda sólo en este dispositivo: cargala en Ajustes y volvé.", yes: "Ir a Ajustes", no: "Cerrar", danger: false });
+  if (!go) return;
+  closeSheet();
+  if (tx.isOpen) tx.close();
+  openSettings();
+  $("set-key").focus();
+}
 $("set-provider").addEventListener("change", () => lazy("omr").then((m) => { if (m.DEFAULT_MODELS) $("set-model").placeholder = "por defecto: " + (m.DEFAULT_MODELS[$("set-provider").value] || ""); }).catch(() => {}));
 $("set-key-show").addEventListener("click", () => { const k = $("set-key"); const show_ = k.type === "password"; k.type = show_ ? "text" : "password"; $("set-key-show").textContent = show_ ? "Ocultar" : "Ver"; });
 function setMicSensUi(v) { const n = Math.round(Math.max(0, Math.min(1, Number.isFinite(+v) ? +v : 0.5)) * 100); $("set-mic-sens").value = n; $("set-mic-sens-val").textContent = n; }
@@ -1498,6 +1523,7 @@ $("settings-save").addEventListener("click", async () => {
   settings = { ...settings, provider: $("set-provider").value, apiKey: $("set-key").value.trim(), model: $("set-model").value.trim(), onscreenKeyboard: $("set-kb").checked, showPhrases: $("set-phrases").checked, showPaid: $("set-paid").checked, micSensitivity: micSensFromUi() };
   settings.midiTransport = $("set-midi-transport").checked;
   try { await store.saveSettings(settings); toast("Ajustes guardados"); } catch (e) { toast("No se pudo guardar: " + e.message, 4500); return; }
+  syncKeyUi();
   applyKeyboardSetting();
   if (current) applyPhrases();
   if (editState) refreshReviewPhrases();
@@ -1590,6 +1616,7 @@ async function offerImport(token) {
   if (!yes) return;
   try {
     settings = { ...settings, ...(await store.saveSettings({ provider: c.provider, apiKey: c.apiKey, model: c.model })) };
+    syncKeyUi();
     if (screen === "settings") openSettings();
     toast("Configuración de IA importada.", 3000);
   } catch (e) { toast("No se pudo guardar: " + e.message, 4500); }
@@ -1703,15 +1730,11 @@ function refreshTheoryCard() {
   const sub = $("theory-card-sub");
   if (!sub) return;
   const p = theoryProgress;
+  const mastered = new Set([...masteredKeys(p, "escala"), ...masteredKeys(p, "grados")]).size;
+  const days = streakDays(theoryDays(p), theoryDayKey());
   const parts = [];
-  if (p) {
-    const a = theory.summary("escala", p), b = theory.summary("grados", p);
-    const keys = new Set([...a.keys, ...b.keys]).size;
-    const best = [a.best, b.best].filter((x) => x != null);
-    if (best.length) parts.push(`Mejor puntaje ${Math.max(...best)}%`);
-    if (a.keys.length || b.keys.length) parts.push(`Escala: ${a.keys.length} de 12 tonalidades · Grados: ${b.keys.length} de 12`);
-    void keys;
-  }
+  if (mastered) parts.push(`${mastered} de 12`);
+  if (days) parts.push(`racha ${days} ${days === 1 ? "día" : "días"}`);
   sub.textContent = parts.length ? parts.join(" · ") : "La escala mayor y los acordes de cada grado, con tu piano.";
 }
 async function openTheory() {
@@ -1982,7 +2005,7 @@ $("midi-ble").addEventListener("click", () => {
 /* ---------- transcribir desde un audio y grabar la melodía (js/txflow.js) ---------- */
 const txCtx = (s) => ({ title: s.title, artist: s.artist, sourceUrl: s.sourceUrl });
 async function polishWithAi(score, c, mode) {
-  if (!settings.apiKey) { toast("Para pulir con IA hace falta tu API key (Ajustes).", 3600); return null; }
+  if (!hasApiKey()) { askForKey(); return null; }
   const token = ++importToken; const alive = () => token === importToken;
   busy.open("Puliendo con IA");
   const ctl = new AbortController(); composeAbort = ctl;
@@ -3192,10 +3215,44 @@ async function refreshMyLib() {
   $("ml-filters").innerHTML = FILTERS.filter(([k]) => k === "todas" || k === ml.filter || counts[k] > 0).map(([k, name]) => `<button type="button" class="chip${k === ml.filter ? " on" : ""}" data-f="${k}" aria-pressed="${k === ml.filter}">${name}<b class="chip-n">${counts[k] || 0}</b></button>`).join("");
   $("ml-form").hidden = !total; $("ml-filters").hidden = !total;
   $("ml-empty").hidden = total > 0;
+  renderMlStart(total); renderBackupRemind(total);
   const res = queryLibrary(list, { ...ml, sums, ...opts });
   $("ml-list").innerHTML = total && !res.length ? `<li class="empty">Ninguna partitura coincide con esa búsqueda o filtro.</li>` : res.map((s) => cardHtml(s, false, sums[s.id])).join("");
   $("ml-live").textContent = total ? `${res.length} de ${total} ${total === 1 ? "partitura" : "partituras"}` : "";
 }
+/* Mi biblioteca vacía: «Para empezar» con las piezas incluidas. */
+const ML_START_N = 4;
+let mlStartAll = false;
+function renderMlStart(total) {
+  $("ml-start").hidden = total > 0;
+  if (total > 0) return;
+  const list = mlStartAll ? PIECES : PIECES.slice(0, ML_START_N);
+  $("ml-start-list").innerHTML = list.map((p) => `<li class="card" data-p="${esc(p.id)}" data-v="${esc(p.versions[0].id)}">
+    <div class="card-top"><b class="t">${esc(p.title)}</b></div><p class="hint">${esc(p.composer)}</p>
+    <div class="row wrap"><button class="btn primary" data-act="start-play" aria-label="Tocar ${esc(p.title)}">${ic("hand", "sm")}Tocar</button><button class="btn" data-act="start-listen" aria-label="Escuchar ${esc(p.title)}">${ic("play", "sm")}Escuchar</button></div></li>`).join("");
+  const more = $("ml-start-all");
+  more.hidden = PIECES.length <= ML_START_N;
+  more.textContent = mlStartAll ? "Ver menos" : `Ver todas (${PIECES.length})`;
+}
+$("ml-start-list").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const li = b.closest("li");
+  if (b.dataset.act === "start-play") playPiece(li.dataset.p, li.dataset.v).catch((err) => toast("Error: " + err.message, 4000));
+  else listenPiece(li.dataset.p, li.dataset.v);
+});
+$("ml-start-all").addEventListener("click", () => { mlStartAll = !mlStartAll; refreshMyLib(); });
+
+/* Recordatorio de copia (sólo en Mi biblioteca). */
+function renderBackupRemind(total) {
+  $("backup-remind").hidden = !shouldRemindBackup({ count: total, lastExport: settings.lastLibExport || 0, snoozeUntil: settings.backupSnoozeUntil || 0, now: Date.now() });
+}
+$("backup-now").addEventListener("click", () => $("lib-export").click());
+$("backup-later").addEventListener("click", () => {
+  settings.backupSnoozeUntil = Date.now() + BACKUP_EVERY_DAYS * 86400000;
+  store.saveSettings({ backupSnoozeUntil: settings.backupSnoozeUntil }).catch(() => {});
+  refreshMyLib();
+});
+
 const goMyLib = () => { if (screen !== "mylib") show("mylib"); };
 $("open-mylib").addEventListener("click", goMyLib);
 $("lib-all").addEventListener("click", goMyLib);
@@ -3231,6 +3288,9 @@ $("lib-export").addEventListener("click", async () => {
     const data = buildLibraryExport({ scores, attempts, annotations, tasks: settings.tasks || {} });
     const name = libraryFileName();
     downloadFile(new File([serializeLibrary(data)], name, { type: "application/json" }), name);
+    settings.lastLibExport = Date.now();
+    store.saveSettings({ lastLibExport: settings.lastLibExport }).catch(() => {});
+    refreshMyLib();
     libMsg(`Exporté ${scores.length} ${scores.length === 1 ? "partitura" : "partituras"}, ${attempts.length} ${attempts.length === 1 ? "intento" : "intentos"} y ${Object.keys(annotations).length} con anotaciones. Sin tu API key.`);
   } catch (err) { libMsg("No se pudo exportar: " + (err && err.message || err), true); }
 });
