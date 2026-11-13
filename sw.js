@@ -1,5 +1,5 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v22";
+const VERSION = "pianocheck-v23";
 // Motor de transcripción (vendor/ pesado: TF.js recortado + modelo): NO va en el precache inicial; se guarda la primera vez que se usa,
 // en una caché aparte y versionada (subir el número si cambian esos archivos). Después funciona sin conexión.
 const ENGINE_CACHE = "pianocheck-engine-v1";
@@ -33,6 +33,7 @@ const SHELL = [
   "js/mic.js",
   "js/mic-worklet.js",
   "js/midi.js",
+  "js/mistakes.js",
   "js/model.js",
   "js/mylib.js",
   "js/omr.js",
