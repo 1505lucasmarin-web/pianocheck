@@ -3322,9 +3322,36 @@ $("lib-file").addEventListener("change", async (e) => {
   handleIncomingHash();
   handleIncomingShare();
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-    navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW:", e.message));
+    // Actualización: buscar versión nueva al abrir y al volver a la app; cuando toma el control, ofrecer recargar.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((reg) => {
+      reg.update().catch(() => {});
+      document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch((e) => console.warn("SW:", e.message));
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController) showUpdateBanner(); });
   }
+  showAppVersion();
 })();
+
+function showUpdateBanner() {
+  if (document.getElementById("update-banner")) return;
+  const el = document.createElement("div");
+  el.id = "update-banner"; el.setAttribute("role", "status");
+  el.innerHTML = '<span>Hay una versión nueva de PianoCheck.</span><button class="btn primary" type="button">Actualizar</button>';
+  el.querySelector("button").addEventListener("click", () => location.reload());
+  document.body.appendChild(el);
+}
+async function showAppVersion() {
+  try {
+    const keys = typeof caches !== "undefined" ? await caches.keys() : [];
+    const v = keys.map((k) => /^pianocheck-v(\d+)$/.exec(k)).filter(Boolean).map((m) => Number(m[1])).sort((x, y) => y - x)[0];
+    const host = document.querySelector("#screen-settings .content");
+    if (!host || !v) return;
+    let p = document.getElementById("app-version");
+    if (!p) { p = document.createElement("p"); p.id = "app-version"; p.className = "hint"; host.appendChild(p); }
+    p.textContent = "Versión " + v;
+  } catch (e) { /* sin caché: no se muestra */ }
+}
 
 /* Atajos de teclado (escritorio): espacio = Play/Pausa; flechas = compás anterior / siguiente mientras se escucha. */
 document.addEventListener("keydown", (e) => {

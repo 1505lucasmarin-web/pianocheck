@@ -1310,3 +1310,8 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .th-bar i{display:block;height:100%;background:var(--acc);border-radius:999px;transition:width .3s}
 .th-best{margin:6px 2px 0;color:var(--mut);font-size:.86rem}
 .th-prog-box{margin-top:8px}
+
+/* Aviso de versión nueva */
+#update-banner{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:1000;display:flex;align-items:center;gap:12px;max-width:calc(100vw - 24px);padding:10px 12px 10px 16px;border:1px solid #7a5f2c;border-radius:14px;background:#2a2017;color:var(--ink,#f2e8d5);box-shadow:0 8px 30px #000a;font-size:.95rem}
+#update-banner .btn{min-height:44px;flex:none}
+#app-version{text-align:center;margin-top:18px;opacity:.7}
