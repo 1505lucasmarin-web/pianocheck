@@ -1,5 +1,5 @@
 // Service worker: precache del shell, cache-first con versión. Rutas relativas (subcarpeta de GitHub Pages).
-const VERSION = "pianocheck-v31";
+const VERSION = "pianocheck-v32";
 // Motor de transcripción (vendor/ pesado: TF.js recortado + modelo): NO va en el precache inicial; se guarda la primera vez que se usa,
 // en una caché aparte y versionada (subir el número si cambian esos archivos). Después funciona sin conexión.
 const ENGINE_CACHE = "pianocheck-engine-v1";
@@ -21,6 +21,7 @@ const SHELL = [
   "js/demo.js",
   "js/engine.js",
   "js/fingering.js",
+  "js/goat-reward.js",
   "js/guide.js",
   "js/hold.js",
   "js/importers.js",

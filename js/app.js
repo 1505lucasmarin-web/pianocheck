@@ -37,6 +37,7 @@ import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
 import { createPdfProgress } from "./pdf-progress.js";
+import { drawGoat, isGoatTake } from "./goat-reward.js";
 import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName, shouldRemindBackup, BACKUP_EVERY_DAYS } from "./mylib.js";
 import { createTxFlow } from "./txflow.js";
 import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
@@ -102,6 +103,7 @@ const screens = ["library", "mylib", "search", "review", "practice", "result", "
 const welcome = mountWelcome($("empty-state"));
 function show(name, push = true) {
   const prev = screen;
+  if (prev === "result" && name !== "result" && $("goat-reward").open) $("goat-reward").close();
   screen = name;
   screens.forEach((s) => ($("screen-" + s).hidden = s !== name));
   $("app").dataset.screen = name;
@@ -3080,6 +3082,14 @@ function completeLap() {
 }
 
 /* ---------- resultado ---------- */
+function celebratePerfectTake(rec) {
+  if (!isGoatTake(rec, current)) return;
+  const dialog = $("goat-reward");
+  $("goat-song").textContent = `«${current.title}»`;
+  drawGoat($("goat-art").getContext("2d"));
+  dialog.showModal();
+}
+
 /** Junta la sesión actual con las vueltas ya completas (bucle). */
 function collectRun() {
   const st = session.state, res = session.stepResults, err = session.stepErrors;
@@ -3145,6 +3155,7 @@ async function showResult() {
   renderErrList(); renderMistakes(mist);
   renderStrip(measureSummary(run.results, steps, n), run.errors);
   $((act.type === "none" ? "result-retry" : "result-action-btn")).focus();
+  celebratePerfectTake(rec);
 }
 let resultMeasure = null;
 /** Lista de errores de la toma («Tocaste X · Se esperaba Y»), accesible con lector de pantalla. */
@@ -3259,6 +3270,7 @@ async function showPulseResult() {
   renderErrList(); renderMistakes(mist);
   renderStrip(measureStates(res.scored, steps, n));
   $((sum.total === 0 ? "result-retry" : "result-action-btn")).focus();
+  celebratePerfectTake(rec);
 }
 
 /* compartir resumen */
