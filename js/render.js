@@ -384,8 +384,15 @@ export function createRenderer(container, opts = {}) {
     const back = document.createElement("button"); back.type = "button"; back.className = "cs-back"; back.hidden = true;
     back.addEventListener("click", (e) => { e.stopPropagation(); follow(); });
     back.addEventListener("pointerdown", (e) => e.stopPropagation());
-    view.append(mlabel, back);
-    cs = { view, track, cursorEl, clefs, mlabel, back, y0, svgH, scale, total, viewW, viewH, Dw, gx, gw, stepPos: [], PH, topPx };
+    const mkNav = (side, label, glyph) => {
+      const bt = document.createElement("button"); bt.type = "button"; bt.className = "cs-nav " + side;
+      bt.textContent = glyph; bt.setAttribute("aria-label", label); bt.title = label;
+      bt.addEventListener("click", (e) => { e.stopPropagation(); nudge(side === "l" ? -1 : 1); });
+      return bt;
+    };
+    const prevB = mkNav("l", "Compases anteriores", "‹"), nextB = mkNav("r", "Compases siguientes", "›");
+    view.append(mlabel, back, prevB, nextB);
+    cs = { view, track, cursorEl, clefs, mlabel, back, prevB, nextB, y0, svgH, scale, total, viewW, viewH, Dw, gx, gw, stepPos: [], PH, topPx };
     curOffset = 0; look = null;
   }
 
@@ -693,8 +700,13 @@ export function createRenderer(container, opts = {}) {
       const left = cx != null && cx < (off > 2 ? cs.Dw * cs.scale : 0), right = cx != null && cx > cs.viewW - 6;
       cs.back.hidden = !(look != null && (left || right));
       cs.back.className = "cs-back " + (left ? "l" : "r");
-      cs.back.textContent = left ? "◂ Nota esperada" : "Nota esperada ▸";
-      cs.back.setAttribute("aria-label", "Volver a la nota esperada");
+      cs.back.textContent = left ? "◂ Volver a la marca" : "Volver a la marca ▸";
+      cs.back.setAttribute("aria-label", "Volver a la marca");
+    }
+    if (cs.prevB) {   // ‹ › se atenúan en los extremos de la pieza (o se ocultan si todo entra en pantalla)
+      const mo = maxOffset();
+      cs.prevB.hidden = cs.nextB.hidden = mo <= 0;
+      cs.prevB.disabled = off <= 1; cs.nextB.disabled = off >= mo - 1;
     }
     if (!anim) { void cs.track.offsetWidth; cs.track.style.transition = ""; cs.cursorEl.style.transition = ""; }
   }
@@ -707,11 +719,19 @@ export function createRenderer(container, opts = {}) {
     cancelAnimationFrame(inertia);
     applyOffset(cursor >= 0 ? targetOffset(cursor) : 0, true);
   }
-  function lookAt(off, animate) {
+  /** Límites del gesto libre (arrastre, rueda, ‹ ›): toda la pieza, de 0 al final; no se acota al pasaje. */
+  const freeBounds = () => [0, maxOffset()];
+  function lookAt(off, animate, free = false) {
     if (!cs) return;
-    const [lo, hi] = bounds();
+    const [lo, hi] = free ? freeBounds() : bounds();
     look = clamp(Math.round(off), lo, hi);
     applyOffset(look, animate);
+  }
+  /** ‹ › : avanza o retrocede casi un ancho de visor, con animación suave. */
+  function nudge(dir) {
+    if (!cs) return;
+    cancelAnimationFrame(inertia);
+    lookAt((look != null ? look : curOffset) + dir * cs.viewW * 0.9, true, true);
   }
 
   // arrastre con el dedo para mirar adelante / atrás
@@ -740,12 +760,13 @@ export function createRenderer(container, opts = {}) {
     if (!cs) return;
     const dx = ev.clientX - drag.x;
     if (!drag.moved) {
-      if (Math.abs(dx) < 5) return;
+      if (Math.abs(dx) < 8) return;   // por debajo de 8 px es un toque (selecciona la nota o el compás)
       drag.moved = true; cs.view.classList.add("cs-dragging");
-      try { container.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
+      // el dedo ya queda capturado por el navegador; sólo el mouse necesita captura explícita
+      if (ev.pointerType === "mouse") try { container.setPointerCapture(ev.pointerId); } catch (e) { /* nada */ }
     }
     drag.samples.push([performance.now(), ev.clientX]); if (drag.samples.length > 6) drag.samples.shift();
-    lookAt(drag.off - dx, false);
+    lookAt(drag.off - dx, false, true);   // 1:1 con el dedo: el desplazamiento en px de pantalla es el de la pista
   });
   const endDrag = (ev) => {
     if (!drag || ev.pointerId !== drag.id) return;
@@ -759,18 +780,27 @@ export function createRenderer(container, opts = {}) {
     let last = performance.now(), pos = look;
     const step = (now) => {
       const dt = Math.min(32, now - last); last = now;
-      pos += v * dt; v *= Math.pow(0.992, dt);
-      const [lo, hi] = bounds();
+      pos += v * dt; v *= Math.pow(0.995, dt);   // desaceleración suave: la inercia dura ~1 s
+      const [lo, hi] = freeBounds();
       const c = clamp(pos, lo, hi);
-      lookAt(c, false);
+      lookAt(c, false, true);
       if (Math.abs(v) > 0.03 && c === pos && look != null) inertia = requestAnimationFrame(step);
     };
     inertia = requestAnimationFrame(step);
   };
   container.addEventListener("pointerup", endDrag);
   container.addEventListener("pointercancel", endDrag);
-  container.addEventListener("lostpointercapture", endDrag);
+  // no se usa lostpointercapture: al capturar el puntero el navegador lo dispara y cortaba el arrastre a los pocos píxeles
   container.addEventListener("pointerleave", (ev) => { if (!drag?.moved) endDrag(ev); });
+  // rueda del mouse / trackpad: en vista continua desplaza la partitura (horizontal, o vertical si no hay horizontal)
+  container.addEventListener("wheel", (ev) => {
+    if (!cs || annotating || mode !== "cont") return;
+    const d = Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+    if (!d) return;
+    ev.preventDefault();
+    cancelAnimationFrame(inertia);
+    lookAt((look != null ? look : curOffset) + d * (ev.deltaMode === 1 ? 16 : 1), false, true);
+  }, { passive: false });
 
   function scrollToMeasure(m) {
     if (mode === "cont" && cs) {

@@ -117,6 +117,13 @@ function goLibrary() {
   if (history.state && history.state.s) { history.back(); return; }
   show("library", false);
 }
+/* Marca «PianoCheck»: al inicio por el mismo camino que el «atrás» de la pantalla actual (sin saltear salidas ni confirmaciones). */
+function goHome() {
+  if (screen !== "library") { goLibrary(); return; }
+  const top = document.querySelector("#screen-library .content");
+  if (top) top.scrollTo({ top: 0, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+$("brand-home").addEventListener("click", goHome);
 window.addEventListener("popstate", () => {
   // El botón "atrás" del sistema vuelve a la biblioteca (o a la pantalla anterior lógica).
   if (screen === "settings" && prevBeforeSettings && prevBeforeSettings !== "library") { show(prevBeforeSettings, false); return; }
@@ -232,11 +239,11 @@ function cardHtml(s, demo, sum) {
     ? `<div class="scores"><div class="sc best"><span>Mejor</span><b>${sum.best == null ? "—" : sum.best + "%"}</b></div><div class="sc"><span>Último</span><b>${sum.last}%</b></div></div><div class="mini" aria-hidden="true"><i style="width:${sum.best || 0}%"></i></div>`
     : `<div class="sc-none">Sin intentos todavía</div>`;
   const title = esc(s.title || "Sin título");
-  return `<li class="card${isDraft(s) ? " is-draft" : ""}" data-id="${esc(s.id)}"><div class="card-top"><div class="t">${title}</div>${draftTag}${lvl}</div>${art}<div class="tags">${orig}${tags}</div>${res}
-    <div class="row"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("hand", "sm")}Practicar</button>
+  return `<li class="card${isDraft(s) ? " is-draft" : ""}" data-id="${esc(s.id)}"><div class="card-info"><div class="card-top"><div class="t">${title}</div>${draftTag}${lvl}</div>${art}<div class="tags">${orig}${tags}</div>${res}</div>
+    <div class="row card-acts"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("hand", "sm")}Practicar</button>
     <button class="btn listen-btn" data-act="listen" aria-label="Escuchar ${title}">${ic("play", "sm")}Escuchar</button>
-    ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)">${ic("ext", "sm")}Abrir original</a>` : ""}
-    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn" data-act="edit" aria-label="Editar ${title}">${ic("pencil", "sm")}Editar</button><button class="btn icon" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger" data-act="del" aria-label="Eliminar ${title}">${ic("trash")}</button>`}</div></li>`;
+    ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn btn-sec" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)" title="Abrir el original">${ic("ext", "sm")}<span class="card-lbl">Abrir original</span></a>` : ""}
+    ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn btn-sec" data-act="edit" aria-label="Editar ${title}" title="Editar">${ic("pencil", "sm")}<span class="card-lbl">Editar</span></button><button class="btn icon btn-sec" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon btn-sec" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger btn-sec" data-act="del" aria-label="Eliminar ${title}" title="Eliminar">${ic("trash")}</button>`}</div></li>`;
 }
 let _bundled = null;
 const bundledIds = () => (_bundled ||= new Set([demoScore.id, ...PIECES.flatMap((p) => p.versions.map((v) => v.score.id))]));
@@ -256,6 +263,9 @@ async function refreshLibrary() {
   if (searchForm.parentElement !== searchSlot) searchSlot.append(searchForm);
   $("library-section").hidden = list.length === 0;
   $("demo-section").hidden = list.length === 0;
+  const libMain = document.querySelector("#screen-library .content");   // tablet: disposición en grilla sólo con partituras guardadas
+  libMain.classList.toggle("has-lib", !isEmpty);
+  $("library-list").classList.toggle("single", list.length === 1);
   $("mylib-n").textContent = String(list.length); $("mylib-n").hidden = !list.length; $("open-mylib").setAttribute("aria-label", `Mi biblioteca: ${list.length} ${list.length === 1 ? "partitura" : "partituras"}`);
   const HOME_MAX = 4;
   $("lib-all").hidden = list.length <= HOME_MAX; $("lib-all-t").textContent = `Ver todas (${list.length})`;
@@ -266,6 +276,7 @@ async function refreshLibrary() {
   continueInfo = latestPractice(settings.lastPractice, (id) => ids.has(id));
   const cc = $("continue-card");
   cc.hidden = !continueInfo;
+  document.querySelector("#screen-library .content").classList.toggle("no-cont", !continueInfo);
   if (continueInfo) {
     const sc = id2score(continueInfo.id, list), c = continueInfo, n = ((sc && sc.measures) || []).length;
     $("continue-title").textContent = (sc && sc.title) || "Sin título";
