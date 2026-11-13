@@ -5,7 +5,7 @@
   --welcome-bg: #1b1512;
   --welcome-gold: #f3bd69;
   --welcome-muted: #dfccb6;
-  margin: 18px 0 8px;
+  margin: 18px auto 8px;
   border: 1px solid var(--line);
   border-radius: 18px;
   overflow: hidden;

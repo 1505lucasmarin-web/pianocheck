@@ -369,6 +369,7 @@ setArrange("auto");
 function setSheetPath(p) {
   document.querySelectorAll("#sheet-paths button").forEach((b) => { const on = b.dataset.path === p; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   $("path-ai").hidden = p !== "ai"; $("path-import").hidden = p !== "import"; $("path-audio").hidden = p !== "audio";
+  const pages = $("pdf-pages"); if (pages) pages.closest("label").hidden = p !== "import";   // sólo sirve para importar un PDF
 }
 document.querySelectorAll("#sheet-paths button").forEach((b) => b.addEventListener("click", () => setSheetPath(b.dataset.path)));
 /** o.path "ai"|"import"; o.query texto inicial; o.importFor {title, artist, sourceUrl}: lo importado se guarda con esos datos. */
