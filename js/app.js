@@ -1967,7 +1967,7 @@ function syncMetroUi() {
   updateMicNote();
 }
 function setMetroBpm(n, silent) {
-  metroBpm = Math.max(30, Math.min(240, Math.round(n))); syncMetroRate(); holds.setBpm(metroBpm, performance.now());
+  metroBpm = Math.max(10, Math.min(240, Math.round(n))); syncMetroRate(); holds.setBpm(metroBpm, performance.now());
   $("bpm-val").textContent = metroBpm; $("tempo-t").textContent = `♩ ${metroBpm} BPM`;
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${isPulso() ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
   if (!silent) {

@@ -25,7 +25,7 @@ function tiedBeats(score, ref, key) {
 export function buildEvents(score, steps, { bpm = 80, speed = 1 } = {}) {
   const list = Array.isArray(steps) ? steps : [];
   if (!list.length) return [];
-  const sec = 60 / (Math.max(20, bpm) * Math.max(0.2, speed));
+  const sec = 60 / (Math.max(10, bpm) * Math.max(0.2, speed));
   const t0 = list[0].t;
   const out = [];
   for (const st of list) {
@@ -147,7 +147,7 @@ export function buildSchedule(score, opts = {}) {
   return { events, clicks, countIn, startBeat, endBeat, from, to, lay, unit };
 }
 
-export const secPerBeat = (bpm, speed = 1) => 60 / (Math.max(20, Number(bpm) || 80) * Math.max(0.2, Number(speed) || 1));
+export const secPerBeat = (bpm, speed = 1) => 60 / (Math.max(10, Number(bpm) || 80) * Math.max(0.2, Number(speed) || 1));
 /** Duración total (segundos) de una agenda al tempo y velocidad dados. */
 export const scheduleSeconds = (sc, bpm, speed = 1) => (sc.endBeat - sc.startBeat) * secPerBeat(bpm, speed);
 /** Instante (segundos desde el comienzo del rango) de un compás. */
@@ -296,7 +296,7 @@ export function createPlayer(opts = {}) {
     const AC = opts.AudioContext || (typeof globalThis !== "undefined" && (globalThis.AudioContext || globalThis.webkitAudioContext));
     if (!AC) throw new Error("Este navegador no puede reproducir audio.");
     if (!ctx) {
-      ctx = new AC();
+      try { ctx = new AC({ latencyHint: "playback" }); } catch (e) { ctx = new AC(); }   // buffer más grande: menos cortes y menos trabajo del hilo principal en tablets y celulares
       synth = createSynth(ctx, { timbre, volume });
       synth.setMetro(metro);
       try { ctx.onstatechange = () => { if (ctx.state !== "running" && transport.playing) { transport.pause(); legacy && legacy.stopPoll(); api.onInterrupt && api.onInterrupt(ctx.state); } }; } catch (e) { /* nada */ }

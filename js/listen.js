@@ -194,7 +194,7 @@ export function createListen({ player, host, adapter, prefs, toast = () => {}, k
     if (o.speed != null) O.speed = o.speed;
     if (o.hands) O.hands = o.hands;
     if (o.repeat != null) O.repeat = !!o.repeat;
-    S.range = o.range || null; S.bpm = Math.max(20, Number(o.bpm) || 80); S.autoExit = !!o.autoExit;
+    S.range = o.range || null; S.bpm = Math.max(10, Number(o.bpm) || 80); S.autoExit = !!o.autoExit;
     S.ended = false; S.loaded = false; S.lastStep = -2; S.lastMeasure = -1; S.forceFrame = true;
     S.open = true; host.hidden = false;
     player.onEnd = onEnded; player.onInterrupt = onInterrupt;

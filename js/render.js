@@ -372,6 +372,9 @@ export function createRenderer(container, opts = {}) {
       s.svg.setAttribute("width", s.sw * scale); s.svg.setAttribute("height", svgH);
       s.svg.style.width = (s.sw * scale) + "px"; s.svg.style.height = svgH + "px";
       s.el.style.width = (s.sw * scale) + "px";
+      // sólo se pinta el tramo que se ve (+ margen): con la pieza entera dibujada, el navegador repasaba miles de elementos en cada cuadro y se trababa
+      s.el.style.containIntrinsicSize = `${s.sw * scale}px ${svgH}px`;
+      s.el.style.contentVisibility = "auto";
     });
 
     // bloque fijo de claves (clave de sol y de fa + armadura + compás)

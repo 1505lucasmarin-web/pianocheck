@@ -13,7 +13,7 @@ export const HOLD_MODE_NAMES = { mostrar: "Mostrar", exigir: "Exigir", apagado: 
 export const normHoldMode = (m) => (HOLD_MODES.includes(m) ? m : "mostrar");
 
 const round = (x) => Math.round(x * 1e6) / 1e6;
-const beatMs = (bpm) => 60000 / Math.max(20, Number(bpm) || 80);
+const beatMs = (bpm) => 60000 / Math.max(10, Number(bpm) || 80);
 
 /** Cadena de ligaduras de una nota: → { beats (negras), next: { measure, idx } del evento que sigue a la cadena (o null al final de la pieza) }. Misma cuenta que playback.chainBeats. */
 function chain(score, mi, hand, idx, key) {
@@ -120,7 +120,7 @@ export function createHoldTracker({ bpm = 80, now = () => 0, onResult = null, ke
       if (was && !pedalDown) for (const r of recs.values()) if (r.state === "holding" && r.keyUp && !r.guided) closeByRelease(r, t);
     },
     setBpm(b, t = now()) {
-      const nb = Math.max(20, Number(b) || curBpm);
+      const nb = Math.max(10, Number(b) || curBpm);
       for (const r of recs.values()) if (r.endT == null) { r.acc += Math.max(0, t - r.lastT) / beatMs(curBpm); r.lastT = t; }
       curBpm = nb;
     },

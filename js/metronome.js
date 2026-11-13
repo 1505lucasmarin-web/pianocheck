@@ -1,6 +1,6 @@
 // Metrónomo Web Audio con scheduler lookahead. Seguro de importar en Node.
 
-const MIN_BPM = 30;
+const MIN_BPM = 10;
 const MAX_BPM = 240;
 const LOOKAHEAD_MS = 25;
 const SCHEDULE_AHEAD_S = 0.12;
