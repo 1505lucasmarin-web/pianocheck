@@ -30,6 +30,7 @@ import { buildSummary } from "./summary.js";
 import { summarizeMistakes, measuresToPractice, groupRanges } from "./mistakes.js";
 import { createTimeTracker, splitByDay, formatDuration, totals as ptTotals, TEORIA_ID, DEFAULT_IDLE_MS, normalizeLog } from "./practice-time.js";
 import { buildTake, takeMetrics, MAX_TAKE_MS, MAX_TAKE_EVENTS } from "./takes.js";
+import { createProgressScreen } from "./progress-screen.js";
 import { createSynth } from "./synth.js";
 import { LIB_LIMITS } from "./mylib.js";
 import { createAnnotateUI } from "./annotate-ui.js";
@@ -117,8 +118,7 @@ function show(name, push = true) {
   if (name === "mylib") refreshMyLib();
   if (name === "review") requestAnimationFrame(() => reviewR.redraw());
   if (name === "practice") requestAnimationFrame(() => practiceR.redraw());
-  if (name === "progress") renderProgress();
-  if (prev === "progress" && name !== "progress") stopTakePlay();
+  if (prev === "progress" && name !== "progress") progressUI.leave();
   ptSync();   // el contador de tiempo sigue a la pantalla (práctica, teoría o nada)
 }
 function goLibrary() {
@@ -251,12 +251,14 @@ function cardHtml(s, demo, sum) {
   return `<li class="card${isDraft(s) ? " is-draft" : ""}" data-id="${esc(s.id)}"><div class="card-info"><div class="card-top"><div class="t">${title}</div>${draftTag}${lvl}</div>${art}<div class="tags">${orig}${tags}${ptTag}</div>${res}</div>
     <div class="row card-acts"><button class="btn primary grow" data-act="practice" aria-label="Practicar ${title}">${ic("hand", "sm")}Practicar</button>
     <button class="btn listen-btn" data-act="listen" aria-label="Escuchar ${title}">${ic("play", "sm")}Escuchar</button>
+    ${demo ? "" : `<button class="btn btn-sec" data-act="progress" aria-label="Progreso de ${title}" title="Progreso de esta partitura">${ic("trophy", "sm")}<span class="card-lbl">Progreso</span></button>`}
     ${!demo && /^https?:\/\//i.test(s.sourceUrl || "") ? `<a class="btn btn-sec" href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Abrir el original de ${title} (se abre en otra pestaña)" title="Abrir el original">${ic("ext", "sm")}<span class="card-lbl">Abrir original</span></a>` : ""}
     ${demo ? `<button class="btn" data-act="adddemo">${ic("plus", "sm")}Agregar a mi biblioteca</button><button class="btn" data-act="demokb" aria-label="Probar la demo con el teclado de pantalla">${ic("midi", "sm")}Probar con el teclado de pantalla</button>` : `<button class="btn btn-sec" data-act="edit" aria-label="Editar ${title}" title="Editar">${ic("pencil", "sm")}<span class="card-lbl">Editar</span></button><button class="btn icon btn-sec" data-act="arrange" aria-label="Arreglo de ${title}: solo melodía o acompañamiento" title="Arreglo">${ic("sliders")}</button><button class="btn icon btn-sec" data-act="task" aria-label="Crear tarea con ${title}" title="Crear tarea">${ic("clip")}</button><button class="btn icon danger btn-sec" data-act="del" aria-label="Eliminar ${title}" title="Eliminar">${ic("trash")}</button>`}</div></li>`;
 }
 let _bundled = null;
 const bundledIds = () => (_bundled ||= new Set([demoScore.id, ...PIECES.flatMap((p) => p.versions.map((v) => v.score.id))]));
 let continueInfo = null;
+let progressInfo = null;   // pieza practicada más recientemente (enlace «Ver mi progreso» de la tarjeta «Tu práctica»)
 const id2score = (id, list) => (id === demoScore.id ? demoScore : (list || []).find((x) => x.id === id));
 async function refreshLibrary() {
   refreshPendingPdf().catch(() => {});
@@ -284,6 +286,8 @@ async function refreshLibrary() {
   if (dr.length) { $("draft-title").textContent = dr[0].title || "Sin título"; $("draft-sub").textContent = `${(dr[0].measures || []).length} compases · sin confirmar${dr.length > 1 ? ` · ${dr.length} borradores en total` : ""}`; dc.dataset.id = dr[0].id; }
   const ids = new Set(list.map((x) => x.id)); ids.add(demoScore.id);
   continueInfo = latestPractice(settings.lastPractice, (id) => ids.has(id));
+  progressInfo = latestPractice(settings.lastPractice, (id) => ids.has(id));
+  $("pc-progress").hidden = !progressInfo;
   const cc = $("continue-card");
   cc.hidden = !continueInfo;
   document.querySelector("#screen-library .content").classList.toggle("no-cont", !continueInfo);
@@ -320,6 +324,7 @@ async function onCardClick(e) {
   try {
     if (act === "practice") startPractice(await resolveScore(id));
     else if (act === "listen") startPractice(await resolveScore(id), { listen: true });
+    else if (act === "progress") openProgress(id);
     else if (act === "demokb") await startOnscreen(await resolveScore(id));
     else if (act === "edit") openReview(await resolveScore(id), false);
     else if (act === "task") openTaskSheet(await resolveScore(id));
@@ -3607,45 +3612,34 @@ async function stopPracticeAudio(discard) {
 }
 $("practice-rec").addEventListener("click", () => { if (pRec) stopPracticeAudio(false).then(() => toast("Audio de la toma en curso listo.", 2400)); else startPracticeAudio(); });
 
-/* ---- progreso de una partitura: lista de tomas, con reproducción ---- */
-let progressScoreId = null, takePlayer = null, takeAudioUrl = "";
+/* ---- progreso de una partitura: pantalla propia (evolución, comparación, piano-roll, escucha y lista de tomas) ---- */
+let takePlayer = null, takeAudioUrl = "";
 let lastPlayPlan = [];   // gancho de verificación: notas programadas en la última reproducción
-const TAKE_HANDS_ES = { both: "ambas manos", rh: "mano derecha", lh: "mano izquierda" };
-const MODE_TAKE_ES = { espera: "Te espero", pulso: "A pulso" };
-function openProgress(scoreId) { progressScoreId = scoreId; show("progress"); }
-async function renderProgress() {
-  const list = $("progress-list");
-  const sc = current && current.id === progressScoreId ? current : null;
-  $("progress-title").textContent = (sc && sc.title) || "Progreso";
-  let takes = [];
-  try { takes = (await (await lazy("store")).listTakes(progressScoreId)) || []; } catch (e) { takes = []; }
-  $("progress-empty").hidden = takes.length > 0;
-  $("progress-sub").textContent = takes.length ? `${takes.length} ${takes.length === 1 ? "toma guardada" : "tomas guardadas"}. Más reciente primero. Tocá «Reproducir» para escucharla con sus tiempos.` : "";
-  list.innerHTML = "";
-  for (const t of takes.slice().reverse()) {
-    const m = sc ? takeMetrics(t, buildSteps(sc, t.hands)) : null;
-    const when = fmtDate(Date.parse(t.at)) + " " + new Date(t.at).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
-    const range = t.range ? `compases ${t.range.from + 1}–${t.range.to + 1}` : "pieza entera";
-    const facts = [MODE_TAKE_ES[t.mode] || t.mode, TAKE_HANDS_ES[t.hands] || t.hands, range, t.loop ? "en bucle" : ""].filter(Boolean).join(" · ");
-    const nums = m ? `<span>Precisión <b>${m.accuracy}%</b></span><span>Tempo efectivo <b>${m.tempoBpm ?? "—"}</b></span><span>Pulso <b>${m.evenness ?? "—"}/100</b></span><span>Titubeos <b>${m.hesitations}</b></span><span>Errores <b>${m.wrongNotes}</b></span>` : `<span>${t.events.length} notas</span>`;
-    const li = document.createElement("li");
-    li.className = "card take-card";
-    li.innerHTML = `<div class="take-top"><b>${esc(when)}</b><span class="tag">${esc(facts)}</span></div><div class="take-nums">${nums}</div>
-      <div class="row wrap"><button class="btn primary" type="button" data-play="${esc(t.id)}" aria-label="Reproducir la toma de ${esc(when)}"><svg class="ic sm" aria-hidden="true"><use href="#i-play"/></svg>Reproducir</button>${t.hasAudio ? `<button class="btn" type="button" data-audio="${esc(t.id)}" aria-label="Escuchar el audio de la toma de ${esc(when)}"><svg class="ic sm" aria-hidden="true"><use href="#i-play"/></svg>Escuchar audio</button>` : ""}</div>`;
-    li.querySelector("[data-play]").addEventListener("click", () => playTake(t));
-    const au = li.querySelector("[data-audio]");
-    if (au) au.addEventListener("click", () => playTakeAudio(t.id));
-    list.appendChild(li);
-  }
+let progressFrom = "result";
+const progressUI = createProgressScreen({
+  loadStore: () => lazy("store"),
+  resolveScore: (id) => resolveScore(id),
+  startPractice: (score, o) => startPractice(score, o),
+  playTake: (take, o) => playTake(take, o),
+  stopPlay: () => stopTakePlay(),
+  confirm: (o) => confirmDialog(o),
+  toast: (m, ms) => toast(m, ms),
+});
+/** Abre el progreso de una partitura; «Volver» regresa a la pantalla de origen. */
+function openProgress(scoreId) {
+  progressFrom = ["result", "mylib", "library"].includes(screen) ? screen : "library";
+  show("progress");
+  progressUI.open(scoreId, progressFrom);
 }
-$("progress-back").addEventListener("click", () => show("result", false));
+$("progress-back").addEventListener("click", () => show(progressFrom, false));
 $("result-progress").addEventListener("click", () => { if (current) openProgress(current.id); });
+$("pc-progress").addEventListener("click", () => { if (progressInfo) openProgress(progressInfo.id); });
 function stopTakePlay() {
   if (takePlayer) { takePlayer.stop(); takePlayer = null; }
   if (takeAudioUrl) { URL.revokeObjectURL(takeAudioUrl); takeAudioUrl = ""; }
 }
-/** Reproduce las notas de una toma con sus tiempos reales (sintetizador del piano). */
-async function playTake(take) {
+/** Reproduce las notas de una toma con sus tiempos reales (sintetizador del piano). `onEnd` se llama al terminar (para encadenar). */
+async function playTake(take, { onEnd = null, tailMs = 1500 } = {}) {
   stopTakePlay();
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) { toast("Este navegador no puede reproducir audio.", 3600); return; }
@@ -3656,7 +3650,7 @@ async function playTake(take) {
   lastPlayPlan = take.events.map(([t, midi, vel, dur]) => ({ at: +(t0 + t / 1000).toFixed(3), midi, vel, dur: dur == null ? 250 : dur }));
   for (const p of lastPlayPlan) synth.note({ midi: p.midi, vel: clampN(p.vel / 90, 0.2, 1.4) }, p.at, Math.max(0.12, p.dur / 1000));
   const endS = take.events.reduce((x, [t, , , d]) => Math.max(x, t + (d == null ? 250 : d)), 0) / 1000;
-  const timer = setTimeout(() => stopTakePlay(), (endS + 1.5) * 1000);
+  const timer = setTimeout(() => { stopTakePlay(); if (onEnd) onEnd(); }, (endS + tailMs / 1000) * 1000);
   takePlayer = { stop: () => { clearTimeout(timer); try { synth.allOff(ctx.currentTime); } catch (e) { /* ya parado */ } ctx.close().catch(() => {}); } };
 }
 const clampN = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -3766,7 +3760,7 @@ if (new URLSearchParams(location.search).has("debug")) {
     ptCheckpoint: () => { ptTracker.checkpoint(); ptFlush(); },
     takes: () => ({ rec: takeRec ? { events: takeRec.events.length, steps: takeRec.steps.length } : null, last: lastTakeInfo ? { id: lastTakeInfo.take.id, metrics: lastTakeInfo.metrics, hasAudio: lastTakeInfo.take.hasAudio, saved: lastTakeInfo.saved } : null, plan: lastPlayPlan }),
     playTakeById: async (id) => playTake(await (await lazy("store")).getTake(id)), playTakeAudio, stopTakePlay,
-    openProgress, startPracticeAudio, stopPracticeAudio, pRecOn: () => !!pRec, takesFor: async (id) => (await lazy("store")).listTakes(id),
+    openProgress, progress: () => progressUI.debug(), startPracticeAudio, stopPracticeAudio, pRecOn: () => !!pRec, takesFor: async (id) => (await lazy("store")).listTakes(id),
     practiceCard: () => ({ hidden: $("practice-card").hidden, total: $("pc-total").textContent, today: $("pc-today").textContent, week: $("pc-week").textContent, streak: $("pc-streak").textContent }),
   };
 }

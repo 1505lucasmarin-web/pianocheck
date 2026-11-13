@@ -31,7 +31,7 @@ export const rangeKey = (t) => (t && t.range ? `${t.range.from}-${t.range.to}` :
  *   range ({from,to} base 0 | null), loop (bool), bpm, durationSec, source ("midi"|"mic"|"teclado"), hasAudio (bool),
  *   events: [[tMs desde el inicio, midi, velocity 0-127, durMs | null]] ordenados por tiempo,
  *   steps: [{ i (índice en buildSteps), measure (base 0), tOn (ms desde el inicio en que se completó), clean (bool), wrong (nº de notas erradas antes de ese paso) }],
- *   summary: { accuracy, status, clean, dirty, wrong } }
+ *   summary: { accuracy, status, clean, dirty, wrong }, keep (bool: favorita, no se borra con la retención) }
  * @param {object} raw
  * @returns {object|null}
  */
@@ -84,6 +84,7 @@ export function buildTake(raw) {
     durationSec: Number.isFinite(dur) && dur >= 0 ? round1(dur) : round1(events[events.length - 1][0] / 1000),
     source: ["midi", "mic", "teclado"].includes(raw.source) ? raw.source : "teclado",
     hasAudio: raw.hasAudio === true,
+    keep: raw.keep === true,
     events, steps, summary,
   };
 }
@@ -265,6 +266,7 @@ export function trend(takes, steps) {
 /**
  * Pura: ids de tomas que hay que borrar para no llenar el dispositivo. Se conservan todas las tomas de los
  * últimos keepDays días; de lo anterior, por día, partitura, mano y rango, la MEJOR (precisión) y la ÚLTIMA.
+ * Las favoritas (keep: true) nunca se borran y no cuentan para elegir la mejor o la última de su grupo.
  * @param {object[]} takes
  * @param {{now?:number, keepDays?:number}} [o]
  * @returns {string[]}
@@ -273,7 +275,7 @@ export function pruneTakes(takes, { now = Date.now(), keepDays = KEEP_ALL_DAYS }
   const cut = shiftDay(now, keepDays);
   const groups = new Map();
   for (const t of takes || []) {
-    if (!t || !t.id || t.day >= cut) continue;
+    if (!t || !t.id || t.keep === true || t.day >= cut) continue;
     const key = `${t.day}|${t.scoreId}|${t.hands}|${rangeKey(t)}`;
     (groups.get(key) || groups.set(key, []).get(key)).push(t);
   }
