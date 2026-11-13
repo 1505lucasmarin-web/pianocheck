@@ -1,9 +1,27 @@
 // Sincronización entre dispositivos: lógica pura (sin DOM, sin IndexedDB, sin Firebase).
 export const MAX_DOC_CHARS = 900000;          // Firestore limita cada documento a ~1 MiB
 export const PULL_OVERLAP_MS = 5 * 60000;      // se re-lee un margen por si los relojes de los dispositivos difieren
-export const COLLECTIONS = { score: 'scores', anno: 'annos', attempt: 'attempts', take: 'takes', theory: 'meta', settings: 'meta', practice: 'practice' };
+export const COLLECTIONS = { score: 'scores', anno: 'annos', attempt: 'attempts', take: 'takes', audio: 'audio', theory: 'meta', settings: 'meta', practice: 'practice' };
 /** Ajustes que viajan entre dispositivos (el resto es de cada aparato: teclado en pantalla, micrófono, etc.). La API key va aparte, sólo si se activa. */
 export const SYNC_SETTINGS = ['scoreView', 'scoreTheme', 'scoreSize', 'showPhrases', 'guide', 'countIn', 'pulseWindow', 'hideMarks', 'timbre', 'listenSpeed', 'listenRepeat', 'listenHands', 'listenMetro', 'listenCountIn', 'listenMuteMine', 'listenAlong', 'listenVolume', 'holdMode', 'showPaid', 'saveTakes', 'lastPractice', 'tasks'];
+export const AUDIO_CHUNK = 700000;            // caracteres base64 por documento (< 1 MiB)
+export const MAX_AUDIO_CHARS = 9000000;       // ~6,5 MB de audio por toma; más grande no se sube
+/** Parte el audio (base64) en documentos; null si es demasiado grande. */
+export function splitAudio(takeId, mime, b64, now) {
+  if (!b64 || b64.length > MAX_AUDIO_CHARS) return null;
+  const total = Math.max(1, Math.ceil(b64.length / AUDIO_CHUNK));
+  const out = [];
+  for (let n = 0; n < total; n++) out.push({ id: `${takeId}~${n}`, data: { u: now, takeId, n, total, mime: mime || 'audio/webm', b64: b64.slice(n * AUDIO_CHUNK, (n + 1) * AUDIO_CHUNK) } });
+  return out;
+}
+/** Junta los pedazos de una toma; null si faltan. */
+export function joinAudio(pieces) {
+  if (!pieces || !pieces.length) return null;
+  const total = pieces[0].total, by = new Map(pieces.map((p) => [p.n, p]));
+  if (!(total >= 1) || by.size < total) return null;
+  let b64 = ''; for (let n = 0; n < total; n++) { const p = by.get(n); if (!p) return null; b64 += p.b64; }
+  return { mime: pieces[0].mime, b64 };
+}
 export const KEY_FIELDS = ['provider', 'apiKey', 'model'];
 
 /** Id de documento válido (Firestore no admite "/"). */
@@ -13,7 +31,7 @@ export function pickSettings(settings, withKey = false) {
   const out = {};
   const s = settings && typeof settings === 'object' ? settings : {};
   for (const k of SYNC_SETTINGS) if (s[k] !== undefined) out[k] = s[k];
-  if (withKey) for (const k of KEY_FIELDS) if (s[k] !== undefined) out[k] = s[k];
+  if (withKey && typeof s.apiKey === 'string' && s.apiKey) for (const k of KEY_FIELDS) if (s[k] !== undefined) out[k] = s[k];   // una key vacía nunca pisa la de la nube
   return out;
 }
 /** Qué aplicar localmente de los ajustes remotos (la key sólo si este dispositivo lo permite). */

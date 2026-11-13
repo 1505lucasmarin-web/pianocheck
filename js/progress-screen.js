@@ -260,6 +260,7 @@ export function createProgressScreen({ loadStore, resolveScore, startPractice, p
           <div class="row wrap pg-take-acts">
             <button type="button" class="btn primary" data-pg="play-take" data-id="${esc(t.id)}" aria-label="Reproducir la toma de ${esc(when)}">${ic("play", "sm")}Reproducir</button>
             <button type="button" class="btn" data-pg="keep" data-id="${esc(t.id)}" aria-pressed="${!!t.keep}" aria-label="${t.keep ? "Quitar de favoritas" : "Marcar como favorita"}: toma de ${esc(when)}">${t.keep ? "★ Favorita" : "☆ Marcar favorita"}</button>
+            ${t.hasAudio || t.syncAudio ? `<button type="button" class="btn" data-pg="sync-audio" data-id="${esc(t.id)}" aria-pressed="${!!t.syncAudio}" aria-label="${t.syncAudio ? "Dejar de sincronizar el audio" : "Sincronizar el audio con mi cuenta"}: toma de ${esc(when)}">${t.syncAudio ? "☁ Audio sincronizado" : "☁ Sincronizar audio"}</button>` : ""}
             <button type="button" class="btn danger" data-pg="del" data-id="${esc(t.id)}" aria-label="Borrar la toma de ${esc(when)}">${ic("trash", "sm")}Borrar</button>
           </div>
         </li>`;
@@ -313,6 +314,13 @@ export function createProgressScreen({ loadStore, resolveScore, startPractice, p
     const token = ++S.altToken;
     playTake({ id: "alt-a", events: sa.events }, { tailMs: 400, onEnd: () => { if (token === S.altToken) playTake({ id: "alt-b", events: sb.events }, { tailMs: 400 }); } });
   }
+  async function toggleSyncAudio(id) {
+    const st = await loadStore(), t = byId(id);
+    if (!t) return;
+    await st.setTakeSyncAudio(id, !t.syncAudio);
+    toast(t.syncAudio ? "El audio ya no se sube a tu cuenta (en los otros dispositivos puede quedar la copia)." : "El audio se subirá a tu cuenta y llegará a tus otros dispositivos (requiere iniciar sesión en Ajustes).", 4200);
+    await load();
+  }
   async function toggleKeep(id) {
     const st = await loadStore(), t = byId(id);
     if (!t) return;
@@ -341,6 +349,7 @@ export function createProgressScreen({ loadStore, resolveScore, startPractice, p
     alt: () => alternate(),
     "play-take": (b) => { const t = byId(b.dataset.id); if (t) { S.altToken++; playTake(t); } },
     keep: (b) => toggleKeep(b.dataset.id),
+    "sync-audio": (b) => toggleSyncAudio(b.dataset.id),
     del: (b) => removeTake(b.dataset.id),
     practice: () => practiceFrom("both", "espera", null),
   };

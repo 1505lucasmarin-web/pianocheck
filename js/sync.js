@@ -40,6 +40,17 @@ async function loadFirebase() {
   return fb;
 }
 
+async function blobToB64(blob) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Blob([u], { type: mime || 'audio/webm' });
+}
+
 /* ---- adaptador local (IndexedDB vía store.js) ---- */
 const local = {
   getMeta: () => store.getSyncMeta(),
@@ -49,6 +60,12 @@ const local = {
     if (kind === 'anno') return store.getAnnotations(id);
     if (kind === 'attempt') return ((await store.listAttempts()) || []).find((a) => a.id === id) || null;
     if (kind === 'take') return store.getTake(id);
+    if (kind === 'audio') {                                     // sólo las tomas que el usuario marcó
+      const t = await store.getTake(id);
+      if (!t || !t.syncAudio || !t.hasAudio) return null;
+      const a = await store.getTakeAudio(id);
+      return a && a.blob ? { mime: a.mime, b64: await blobToB64(a.blob) } : null;
+    }
     if (kind === 'theory') return store.getTheoryProgress();
     if (kind === 'settings') return store.getSettings();
     if (kind === 'practice') return store.getOwnPracticeLog();
@@ -60,6 +77,7 @@ const local = {
       else if (kind === 'anno') await store.putAnnotationsRaw(id, rec);
       else if (kind === 'attempt') await store.putAttemptRaw(rec);
       else if (kind === 'take') await store.saveTake(rec);
+      else if (kind === 'audio') await store.putTakeAudio(id, b64ToBlob(rec.b64, rec.mime), rec.mime);
       else if (kind === 'theory') await store.putTheoryRaw(rec);
       else if (kind === 'settings') await store.saveSettings(rec);
       else if (kind === 'practiceRemote') await store.putPracticeRemote(id, rec);
@@ -72,7 +90,9 @@ const local = {
       else if (kind === 'take') await store.deleteTakes([id]);
     });
   },
-  async listAll(kind) { return ((await store.listIds(kind)) || []).map((id) => ({ id })); },
+  async listAll(kind) {
+    if (kind === 'audio') return ((await store.listTakes()) || []).filter((t) => t.syncAudio).map((t) => ({ id: t.id }));
+    return ((await store.listIds(kind)) || []).map((id) => ({ id })); },
 };
 
 /* ---- adaptador remoto (Firestore) ---- */
@@ -86,6 +106,11 @@ const remote = {
     const f = fb, b = f.writeBatch(db);
     for (const d of docs) b.set(f.doc(db, 'users', user.uid, d.coll, d.id), d.data);
     await withTimeout(b.commit());
+  },
+  async removeAudio(takeId) {
+    const f = fb, snap = await withTimeout(f.getDocs(f.query(f.collection(db, 'users', user.uid, 'audio'), f.where('takeId', '==', takeId))));
+    if (snap.empty) return;
+    const b = f.writeBatch(db); snap.docs.forEach((d) => b.delete(d.ref)); await withTimeout(b.commit());
   },
 };
 
@@ -101,6 +126,7 @@ async function startEngine() {
   deviceId = await getDeviceId();
   engine = createEngine({ local, remote, deviceId });
   const m = await engine.loadMeta();
+  if (m.syncKey === undefined) m.syncKey = true;   // la API key sincroniza por defecto (se puede apagar en Ajustes)
   const first = m.uid !== user.uid;
   if (first) { m.uid = user.uid; m.lastPull = {}; m.dirty = {}; m.deviceId = deviceId; await engine.saveMeta(); await engine.markAllDirty(); }
   emit({ syncKey: !!m.syncKey });

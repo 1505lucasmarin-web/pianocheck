@@ -369,7 +369,7 @@ export async function deleteTakes(ids) {
   if (!list.length) return;
   await run('takes', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
   await run('takeAudio', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
-  list.forEach((id) => ping('take', id));
+  list.forEach((id) => { ping('take', id); ping('audio', id); });
 }
 async function deleteTakesOf(scoreId) {
   const list = await listTakes(scoreId);
@@ -380,7 +380,7 @@ export async function deleteAllTakes() {
   const ids = (await listTakes()).map((t) => t.id);
   await run('takes', 'readwrite', (s) => s.clear());
   await run('takeAudio', 'readwrite', (s) => s.clear());
-  ids.forEach((id) => ping('take', id));
+  ids.forEach((id) => { ping('take', id); ping('audio', id); });
 }
 /** Aplica la política de retención (takes.pruneTakes): conserva lo reciente y la mejor/última de cada día antiguo. Devuelve cuántas borró. */
 export async function pruneTakesNow(now = Date.now()) {
@@ -394,6 +394,16 @@ export async function putTakeAudio(takeId, blob, mime) {
   await run('takeAudio', 'readwrite', (s) => s.put({ blob, mime: mime || blob.type || 'audio/webm' }, takeId));
   const t = await getTake(takeId);
   if (t && !t.hasAudio) await saveTake({ ...t, hasAudio: true });
+  if (t && t.syncAudio) ping('audio', takeId);
+}
+/** Marca (o desmarca) una toma para que su audio viaje a la cuenta. Sólo las que el usuario elige. */
+export async function setTakeSyncAudio(takeId, on) {
+  const t = await getTake(takeId);
+  if (!t) return null;
+  const next = { ...t, syncAudio: !!on };
+  await run('takes', 'readwrite', (s) => s.put(next));
+  ping('audio', takeId);
+  return next;
 }
 /** Audio de una toma: { blob, mime } o null. */
 export async function getTakeAudio(takeId) {
@@ -401,6 +411,7 @@ export async function getTakeAudio(takeId) {
 }
 export async function deleteTakeAudio(takeId) {
   await run('takeAudio', 'readwrite', (s) => s.delete(takeId));
+  ping('audio', takeId);
   const t = await getTake(takeId);
   if (t && t.hasAudio) await saveTake({ ...t, hasAudio: false });
 }

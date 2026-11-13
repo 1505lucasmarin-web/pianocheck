@@ -10,7 +10,7 @@ function fakeRemote() {
     async push(docs) { for (const d of docs) ((db[d.coll] ||= {})[d.id] = JSON.parse(JSON.stringify(d.data))); } };
 }
 function fakeLocal() {
-  const st = { score: {}, anno: {}, attempt: {}, take: {}, theory: { main: { lessons: {} } }, settings: { app: {} }, practice: { own: { days: {} } }, practiceRemote: {} };
+  const st = { score: {}, anno: {}, attempt: {}, take: {}, audio: {}, theory: { main: { lessons: {} } }, settings: { app: {} }, practice: { own: { days: {} } }, practiceRemote: {} };
   let meta = null;
   return { st,
     async getMeta() { return meta; }, async setMeta(m) { meta = JSON.parse(JSON.stringify(m)); },
@@ -93,4 +93,25 @@ test("documentos enormes se omiten; ids y packDoc", () => {
   assert.deepEqual(pickSettings({ scoreTheme: 'x', apiKey: 'k', micSensitivity: 1 }), { scoreTheme: 'x' });
   assert.deepEqual(settingsToApply({ scoreTheme: 'x', apiKey: 'k' }, true), { scoreTheme: 'x', apiKey: 'k' });
   assert.deepEqual(mergeTheory(null, null), { lessons: {} });
+});
+
+test("audio: sólo viaja el de tomas marcadas y llega a otros dispositivos que ya tienen la toma", async () => {
+  const { splitAudio, joinAudio, AUDIO_CHUNK, MAX_AUDIO_CHARS } = await import("../js/sync-core.js");
+  const big = "A".repeat(AUDIO_CHUNK * 2 + 5);
+  const parts = splitAudio("t1", "audio/webm", big, 1);
+  assert.equal(parts.length, 3); assert.equal(joinAudio(parts.map((p) => p.data)).b64, big);
+  assert.equal(joinAudio(parts.slice(1).map((p) => p.data)), null); assert.equal(splitAudio("t", "x", "A".repeat(MAX_AUDIO_CHARS + 1), 1), null);
+  const r = fakeRemote(); r.removeAudio = async (id) => { for (const k of Object.keys(r.db.audio || {})) if (k.startsWith(id + "~")) delete r.db.audio[k]; };
+  const A = mk(r, "A", 1000), B = mk(r, "B", 1000);
+  const origGet = A.local.get; A.local.get = async (k, id) => (k === "audio" ? (A.local.st.take[id] && A.local.st.take[id].syncAudio ? { mime: "audio/webm", b64: "QUJD" } : null) : origGet(k, id));
+  B.local.put = async (k, id, rec) => { if (k === "audio") { B.local.st.take[id].hasAudio = true; B.local.audio = rec; } else if (k === "take") B.local.st.take[id] = { ...rec }; };
+  A.local.st.take.t1 = { id: "t1", scoreId: "s", hasAudio: true, syncAudio: true, events: [] }; A.local.st.take.t2 = { id: "t2", scoreId: "s", hasAudio: true, events: [] };
+  await A.eng.markDirty("take", "t1"); await A.eng.markDirty("take", "t2"); await A.eng.markDirty("audio", "t1"); await A.eng.markDirty("audio", "t2");
+  await A.eng.sync(); assert.deepEqual(Object.keys(r.db.audio), ["t1~0"]);
+  await B.eng.sync(); assert.equal(B.local.audio.b64, "QUJD"); assert.equal(B.local.st.take.t2.hasAudio, false);
+  A.local.st.take.t1.syncAudio = false; A.clock.t = 5000; await A.eng.markDirty("audio", "t1"); await A.eng.sync();
+  assert.deepEqual(Object.keys(r.db.audio || {}), []);
+});
+test("una API key vacía no pisa la de la nube", () => {
+  assert.deepEqual(pickSettings({ scoreTheme: "x", apiKey: "" }, true), { scoreTheme: "x" });
 });

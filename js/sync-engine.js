@@ -1,9 +1,9 @@
 // Motor de sincronización: independiente de Firebase y de IndexedDB (recibe adaptadores `local` y `remote`), así se prueba con memoria.
 // local:  getMeta/setMeta, get(kind,id), put(kind,id,rec), remove(kind,id), listAll(kind) -> [{id}]
 // remote: pull(coll, sinceMs) -> [{id, data}], push([{coll,id,data}])
-import { COLLECTIONS, PULL_OVERLAP_MS, docId, packDoc, tombstone, unpackDoc, pickSettings, settingsToApply, mergeTheory, sameJSON, chunk } from './sync-core.js';
+import { COLLECTIONS, PULL_OVERLAP_MS, docId, packDoc, tombstone, unpackDoc, pickSettings, settingsToApply, mergeTheory, sameJSON, chunk, splitAudio, joinAudio } from './sync-core.js';
 
-const PULL_ORDER = ['scores', 'annos', 'attempts', 'takes', 'practice', 'meta'];
+const PULL_ORDER = ['scores', 'annos', 'attempts', 'takes', 'audio', 'practice', 'meta'];
 const KIND_OF = { scores: 'score', annos: 'anno', attempts: 'attempt', takes: 'take' };
 const TOMBSTONE_KINDS = new Set(['score', 'anno', 'take']);
 
@@ -16,7 +16,7 @@ export function createEngine({ local, remote, deviceId, now = () => Date.now() }
   async function markDirty(kind, id) { await loadMeta(); meta.dirty[keyOf(kind, id || '')] = now(); if (kind === 'settings') meta.settingsU = now(); await saveMeta(); }
   async function markAllDirty() {
     await loadMeta();
-    for (const kind of ['score', 'anno', 'attempt', 'take']) for (const { id } of await local.listAll(kind)) meta.dirty[keyOf(kind, id)] = now();
+    for (const kind of ['score', 'anno', 'attempt', 'take', 'audio']) for (const { id } of await local.listAll(kind)) meta.dirty[keyOf(kind, id)] = now();
     for (const k of ['theory:main', 'settings:app', 'practice:own']) meta.dirty[k] = now();
     meta.settingsU = meta.settingsU || 0;
     await saveMeta();
@@ -33,6 +33,13 @@ export function createEngine({ local, remote, deviceId, now = () => Date.now() }
       else if (kind === 'practice') rec = await local.get('practice', 'own');
       else rec = await local.get(kind, id);
       const t = now();
+      if (kind === 'audio') {                                   // rec = { mime, b64 } sólo si la toma está marcada para sincronizar su audio
+        if (rec == null) { if (remote.removeAudio) await remote.removeAudio(id); sent.push([key, stamp]); continue; }
+        const parts = splitAudio(id, rec.mime, rec.b64, t);
+        if (!parts) { skipped.push(key); sent.push([key, stamp]); continue; }
+        for (const p of parts) docs.push({ coll: 'audio', id: p.id, data: p.data });
+        sent.push([key, stamp]); continue;
+      }
       let data;
       if (rec == null) { if (!TOMBSTONE_KINDS.has(kind)) { sent.push([key, stamp]); continue; } data = tombstone(t); }
       else { data = packDoc(rec, t); if (!data) { skipped.push(key); sent.push([key, stamp]); continue; } }
@@ -53,6 +60,17 @@ export function createEngine({ local, remote, deviceId, now = () => Date.now() }
       const since = Math.max(0, (meta.lastPull[coll] || 0) - PULL_OVERLAP_MS);
       const docs = await remote.pull(coll, since);
       let maxU = meta.lastPull[coll] || 0;
+      if (coll === 'audio') {
+        const by = {};
+        for (const { data } of docs) { if (data && data.takeId) { (by[data.takeId] ||= []).push(data); if ((data.u || 0) > maxU) maxU = data.u; } }
+        for (const [takeId, pieces] of Object.entries(by)) {
+          const take = await local.get('take', takeId);
+          if (!take || take.hasAudio) continue;
+          const joined = joinAudio(pieces);
+          if (joined) { await local.put('audio', takeId, joined); changed.add('audio'); }
+        }
+        meta.lastPull[coll] = maxU; continue;
+      }
       for (const { id, data } of docs) {
         const d = unpackDoc(data);
         if (!d) continue;
