@@ -641,15 +641,40 @@
   </section>
 
   <dialog id="goat-reward" class="goat-reward" aria-labelledby="goat-title">
-    <div class="goat-stage">
-      <div class="goat-stars" aria-hidden="true"><span>✦</span><span>★</span><span>✷</span><span>✦</span></div>
-      <canvas id="goat-art" class="goat-art" width="172" height="108" aria-hidden="true"></canvas>
-      <span class="goat-stamp" aria-hidden="true">0 ERRORES</span>
+    <div class="goat-desktop">
+      <div class="goat-toolbar" aria-hidden="true"><span>♬ PianoCheck — felicitaciones.ppt</span><span>▁ ▣ ×</span></div>
+      <div class="goat-slide">
+        <div class="goat-burst" aria-hidden="true"></div>
+        <h2 id="goat-title" class="goat-title">
+          <span class="goat-wordart">¡FELICITACIONES!</span>
+          <span class="goat-subtitle">SOS EL GOAT DE</span>
+          <span id="goat-song" class="goat-song"></span>
+        </h2>
+        <div class="goat-collage" aria-hidden="true">
+          <div class="goat-window goat-paint">
+            <span class="goat-bar">cabrita.bmp — Paint <b>×</b></span>
+            <canvas id="goat-art" class="goat-art" width="172" height="108"></canvas>
+          </div>
+          <div class="goat-window goat-alert">
+            <span class="goat-bar">Error <b>×</b></span>
+            <span class="goat-alert-copy"><b>❌</b> Error: no hay errores.</span>
+            <span class="goat-ok">Aceptar</span>
+          </div>
+          <div class="goat-window goat-stat">
+            <span class="goat-bar">Propiedades <b>×</b></span>
+            <span>Errores encontrados</span><strong>0</strong>
+            <span class="goat-meter"></span>
+          </div>
+          <span class="goat-sticker goat-thumb">👍</span>
+          <span class="goat-sticker goat-runner">🏃</span>
+          <span class="goat-sticker goat-fire">💥</span>
+          <span class="goat-sticker goat-fish">🐟</span>
+        </div>
+      </div>
+      <form class="goat-footer" method="dialog">
+        <button class="goat-close" autofocus>Ver resultado <span aria-hidden="true">↵</span></button>
+      </form>
     </div>
-    <h2 id="goat-title" class="goat-title">¡FELICITACIONES!<br>SOS EL GOAT DE <span id="goat-song"></span></h2>
-    <form method="dialog">
-      <button class="goat-close" autofocus>Ver resultado <span aria-hidden="true">↵</span></button>
-    </form>
   </dialog>
 
   <!-- 4b. Progreso de una partitura: evolución, comparación de dos tomas, piano-roll, escucha y lista de tomas -->
