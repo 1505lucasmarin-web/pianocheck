@@ -1493,6 +1493,34 @@ async function runImportTask(file) {
   }
 }
 
+/* ---------- cuenta y sincronización (Google + Firebase; se carga bajo demanda) ---------- */
+function paintAccount(st) {
+  const on = st.status !== "off";
+  $("acc-signin").hidden = on; $("acc-sync").hidden = !on; $("acc-signout").hidden = !on;
+  $("acc-key").checked = !!st.syncKey;
+  const el = $("acc-state"); el.hidden = !on && !st.message;
+  const when = st.lastSync ? " Última sincronización: " + new Date(st.lastSync).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }) + "." : "";
+  el.textContent = !on ? st.message : st.status === "syncing" ? "Sincronizando…" : st.status === "error" ? "Sesión iniciada como " + st.email + ". " + st.message : st.status === "offline" ? "Sesión iniciada como " + st.email + ". " + st.message : "Sesión iniciada como " + st.email + "." + when;
+  $("acc-intro").hidden = on;
+}
+async function initAccount() {
+  try { const sy = await lazy("sync"); await sy.init(paintAccount); paintAccount(sy.getState()); } catch (e) { console.warn("Cuenta:", e.message); }
+}
+window.addEventListener("pianocheck-synced", async () => {
+  try { await loadSettings(); if (screen === "library") refreshLibrary(); } catch (e) { /* la próxima apertura lo refleja */ }
+});
+$("acc-signin").addEventListener("click", async () => {
+  const sy = await lazy("sync");
+  sy.init(paintAccount); paintAccount({ ...sy.getState(), status: "syncing", email: "" });
+  try { await sy.signIn(); } catch (e) { toast(sy.getState().message || e.message, 5000); paintAccount(sy.getState()); }
+});
+$("acc-sync").addEventListener("click", async () => { const sy = await lazy("sync"); try { await sy.syncNow(); toast("Sincronizado"); } catch (e) { toast(sy.getState().message, 5000); } });
+$("acc-signout").addEventListener("click", async () => {
+  if (!(await confirmDialog({ title: "Cerrar sesión", text: "Tus datos se quedan en este dispositivo; sólo se corta la sincronización con la cuenta.", yes: "Cerrar sesión", no: "Cancelar", danger: false }))) return;
+  const sy = await lazy("sync"); await sy.signOut(); paintAccount(sy.getState());
+});
+$("acc-key").addEventListener("change", async () => { const sy = await lazy("sync"); await sy.setSyncKey($("acc-key").checked); });
+
 /* ---------- ajustes ---------- */
 async function loadSettings() {
   const s = await store.settings();
@@ -3677,6 +3705,7 @@ function base64ToBlob(b64, mime) {
 /* ---------- arranque ---------- */
 (async function init() {
   await loadSettings();
+  initAccount();
   show("library", false);
   handleIncomingHash();
   handleIncomingShare();

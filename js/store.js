@@ -1,9 +1,17 @@
 // Persistencia local en IndexedDB: base "pianocheck", stores "scores", "settings", "attempts", "takes" y "takeAudio".
 import { addSession, mergeLogs, normalizeLog, scoreSeconds as _scoreSeconds, totals as _totals } from './practice-time.js';
 import { pruneTakes as _pruneTakes } from './takes.js';
+import { sumLogs } from './sync-core.js';
 const DB_NAME = 'pianocheck';
 const DB_VERSION = 3;   // v3: stores "takes" (tomas) y "takeAudio" (audios). Migración aditiva: no toca lo existente.
 let dbPromise = null;
+
+/* ---- aviso de cambios para la sincronización (sync.js se engancha con onChange; sin cuenta no hace nada) ---- */
+let _hook = null, _quiet = 0;
+export function onChange(fn) { _hook = typeof fn === 'function' ? fn : null; }
+const ping = (kind, id) => { if (_hook && !_quiet) { try { _hook(kind, id); } catch (e) { /* la sincronización nunca rompe el guardado */ } } };
+/** Ejecuta `fn` sin avisar cambios (lo usa la sincronización al aplicar lo que bajó de la nube). */
+export async function withoutNotify(fn) { _quiet++; try { return await fn(); } finally { _quiet--; } }
 
 function openDb() {
   if (!dbPromise) {
@@ -55,6 +63,7 @@ export async function saveScore(score) {
   if (!rec.id) rec.id = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   rec.updatedAt = Date.now();
   await run('scores', 'readwrite', (s) => s.put(rec));
+  ping('score', rec.id);
   return rec;
 }
 
@@ -64,12 +73,14 @@ export async function putScoreRaw(rec) {
   if (!r.id) throw new Error('Partitura sin id.');
   if (!Number.isFinite(r.updatedAt)) r.updatedAt = Date.now();
   await run('scores', 'readwrite', (s) => s.put(r));
+  ping('score', r.id);
   return r;
 }
 /** Guarda un intento tal cual (conserva id y fecha): para importar una biblioteca exportada. */
 export async function putAttemptRaw(rec) {
   if (!rec || !rec.id || !rec.scoreId) throw new Error('Intento inválido.');
   await run('attempts', 'readwrite', (s) => s.put(JSON.parse(JSON.stringify(rec))));
+  ping('attempt', rec.id);
 }
 
 export async function getScore(id) {
@@ -109,6 +120,7 @@ export async function updatePendingPdfImport(id, update) {
 
 export async function deleteScore(id) {
   await run('scores', 'readwrite', (s) => s.delete(id));
+  ping('score', id);
   try { await deleteAttempts(id); } catch (e) { /* sin historial */ }
   try { await deleteAnnotations(id); } catch (e) { /* sin anotaciones */ }
   try { await deleteTakesOf(id); } catch (e) { /* sin tomas */ }
@@ -122,7 +134,12 @@ export async function getAnnotations(scoreId) {
 /** `data` = lo que devuelve toJSON() del módulo de anotaciones (objeto serializable). Vacío/null borra el registro. */
 export async function saveAnnotations(scoreId, data) {
   if (!scoreId) return;
-  await run('settings', 'readwrite', (s) => (data ? s.put(JSON.parse(JSON.stringify(data)), 'anno:' + scoreId) : s.delete('anno:' + scoreId)));
+  await run('settings', 'readwrite', (s) => (data ? s.put({ ...JSON.parse(JSON.stringify(data)), _u: Date.now() }, 'anno:' + scoreId) : s.delete('anno:' + scoreId)));
+  ping('anno', scoreId);
+}
+/** Anotaciones tal cual (conservan su marca _u): para aplicar lo que llega de la nube. */
+export async function putAnnotationsRaw(scoreId, data) {
+  await run('settings', 'readwrite', (s) => s.put(JSON.parse(JSON.stringify(data)), 'anno:' + scoreId));
 }
 export async function deleteAnnotations(scoreId) { return saveAnnotations(scoreId, null); }
 
@@ -134,6 +151,7 @@ export async function addAttempt(att) {
   if (!att || !att.scoreId) throw new Error('Intento inválido.');
   const rec = { ...att, at: att.at || Date.now(), id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) };
   await run('attempts', 'readwrite', (s) => s.put(rec));
+  ping('attempt', rec.id);
   return rec;
 }
 
@@ -179,6 +197,7 @@ export async function saveSettings(obj) {
   const cur = await getSettings();
   const next = { ...cur, ...(obj || {}) };
   await run('settings', 'readwrite', (s) => s.put(next, 'app'));
+  ping('settings', 'app');
   return next;
 }
 
@@ -268,6 +287,7 @@ export async function getTheoryProgress() {
 export async function saveTheoryResult(lessonId, exercise, keyId, correct, total) {
   const next = recordTheory(await getTheoryProgress(), lessonId, exercise, keyId, correct, total);
   await run('settings', 'readwrite', (s) => s.put(next, 'theory'));
+  ping('theory', 'main');
   return next;
 }
 
@@ -290,11 +310,27 @@ async function rmwSetting(key, fn) {
 
 /** Registro completo de tiempo de práctica (normalizado). */
 export async function getPracticeLog() {
+  const own = normalizeLog(await run('settings', 'readonly', (s) => s.get('practiceTime')));
+  const remote = await getPracticeRemote();
+  const others = Object.values(remote);
+  return others.length ? normalizeLog(sumLogs(own, ...others)) : own;
+}
+/** Sólo el registro de ESTE dispositivo (lo que sube a la nube). */
+export async function getOwnPracticeLog() {
   return normalizeLog(await run('settings', 'readonly', (s) => s.get('practiceTime')));
+}
+/** Registros de tiempo de los OTROS dispositivos de la cuenta: { [idDispositivo]: registro }. */
+export async function getPracticeRemote() {
+  return (await run('settings', 'readonly', (s) => s.get('practiceRemote'))) || {};
+}
+export async function putPracticeRemote(deviceId, log) {
+  return rmwSetting('practiceRemote', (cur) => ({ ...(cur || {}), [deviceId]: normalizeLog(log) }));
 }
 /** Suma `seconds` al día y la partitura (id "_teoria" para Teoría). Llamarla con tramos parciales cada ~30 s. */
 export async function addPracticeTime(day, scoreId, seconds) {
-  return rmwSetting('practiceTime', (cur) => addSession(cur, { day, scoreId, seconds }));
+  const out = await rmwSetting('practiceTime', (cur) => addSession(cur, { day, scoreId, seconds }));
+  ping('practice', 'own');
+  return out;
 }
 /** Fusiona un registro importado (mayor por día y partitura: no duplica al importar dos veces). */
 export async function mergePracticeLog(log) {
@@ -302,7 +338,8 @@ export async function mergePracticeLog(log) {
 }
 /** Borra todo el tiempo registrado. */
 export async function clearPracticeLog() {
-  await run('settings', 'readwrite', (s) => s.delete('practiceTime'));
+  await run('settings', 'readwrite', (s) => { s.delete('practiceTime'); s.delete('practiceRemote'); });
+  ping('practice', 'own');
 }
 /** Agregados (ver totals() de practice-time.js). */
 export async function practiceTotals(now = Date.now()) {
@@ -315,6 +352,7 @@ export async function practiceTotals(now = Date.now()) {
 export async function saveTake(take) {
   if (!take || !take.id || !take.scoreId) throw new Error('Toma inválida.');
   await run('takes', 'readwrite', (s) => s.put(JSON.parse(JSON.stringify(take))));
+  ping('take', take.id);
   return take;
 }
 /** Tomas de una partitura (o de todas), de la más antigua a la más reciente. */
@@ -331,6 +369,7 @@ export async function deleteTakes(ids) {
   if (!list.length) return;
   await run('takes', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
   await run('takeAudio', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
+  list.forEach((id) => ping('take', id));
 }
 async function deleteTakesOf(scoreId) {
   const list = await listTakes(scoreId);
@@ -338,8 +377,10 @@ async function deleteTakesOf(scoreId) {
 }
 /** Borra todas las tomas y sus audios (no toca el tiempo de práctica). */
 export async function deleteAllTakes() {
+  const ids = (await listTakes()).map((t) => t.id);
   await run('takes', 'readwrite', (s) => s.clear());
   await run('takeAudio', 'readwrite', (s) => s.clear());
+  ids.forEach((id) => ping('take', id));
 }
 /** Aplica la política de retención (takes.pruneTakes): conserva lo reciente y la mejor/última de cada día antiguo. Devuelve cuántas borró. */
 export async function pruneTakesNow(now = Date.now()) {
@@ -366,4 +407,18 @@ export async function deleteTakeAudio(takeId) {
 /** Agregado local del tiempo de una partitura (para la etiqueta de la tarjeta). */
 export async function practiceSecondsOf(scoreId) {
   return _scoreSeconds(await getPracticeLog(), scoreId);
+}
+
+/* ---- apoyo de la sincronización ---- */
+export async function getSyncMeta() { return (await run('settings', 'readonly', (s) => s.get('sync'))) || null; }
+export async function saveSyncMeta(m) { await run('settings', 'readwrite', (s) => (m ? s.put(JSON.parse(JSON.stringify(m)), 'sync') : s.delete('sync'))); }
+/** Progreso de Teoría ya fusionado (viene de la nube). */
+export async function putTheoryRaw(p) { await run('settings', 'readwrite', (s) => s.put(normalizeTheory(p), 'theory')); }
+/** Ids de todo lo guardado de un tipo ('score' | 'anno' | 'attempt' | 'take'). */
+export async function listIds(kind) {
+  if (kind === 'score') return (await run('scores', 'readonly', (s) => s.getAllKeys())) || [];
+  if (kind === 'attempt') return (await run('attempts', 'readonly', (s) => s.getAllKeys())) || [];
+  if (kind === 'take') return (await run('takes', 'readonly', (s) => s.getAllKeys())) || [];
+  const keys = (await run('settings', 'readonly', (s) => s.getAllKeys())) || [];
+  return keys.filter((k) => typeof k === 'string' && k.startsWith('anno:')).map((k) => k.slice(5));
 }

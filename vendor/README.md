@@ -30,3 +30,9 @@ js/app.js lo importa bajo demanda (`../vendor/qrcode-generator.mjs`) sólo al mo
 Tamaños: model.json 174 537 B, group1-shard1of1.bin 742 392 B, tfjs-lite.mjs 770 666 B (≈195 KB gzip). Total ≈ 1,7 MB, **precachear** estos 3 archivos (+ LICENSE) para el modo sin conexión.
 js/transcribe.js los carga con `import()` / `fetch` sólo al transcribir (WebGL; CPU de respaldo). El audio nunca sale del dispositivo.
 Reproducir el bundle: en un directorio temporal `npm i @spotify/basic-pitch@1.0.1 @tensorflow/tfjs-core@3.21.0 @tensorflow/tfjs-converter@3.21.0 @tensorflow/tfjs-backend-cpu@3.21.0 @tensorflow/tfjs-backend-webgl@3.21.0 esbuild` y `esbuild entry.js --bundle --minify --format=esm --target=es2020 --legal-comments=none`, con `entry.js` = los dos `import` de los backends + `export { loadGraphModel } from '@tensorflow/tfjs-converter'` + `export { setBackend, ready, getBackend, tensor, dispose, memory, env, engine } from '@tensorflow/tfjs-core'`.
+
+| Archivo | Origen | Versión |
+|---|---|---|
+| firebase.mjs | `firebase` (npm) recortado con esbuild: app, auth (Google) y firestore (Apache-2.0) | firebase 13.3.0 |
+
+js/sync.js lo importa bajo demanda: sólo se descarga al iniciar sesión con Google.

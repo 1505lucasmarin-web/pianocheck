@@ -780,6 +780,18 @@
         <label class="switch"><input id="lib-incl-audio" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Incluir los audios de las tomas</b><span>Hace el archivo mucho más pesado. Apagado por defecto.</span></span></label>
         <p class="hint" id="lib-msg" role="status" aria-live="polite"></p>
       </section>
+      <section class="group-card" id="account-card">
+        <h2>Cuenta y sincronización</h2>
+        <p class="hint" id="acc-intro">Iniciá sesión con Google para usar PianoCheck en más de un dispositivo con el mismo progreso: partituras, anotaciones, intentos, tomas, tiempo de práctica y Teoría.</p>
+        <p class="hint" id="acc-state" role="status" aria-live="polite" hidden></p>
+        <div class="row wrap">
+          <button class="btn primary" id="acc-signin" type="button">Iniciar sesión con Google</button>
+          <button class="btn" id="acc-sync" type="button" hidden>Sincronizar ahora</button>
+          <button class="btn ghost" id="acc-signout" type="button" hidden>Cerrar sesión</button>
+        </div>
+        <label class="switch"><input id="acc-key" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Sincronizar también mi API key</b><span>Apagado por defecto. Si lo activás, la key se guarda en tu cuenta privada de Firebase y la reciben los dispositivos que también lo activen.</span></span></label>
+        <p class="hint">Los audios de las tomas se quedan en el dispositivo donde se grabaron; el resto de la toma sí se sincroniza.</p>
+      </section>
       <section class="group-card" id="share-card">
         <h2>Pasar ajustes a otro dispositivo</h2>
         <p class="hint">Cargá tu API key una sola vez y llevala a tu otro celular o tablet sin volver a tipearla. Se pasan sólo el proveedor, la API key y el modelo.</p>
