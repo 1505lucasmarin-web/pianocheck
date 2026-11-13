@@ -4,7 +4,7 @@
 // Dos vistas: "page" (sistemas apilados, con scroll vertical) y "cont" (toda la pieza en una sola fila que se desplaza).
 // Los colores salen de variables CSS por tema (data-sheet="hoja|sepia|oscuro" en el contenedor): cambiar de tema no redibuja.
 import { phraseCaption, baseLetter } from "./phrases.js";
-import { keyToMidi, midiToKey, isTied } from "./model.js";
+import { keyToMidi, midiToKey, isTied, handSig } from "./model.js";
 const VF = () => window.VexFlow;
 
 // Un color por letra de frase para la interfaz oscura (leyenda). En la partitura se usan --ph0..--ph7 según el tema.
@@ -76,7 +76,7 @@ export function createRenderer(container, opts = {}) {
   const nk = (m, h, i) => m + "|" + h + "|" + i;
 
   /* ---------------------------- dibujo común ---------------------------- */
-  function makeNotes(events, clef, restKey, key2orig) {
+  function makeNotes(events, clef, restKey, key2orig, stemDir) {
     const V = VF();
     const notes = [];
     for (const e of events) {
@@ -87,7 +87,7 @@ export function createRenderer(container, opts = {}) {
         key2orig.push([]);
       } else {
         const order = e.k.map((k, i) => i).sort((a, b) => diatonic(e.k[a]) - diatonic(e.k[b]));
-        n = new V.StaveNote({ keys: order.map((i) => e.k[i]), duration: e.d, clef, autoStem: true });
+        n = new V.StaveNote({ keys: order.map((i) => e.k[i]), duration: e.d + "d".repeat(dots), clef, ...(stemDir ? { stem_direction: stemDir } : { autoStem: true }) });
         key2orig.push(order);
       }
       for (let d = 0; d < dots; d++) V.Dot.buildAndAttach([n], { all: true });
@@ -145,7 +145,16 @@ export function createRenderer(container, opts = {}) {
     }
     try {
       const rhN = makeNotes(m.rh || [], "treble", "b/4", key2.rh);
-      const lhN = makeNotes(m.lh || [], "bass", "d/3", key2.lh);
+      // Mano izquierda por voces (p. ej. bajo en blancas + voz interna): sólo si `show` coincide con lo que se toca y cubre todos los eventos
+      let lhShow = null;
+      if (m.show && Array.isArray(m.show.lh) && m.show.sig === handSig(m.lh || [])) {
+        const vs = m.show.lh.map((evs, vi) => { const k2s = []; const ns = makeNotes(evs, "bass", "d/3", k2s, vi === 0 ? V.Stem.UP : V.Stem.DOWN); return { evs, ns, k2s }; });
+        const lhN2 = (m.lh || []).map(() => null);
+        vs.forEach((v) => v.evs.forEach((e, i) => { if (Number.isInteger(e.src) && !lhN2[e.src]) lhN2[e.src] = { n: v.ns[i], e, k2: v.k2s[i] }; }));
+        if (vs.length && lhN2.every(Boolean)) lhShow = { vs, lhN2 };
+      }
+      const lhN = lhShow ? lhShow.lhN2.map((x) => x.n) : makeNotes(m.lh || [], "bass", "d/3", key2.lh);
+      if (lhShow) lhShow.lhN2.forEach((x, idx) => { const ev = m.lh[idx]; key2.lh.push((x.n.getKeys() || []).map((kk) => { const j = ev.k.findIndex((q) => keyToMidi(q) === keyToMidi(kk)); return j >= 0 ? j : 0; })); });
       const voices = [];
       const mk = (notes, restKey, clef, stave) => {
         let ns = notes;
@@ -157,14 +166,20 @@ export function createRenderer(container, opts = {}) {
         return ns;
       };
       mk(rhN, "d/5", "treble", top);
-      mk(lhN, "f/3", "bass", bot);
-      try { V.Accidental.applyAccidentals(voices, sc.keySig || "C"); } catch (e) { V.Accidental.applyAccidentals(voices, "C"); }
-      new V.Formatter().joinVoices([voices[0]]).joinVoices([voices[1]]).formatToStave(voices, top);
+      if (lhShow) lhShow.vs.forEach((v, vi) => { mk(v.ns, "f/3", "bass", bot); });
+      else mk(lhN, "f/3", "bass", bot);
+      try { V.Accidental.applyAccidentals([voices[0]], sc.keySig || "C"); V.Accidental.applyAccidentals(voices.slice(1), sc.keySig || "C"); } catch (e) { V.Accidental.applyAccidentals(voices, "C"); }
+      const fmt = new V.Formatter().joinVoices([voices[0]]);
+      if (voices.length > 2) fmt.joinVoices(voices.slice(1)); else fmt.joinVoices([voices[1]]);
+      fmt.formatToStave(voices, top);
       const beams = [];
       if (rhN.length) beams.push(...V.Beam.generateBeams(rhN));
-      if (lhN.length) beams.push(...V.Beam.generateBeams(lhN));
-      voices[0].draw(ctx, top); voices[1].draw(ctx, bot);
-      if (o.ext) [["rh", rhN], ["lh", lhN]].forEach(([hand, ns]) => ns.forEach((n, idx) => {   // extensión vertical real (líneas adicionales, plicas, corchetes, digitaciones)
+      if (lhShow) lhShow.vs.forEach((v) => { if (v.ns.length) beams.push(...V.Beam.generateBeams(v.ns, { stem_direction: v === lhShow.vs[0] ? V.Stem.UP : V.Stem.DOWN })); });
+      else if (lhN.length) beams.push(...V.Beam.generateBeams(lhN));
+      if (lhShow) lhShow.vs.forEach((v, vi) => v.ns.forEach((n) => { if (!n.isRest()) n.setStemDirection(vi === 0 ? V.Stem.UP : V.Stem.DOWN); }));
+      voices.forEach((v, vi) => v.draw(ctx, vi === 0 ? top : bot));
+      const lhAll = lhShow ? lhShow.vs.flatMap((v) => v.ns) : lhN;
+      if (o.ext) [["rh", rhN], ["lh", lhAll]].forEach(([hand, ns]) => ns.forEach((n, idx) => {   // extensión vertical real (líneas adicionales, plicas, corchetes, digitaciones)
         try {
           const ys = n.getYs(); let lo = Math.min(...ys), hi = Math.max(...ys);
           if (n.hasStem && n.hasStem()) { const se = n.getStemExtents(); lo = Math.min(lo, se.topY, se.baseY); hi = Math.max(hi, se.topY, se.baseY); }
@@ -174,7 +189,14 @@ export function createRenderer(container, opts = {}) {
         } catch (e) { /* sin extensión */ }
       }));
       beams.forEach((b) => b.setContext(ctx).draw());
-      [["rh", rhN], ["lh", lhN]].forEach(([hand, ns]) => {
+      if (lhShow) lhShow.vs.forEach((v) => v.evs.forEach((e, idx) => {   // ligaduras entre las notas dibujadas de cada voz
+        if (!e.tie || idx === 0) return;
+        try {
+          const prev = v.ns[idx - 1];
+          if (prev && !prev.isRest() && !v.ns[idx].isRest()) new V.StaveTie({ firstNote: prev, lastNote: v.ns[idx], firstIndexes: [0], lastIndexes: [0] }).setContext(ctx).draw();
+        } catch (err) { /* sin ligadura */ }
+      }));
+      [["rh", rhN], ["lh", lhShow ? [] : lhN]].forEach(([hand, ns]) => {
         (m[hand] || []).forEach((e, idx) => {
           if ((!e.tie && !e.ties?.length) || idx === 0) return;
           try {
@@ -186,7 +208,7 @@ export function createRenderer(container, opts = {}) {
               const i = prev.getKeys().findIndex((k) => keyToMidi(k) === keyToMidi(key));
               if (i >= 0) { first.push(i); last.push(j); }
             });
-            if (first.length) new V.StaveTie({ first_note: prev, last_note: ns[idx], first_indices: first, last_indices: last }).setContext(ctx).draw();
+            if (first.length) new V.StaveTie({ firstNote: prev, lastNote: ns[idx], firstIndexes: first, lastIndexes: last }).setContext(ctx).draw();
           } catch (err) { /* sin ligadura */ }
         });
       });

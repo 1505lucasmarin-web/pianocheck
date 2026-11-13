@@ -182,3 +182,12 @@ test('validateScore: pickupBeats (anacrusa) se conserva sólo si es > 0 y menor 
   assert.equal('pickupBeats' in validateScore(base).score, false);
   for (const bad of [0, -1, 3, 4, '1', null, NaN]) assert.equal('pickupBeats' in validateScore({ ...base, pickupBeats: bad }).score, false, String(bad));
 });
+
+import { handSig as _hs } from "../js/model.js";
+test("show (voces de la mano izquierda): se conserva si coincide con lo que se toca y se descarta si se edita", () => {
+  const lh = [{ k: ["c/4"], d: "h" }];
+  const base = { id: "x", title: "t", bpm: 80, timeSig: [2, 4], keySig: "C", measures: [{ rh: [{ k: ["e/5"], d: "h" }], lh, show: { lh: [[{ k: ["c/4"], d: "h", src: 0 }]], sig: _hs(lh) } }] };
+  assert.equal(validateScore(base).score.measures[0].show.lh[0][0].src, 0);
+  base.measures[0].lh = [{ k: ["d/4"], d: "h" }];
+  assert.equal(validateScore(base).score.measures[0].show, undefined);
+});

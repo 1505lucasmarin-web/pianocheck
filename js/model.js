@@ -47,6 +47,8 @@ export function durBeats(ev) {
 }
 
 /** Una ligadura puede continuar todo el acorde (`tie`) o sólo algunas alturas (`ties`). */
+/** Firma de una mano (para saber si el dibujo por voces `show` sigue correspondiendo a lo que se toca). */
+export const handSig = (evs) => (evs || []).map((e) => (e.k || []).join('+') + ':' + e.d + (e.dots || 0) + (e.tie ? 'T' : Array.isArray(e.ties) && e.ties.length ? 't' + e.ties.join('+') : '')).join(',');
 export const isTied = (ev, key) => !!ev && (ev.tie === true || (Array.isArray(ev.ties) && ev.ties.includes(key)));
 
 function normKeySig(v) {
@@ -159,6 +161,15 @@ export function validateScore(obj) {
             }
           });
         }
+      }
+      // dibujo opcional por voces de la mano izquierda: sólo se usa si `sig` coincide con lo que se toca (si se edita el compás, se ignora)
+      if (m && m.show && Array.isArray(m.show.lh) && typeof m.show.sig === 'string' && m.show.sig === handSig(out.lh)) {
+        const voices = m.show.lh.slice(0, 3).map((vv, vi) => (Array.isArray(vv) ? vv : []).map((raw, ei) => {
+          const ev = normEvent(raw, `Compás ${mi + 1} show[${vi}][${ei}]`, []);
+          if (ev && Number.isInteger(raw.src) && raw.src >= 0 && raw.src < out.lh.length) ev.src = raw.src;
+          return ev;
+        }).filter(Boolean));
+        if (voices.length && voices.every((v) => v.length)) out.show = { lh: voices, sig: m.show.sig };
       }
       score.measures.push(out);
     });
