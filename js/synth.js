@@ -3,6 +3,7 @@
 // Cada nota devuelve un "handle" { cancel(now), release(now) } que usa el planificador para pausar / saltar sin dejar notas colgadas.
 export const TIMBRES = ["piano", "suave"];
 export const MAX_VOICES = 40;
+const LIGHT_BURST = 8, LIGHT_VOICES = 14;
 const hz = (midi) => 440 * Math.pow(2, (midi - 69) / 12);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -58,6 +59,7 @@ export function createSynth(ctx, { timbre = "piano", volume = 0.8, maxVoices = M
 
   const st = { timbre, metro: false, started: 0, clicks: 0 };
   let voices = [];     // { start, end, handle, kill(now, tau) }
+  let recent = [];     // instantes de inicio de las últimas notas (para detectar ráfagas)
   const rnd = () => Math.random();
 
   function prune(now) { voices = voices.filter((v) => v.end > now - 0.05); }
@@ -65,6 +67,12 @@ export function createSynth(ctx, { timbre = "piano", volume = 0.8, maxVoices = M
   function note(item, when, dur) {
     if (item.click) return click(item, when);
     const plan = voicePlan(item.midi, st.timbre, item.vel == null ? 1 : item.vel);
+    // Carga: si hay muchas notas sonando o arrancando casi juntas (pasajes rápidos, acordes, tablets), la nota usa una versión liviana
+    // (menos parciales, una sola cuerda, sin golpe de martillo): suena casi igual y evita cortes de audio.
+    const nowC = ctx.currentTime;
+    recent = recent.filter((t) => t > nowC - 0.25); recent.push(when);
+    const light = recent.length > LIGHT_BURST || voices.length > LIGHT_VOICES;
+    if (light) { plan.partials = plan.partials.slice(0, 2); plan.hammer = 0; }
     const f = hz(item.midi);
     const hold = Math.max(0.12, dur);
     const g = ctx.createGain();           // envolvente de la nota (liberación)
@@ -77,7 +85,7 @@ export function createSynth(ctx, { timbre = "piano", volume = 0.8, maxVoices = M
     const extra = [];
     const spread = (rnd() - 0.5) * 4;      // cents de desafinación propia de esa nota
     plan.partials.forEach((p) => {
-      const strings = p.n === 1 && st.timbre === "piano" ? [{ dc: -1, w: 0.82 }, { dc: 1, w: 0.18 }] : [{ dc: 0, w: 1 }];   // dos cuerdas en el fundamental: laten apenas (sin anularse)
+      const strings = !light && p.n === 1 && st.timbre === "piano" ? [{ dc: -1, w: 0.82 }, { dc: 1, w: 0.18 }] : [{ dc: 0, w: 1 }];   // dos cuerdas en el fundamental: laten apenas (sin anularse)
       strings.forEach(({ dc, w }) => {
         const o = ctx.createOscillator();
         o.type = p.type; o.frequency.value = f * p.ratio;

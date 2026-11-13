@@ -287,8 +287,8 @@ export function createPlayer(opts = {}) {
   const transport = createTransport({
     clock: () => (ctx ? ctx.currentTime : 0),
     sink: { note: (it, when, dur) => synth.note(it, when, dur) },
-    lookahead: opts.lookahead || 1.5,
-    onState: (s) => { clearInterval(timer); timer = 0; if (s === "playing") timer = setInterval(() => transport.tick(), 40); },
+    lookahead: opts.lookahead || 0.6,
+    onState: (s) => { clearInterval(timer); timer = 0; if (s === "playing") timer = setInterval(() => transport.tick(), 25); },
     onEnd: () => { const l = legacy; if (l) { legacy = null; l.stopPoll(); l.onEnd && l.onEnd(true); } else if (api.onEnd) api.onEnd(); },
   });
 

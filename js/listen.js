@@ -93,6 +93,17 @@ export function createListen({ player, host, adapter, prefs, toast = () => {}, k
     updateMedia();
   }
 
+  /** Notas que suenan en ese instante, buscando sólo en la ventana [beat - durMáx, beat] (las agendas largas tienen cientos de eventos; se llama cada 40 ms). */
+  function activeAt(s, beat) {
+    const ev = s.events;
+    if (s.maxDur == null) s.maxDur = ev.reduce((m, e) => Math.max(m, e.dur), 0);
+    let lo = 0, hi = ev.length, from = beat - s.maxDur - 1e-6;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (ev[mid].beat >= from) hi = mid; else lo = mid + 1; }
+    const out = [];
+    for (let i = lo; i < ev.length && ev[i].beat <= beat + 1e-6; i++) { const e = ev[i]; if (beat < e.beat + e.dur - 1e-6) out.push(e); }
+    return out;
+  }
+
   function frame() {
     const s = S.sched; if (!s || !S.open) return;
     const pos = tr.position(), counting = pos < s.startBeat - 1e-6;
@@ -107,7 +118,7 @@ export function createListen({ player, host, adapter, prefs, toast = () => {}, k
     }
     if (E.t1) E.t1.textContent = fmt(tot);
     if (adapter.onSound) {   // notas que suenan ahora (para mantener encendidas las teclas y llenar la barra de duración)
-      const act = counting ? [] : s.events.filter((e) => e.beat <= beat + 1e-6 && beat < e.beat + e.dur - 1e-6);
+      const act = counting ? [] : activeAt(s, beat);
       adapter.onSound({ beat, playing: tr.playing, rate: rt, events: act, counting });
     }
     const step = adapter.stepAt(beat);
