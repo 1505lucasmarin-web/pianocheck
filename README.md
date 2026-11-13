@@ -78,6 +78,11 @@ App web instalable (PWA) para practicar piano con un Roland FP-30X por MIDI (USB
 - Ajustes > "Exportar mi biblioteca" / "Importar biblioteca": archivo `.pianocheck-lib` con partituras, anotaciones e historial (sin API key); al importar se une sin duplicar por id.
 - Las partituras viven en este dispositivo y en esta dirección de la app.
 
+## Tiempo de práctica y tomas (v19)
+- **Tu práctica** (pantalla inicial): tiempo total, hoy, semana, racha y barras de los últimos 14 días. Cuenta sólo tiempo activo (sin tocar 30 s, no suma; en pausa, con la página oculta o escuchando, tampoco). Teoría cuenta cuando tocás un ejercicio. Por partitura, una etiqueta con su tiempo. Lógica en `js/practice-time.js` (puro, con tests); se guarda en IndexedDB (clave `practiceTime` del store de ajustes).
+- **Tomas**: cada intento de «Te espero» o «A pulso» que llega al Resultado se guarda como ejecución (notas con sus tiempos, no audio), con precisión, tempo efectivo, pulso y titubeos. «Ver progreso» lista las tomas de la partitura y las reproduce. Lógica en `js/takes.js` (puro, con tests); store `takes` (y `takeAudio` para audios) en IndexedDB, base v3 con migración aditiva. Retención: todo lo de los últimos 14 días; antes, la mejor y la última de cada día por partitura, mano y rango.
+- Ajustes: «Guardar mis tomas» (encendido por defecto) y «Borrar todas las tomas». El audio opcional («Grabar audio» en Práctica, máximo 5 min) no va en la exportación salvo que marques «Incluir los audios de las tomas».
+
 ## Sin pagar partituras (v14)
 - **Búsqueda gratuita.** Por defecto sólo se ofrecen ediciones abiertas (IMSLP, Mutopia, Musopen, CPDL, OpenScore, Commons, archive.org o páginas gratis del autor); sin tiendas ni enlaces comerciales. Ajustes > "Mostrar ediciones pagas" (apagado) lo cambia. El único catálogo con enlace de búsqueda confirmado es Mutopia; si una edición abierta tiene archivo se importa directo, y si el sitio no permite la descarga queda "Abrir" + "Importar archivo descargado".
 - **Crear con IA** en dos pasos (hoja guía y luego la partitura), con verificación automática (suma de compases, notas en la tonalidad/acordes, registro tocable) y un único reintento. Si el modelo se niega, se muestra el motivo y los otros caminos. Siempre sale como borrador con aviso "Hecha con IA de memoria".

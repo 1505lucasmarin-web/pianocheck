@@ -2,6 +2,8 @@
 // y exportar / importar toda la biblioteca (partituras + anotaciones + historial; nunca la API key).
 import { validateScore } from "./model.js";
 import { fromJSON as annoFromJSON } from "./annotations.js";
+import { buildTake } from "./takes.js";
+import { normalizeLog } from "./practice-time.js";
 
 export const ORIGIN_KINDS = ["ia", "importada", "incluida", "tarea", "arreglo", "transcrita", "grabada"];
 export const ORIGIN_NAMES = { ia: "Creada con IA", importada: "Importada", incluida: "Incluida", tarea: "Tarea", arreglo: "Arreglo", transcrita: "Transcrita", grabada: "Grabada" };
@@ -77,25 +79,38 @@ export const draftsOf = (list) => (list || []).filter(isDraft).sort((a, b) => wh
 export const LIB_FORMAT = "pianocheck-library";
 export const LIB_VERSION = 1;
 export const LIB_EXT = ".pianocheck-lib";
-export const LIB_LIMITS = { maxBytes: 25 * 1024 * 1024, maxScores: 500, maxAttempts: 20000, maxAnnoBytes: 400 * 1024, maxTasksBytes: 120 * 1024 };
+export const LIB_LIMITS = { maxBytes: 80 * 1024 * 1024, maxScores: 500, maxAttempts: 20000, maxAnnoBytes: 400 * 1024, maxTasksBytes: 120 * 1024, maxTakes: 20000, maxTakeAudioChars: 12 * 1024 * 1024 };
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const SECRET = /^(apikey|api_key|key|token|secret|password)$/i;
 const strip = (o) => { for (const k of Object.keys(o)) if (SECRET.test(k)) delete o[k]; return o; };
 
-/** Objeto exportable. scores: registros guardados; attempts: todos; annotations: { idPartitura → datos }; tasks: ajustes.tasks. Sin ajustes ni API key. */
-export function buildLibraryExport({ scores = [], attempts = [], annotations = {}, tasks = {}, now = Date.now() } = {}) {
+/**
+ * Objeto exportable. scores: registros guardados; attempts: todos; annotations: { idPartitura → datos }; tasks: ajustes.tasks. Sin ajustes ni API key.
+ * Opcionales (sólo se escriben si hay datos): takes: tomas (takes.js); practiceTime: registro de tiempo (practice-time.js);
+ * audios: { idToma → { mime, data (base64) } }, que se agrega a cada toma sólo si se pasa (el llamador decide si incluye audios).
+ */
+export function buildLibraryExport({ scores = [], attempts = [], annotations = {}, tasks = {}, takes = [], practiceTime = null, audios = null, now = Date.now() } = {}) {
   const ids = new Set(scores.map((s) => s.id));
   const anno = {};
   for (const id of Object.keys(annotations || {})) if (ids.has(id) && annotations[id]) anno[id] = clone(annotations[id]);
   const tk = {};
   for (const id of Object.keys(tasks || {})) if (ids.has(id) && tasks[id] && typeof tasks[id] === "object") tk[id] = clone(tasks[id]);
-  return {
+  const out = {
     format: LIB_FORMAT, version: LIB_VERSION, exportedAt: now,
     scores: scores.map((s) => strip(clone(s))),
     attempts: attempts.filter((a) => a && ids.has(a.scoreId)).map((a) => strip(clone(a))),
     annotations: anno, tasks: tk,
   };
+  const tks = (takes || []).filter((t) => t && ids.has(t.scoreId)).map((t) => {
+    const c = clone(t);
+    if (audios && audios[t.id] && t.hasAudio) c.audio = { mime: String(audios[t.id].mime || "audio/webm"), data: String(audios[t.id].data || "") };
+    return c;
+  });
+  if (tks.length) out.takes = tks;
+  const pt = normalizeLog(practiceTime);
+  if (Object.keys(pt.days).length) out.practiceTime = pt;
+  return out;
 }
 export const serializeLibrary = (obj) => JSON.stringify(obj);
 export const libraryFileName = (now = Date.now()) => `PianoCheck-biblioteca-${new Date(now).toISOString().slice(0, 10)}${LIB_EXT}`;
@@ -150,6 +165,23 @@ export function parseLibraryExport(text, limits = LIB_LIMITS) {
     if (isObj(data.tasks) && JSON.stringify(data.tasks).length <= limits.maxTasksBytes) {
       for (const id of Object.keys(data.tasks)) if (seen.has(id) && isObj(data.tasks[id])) res.tasks[id] = clone(data.tasks[id]);
     }
+    res.takes = []; res.takeAudio = {}; res.practiceTime = null;
+    if (Array.isArray(data.takes)) {
+      const tIds = new Set();
+      for (const raw of data.takes) {
+        if (res.takes.length >= limits.maxTakes) { res.skipped.takes = (res.skipped.takes || 0) + 1; continue; }
+        if (!isObj(raw) || typeof raw.id !== "string" || !seen.has(raw.scoreId) || tIds.has(raw.id)) { res.skipped.takes = (res.skipped.takes || 0) + 1; continue; }
+        const t = buildTake(raw);
+        if (!t) { res.skipped.takes = (res.skipped.takes || 0) + 1; continue; }
+        t.id = raw.id.slice(0, 80);
+        tIds.add(t.id);
+        if (isObj(raw.audio) && typeof raw.audio.data === "string" && raw.audio.data.length <= limits.maxTakeAudioChars) {
+          res.takeAudio[t.id] = { mime: typeof raw.audio.mime === "string" ? raw.audio.mime.slice(0, 40) : "audio/webm", data: raw.audio.data };
+        }
+        res.takes.push(t);
+      }
+    }
+    if (isObj(data.practiceTime)) res.practiceTime = normalizeLog(data.practiceTime);
     if (!res.scores.length) return { ...res, error: "La biblioteca del archivo no tiene partituras válidas." };
     res.ok = true;
     return res;
@@ -159,16 +191,21 @@ export function parseLibraryExport(text, limits = LIB_LIMITS) {
 }
 
 /**
- * Fusión sin duplicar por id: lo que ya existe no se pisa. existing = { scoreIds:Set, attemptIds:Set }.
- * → { addScores, addAttempts, addAnnotations:{id→datos}, addTasks:{id→datos}, counts:{ scores, attempts, existing } }
+ * Fusión sin duplicar por id: lo que ya existe no se pisa. existing = { scoreIds:Set, attemptIds:Set, takeIds:Set }.
+ * → { addScores, addAttempts, addAnnotations:{id→datos}, addTasks:{id→datos}, addTakes:[toma], addTakeAudio:{idToma→{mime,data}}, addPracticeTime:registro|null, counts:{ scores, attempts, takes, existing } }
+ * addPracticeTime se fusiona con el registro del dispositivo tomando el mayor por día y partitura (practice-time.mergeLogs).
  */
 export function planMerge(existing, parsed) {
-  const sIds = existing.scoreIds || new Set(), aIds = existing.attemptIds || new Set();
+  const sIds = existing.scoreIds || new Set(), aIds = existing.attemptIds || new Set(), tIds = existing.takeIds || new Set();
   const addScores = parsed.scores.filter((s) => !sIds.has(s.id));
   const added = new Set(addScores.map((s) => s.id));
   const addAttempts = parsed.attempts.filter((a) => added.has(a.scoreId) && !aIds.has(a.id));
   const addAnnotations = {}, addTasks = {};
   for (const id of Object.keys(parsed.annotations || {})) if (added.has(id)) addAnnotations[id] = parsed.annotations[id];
   for (const id of Object.keys(parsed.tasks || {})) if (added.has(id)) addTasks[id] = parsed.tasks[id];
-  return { addScores, addAttempts, addAnnotations, addTasks, counts: { scores: addScores.length, attempts: addAttempts.length, existing: parsed.scores.length - addScores.length } };
+  const addTakes = (parsed.takes || []).filter((t) => !tIds.has(t.id));
+  const addTakeAudio = {};
+  for (const t of addTakes) if (parsed.takeAudio && parsed.takeAudio[t.id]) addTakeAudio[t.id] = parsed.takeAudio[t.id];
+  const addPracticeTime = parsed.practiceTime && Object.keys(parsed.practiceTime.days || {}).length ? parsed.practiceTime : null;
+  return { addScores, addAttempts, addAnnotations, addTasks, addTakes, addTakeAudio, addPracticeTime, counts: { scores: addScores.length, attempts: addAttempts.length, takes: addTakes.length, existing: parsed.scores.length - addScores.length } };
 }

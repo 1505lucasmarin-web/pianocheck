@@ -1,6 +1,8 @@
-// Persistencia local en IndexedDB: base "pianocheck", stores "scores" y "settings".
+// Persistencia local en IndexedDB: base "pianocheck", stores "scores", "settings", "attempts", "takes" y "takeAudio".
+import { addSession, mergeLogs, normalizeLog, scoreSeconds as _scoreSeconds, totals as _totals } from './practice-time.js';
+import { pruneTakes as _pruneTakes } from './takes.js';
 const DB_NAME = 'pianocheck';
-const DB_VERSION = 2;
+const DB_VERSION = 3;   // v3: stores "takes" (tomas) y "takeAudio" (audios). Migración aditiva: no toca lo existente.
 let dbPromise = null;
 
 function openDb() {
@@ -13,6 +15,8 @@ function openDb() {
         if (!db.objectStoreNames.contains('scores')) db.createObjectStore('scores', { keyPath: 'id' });
         if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings'); // clave externa
         if (!db.objectStoreNames.contains('attempts')) db.createObjectStore('attempts', { keyPath: 'id' }).createIndex('scoreId', 'scoreId');
+        if (!db.objectStoreNames.contains('takes')) { const ts = db.createObjectStore('takes', { keyPath: 'id' }); ts.createIndex('scoreId', 'scoreId'); ts.createIndex('day', 'day'); }
+        if (!db.objectStoreNames.contains('takeAudio')) db.createObjectStore('takeAudio');   // clave = id de la toma; valor = { blob, mime }
       };
       req.onsuccess = () => {
         const db = req.result;
@@ -107,6 +111,7 @@ export async function deleteScore(id) {
   await run('scores', 'readwrite', (s) => s.delete(id));
   try { await deleteAttempts(id); } catch (e) { /* sin historial */ }
   try { await deleteAnnotations(id); } catch (e) { /* sin anotaciones */ }
+  try { await deleteTakesOf(id); } catch (e) { /* sin tomas */ }
 }
 
 /* ---- anotaciones a mano (clave "anno:<id de partitura>" del store de ajustes: no cambia el esquema de la base) ---- */
@@ -264,4 +269,101 @@ export async function saveTheoryResult(lessonId, exercise, keyId, correct, total
   const next = recordTheory(await getTheoryProgress(), lessonId, exercise, keyId, correct, total);
   await run('settings', 'readwrite', (s) => s.put(next, 'theory'));
   return next;
+}
+
+/* ---- tiempo de práctica (clave "practiceTime" del store de ajustes; registro { days: { "AAAA-MM-DD": { [scoreId]: segundos } } }) ---- */
+
+/** Lee/escribe una clave de ajustes en UNA transacción (lectura y escritura juntas, sin pisar otra escritura). */
+async function rmwSetting(key, fn) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('settings', 'readwrite');
+    const st = tx.objectStore('settings');
+    let out;
+    const req = st.get(key);
+    req.onsuccess = () => { out = fn(req.result); st.put(out, key); };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transacción cancelada.'));
+  });
+}
+
+/** Registro completo de tiempo de práctica (normalizado). */
+export async function getPracticeLog() {
+  return normalizeLog(await run('settings', 'readonly', (s) => s.get('practiceTime')));
+}
+/** Suma `seconds` al día y la partitura (id "_teoria" para Teoría). Llamarla con tramos parciales cada ~30 s. */
+export async function addPracticeTime(day, scoreId, seconds) {
+  return rmwSetting('practiceTime', (cur) => addSession(cur, { day, scoreId, seconds }));
+}
+/** Fusiona un registro importado (mayor por día y partitura: no duplica al importar dos veces). */
+export async function mergePracticeLog(log) {
+  return rmwSetting('practiceTime', (cur) => mergeLogs(cur, log));
+}
+/** Borra todo el tiempo registrado. */
+export async function clearPracticeLog() {
+  await run('settings', 'readwrite', (s) => s.delete('practiceTime'));
+}
+/** Agregados (ver totals() de practice-time.js). */
+export async function practiceTotals(now = Date.now()) {
+  return _totals(await getPracticeLog(), { now });
+}
+
+/* ---- tomas (cada intento de práctica como ejecución; ver takes.js) ---- */
+
+/** Guarda una toma (ya normalizada con buildTake) tal cual. */
+export async function saveTake(take) {
+  if (!take || !take.id || !take.scoreId) throw new Error('Toma inválida.');
+  await run('takes', 'readwrite', (s) => s.put(JSON.parse(JSON.stringify(take))));
+  return take;
+}
+/** Tomas de una partitura (o de todas), de la más antigua a la más reciente. */
+export async function listTakes(scoreId) {
+  const all = await run('takes', 'readonly', (s) => (scoreId ? s.index('scoreId').getAll(scoreId) : s.getAll()));
+  return (all || []).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+export async function getTake(id) {
+  return (await run('takes', 'readonly', (s) => s.get(id))) || null;
+}
+/** Borra tomas por id, con su audio. */
+export async function deleteTakes(ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return;
+  await run('takes', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
+  await run('takeAudio', 'readwrite', (s) => { list.forEach((id) => s.delete(id)); });
+}
+async function deleteTakesOf(scoreId) {
+  const list = await listTakes(scoreId);
+  await deleteTakes(list.map((t) => t.id));
+}
+/** Borra todas las tomas y sus audios (no toca el tiempo de práctica). */
+export async function deleteAllTakes() {
+  await run('takes', 'readwrite', (s) => s.clear());
+  await run('takeAudio', 'readwrite', (s) => s.clear());
+}
+/** Aplica la política de retención (takes.pruneTakes): conserva lo reciente y la mejor/última de cada día antiguo. Devuelve cuántas borró. */
+export async function pruneTakesNow(now = Date.now()) {
+  const drop = _pruneTakes(await listTakes(), { now });
+  await deleteTakes(drop);
+  return drop.length;
+}
+/** Adjunta un audio (Blob) a una toma existente. */
+export async function putTakeAudio(takeId, blob, mime) {
+  if (!takeId || !blob) throw new Error('Audio inválido.');
+  await run('takeAudio', 'readwrite', (s) => s.put({ blob, mime: mime || blob.type || 'audio/webm' }, takeId));
+  const t = await getTake(takeId);
+  if (t && !t.hasAudio) await saveTake({ ...t, hasAudio: true });
+}
+/** Audio de una toma: { blob, mime } o null. */
+export async function getTakeAudio(takeId) {
+  return (await run('takeAudio', 'readonly', (s) => s.get(takeId))) || null;
+}
+export async function deleteTakeAudio(takeId) {
+  await run('takeAudio', 'readwrite', (s) => s.delete(takeId));
+  const t = await getTake(takeId);
+  if (t && t.hasAudio) await saveTake({ ...t, hasAudio: false });
+}
+/** Agregado local del tiempo de una partitura (para la etiqueta de la tarjeta). */
+export async function practiceSecondsOf(scoreId) {
+  return _scoreSeconds(await getPracticeLog(), scoreId);
 }
