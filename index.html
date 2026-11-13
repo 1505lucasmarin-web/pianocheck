@@ -928,6 +928,14 @@
       <h3 id="busy-title">Leyendo partitura</h3>
       <div class="spinner" id="busy-spinner" aria-hidden="true"></div>
       <div id="busy-log" class="busy-log" aria-live="polite"></div>
+      <section id="pdf-live" class="pdf-live" aria-label="Progreso de lectura del PDF" hidden>
+        <div class="pdf-live-overview">
+          <b id="pdf-live-count" role="status"></b>
+          <span id="pdf-live-active" role="status"></span>
+        </div>
+        <progress id="pdf-live-bar" aria-label="Avance de lectura"></progress>
+        <div id="pdf-live-pages" class="pdf-live-pages" aria-label="Estado por página"></div>
+      </section>
       <div id="busy-err" class="busy-err" role="alert" hidden></div>
       <div class="row center">
         <button class="btn" id="busy-settings" hidden>Ir a Ajustes</button>

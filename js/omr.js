@@ -310,10 +310,10 @@ async function readPool(indices, limit, read) {
 
 /**
  * Lee una o más páginas de partitura con IA.
- * options: { provider, apiKey, model, onProgress, fetchImpl?, signal?, checkpoint?, concurrency? }
+ * onPart recibe el plan de cada página y los estados reales de cada parte.
  */
 export async function recognizeScore(images, options = {}) {
-  const { provider = 'anthropic', apiKey, onProgress = () => {}, signal, checkpoint } = options;
+  const { provider = 'anthropic', apiKey, onProgress = () => {}, onPart = () => {}, signal, checkpoint } = options;
   const fetchImpl = options.fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
   if (provider !== 'anthropic' && provider !== 'gemini') throw new OmrError('Proveedor de IA desconocido.', 'config');
   if (!apiKey || !String(apiKey).trim()) throw new OmrError('Falta la API key. Cargala en Ajustes.', 'auth');
@@ -333,16 +333,20 @@ export async function recognizeScore(images, options = {}) {
     onProgress(`Preparando imagen${label}…`);
     const previous = pages.length ? mergePages(pages, { includeMeasures: false }) : undefined;
     const pageKey = (fragment) => `${page}:${fragment ? `${fragment.index}/${fragment.count}` : 'full'}`;
-    async function read(blob, fragment, context) {
-      signal?.throwIfAborted();
+    const part = (fragment) => ({ id: pageKey(fragment), number: fragment?.count > 1 ? fragment.index : null });
+    function plan(fragments) {
+      onPart({ type: 'plan', page, parts: fragments.map((f) => {
+        const item = part(f);
+        return { ...item, state: checkpoint?.completed?.[item.id] ? 'saved' : 'pending' };
+      }) });
+    }
+    async function readContent(blob, fragment, context, report) {
       const id = pageKey(fragment);
-      if (checkpoint?.completed?.[id]) {
-        return checkpoint.completed[id];
-      }
       const image = await imageToBase64(blob);
       signal?.throwIfAborted();
       const suffix = fragment?.count > 1 ? ` · sistema ${fragment.index} de ${fragment.count}` : '';
       onProgress(`Leyendo la partitura con IA${label}${suffix}…`);
+      report('reading');
       const text = await callProvider(provider, { apiKey: key, model, image, page, total, previous: context, fragment }, fetchImpl, signal);
       let parsed;
       try { parsed = extractJson(text); } catch {
@@ -355,10 +359,27 @@ export async function recognizeScore(images, options = {}) {
       }
       signal?.throwIfAborted();
       if (checkpoint) {
+        report('saving');
         try { await checkpoint.save(id, parsed); }
         catch { throw new OmrError('El dispositivo no pudo guardar el avance de la lectura. Revisá el espacio disponible y reintentá.', 'storage'); }
       }
       return parsed;
+    }
+    async function read(blob, fragment, context) {
+      signal?.throwIfAborted();
+      const id = pageKey(fragment);
+      if (checkpoint?.completed?.[id]) return checkpoint.completed[id];
+      const report = (state) => onPart({ type: 'state', page, id, state });
+      report('preparing');
+      try {
+        const parsed = await readContent(blob, fragment, context, report);
+        report(checkpoint ? 'saved' : 'done');
+        return parsed;
+      } catch (e) {
+        // Un límite de respuesta en la página completa activa el plan por sistemas.
+        if (fragment || e.kind !== 'truncated') report('failed');
+        throw e;
+      }
     }
     try {
       // Los PDFs con muchos sistemas se leen por bandas desde el principio.
@@ -369,6 +390,7 @@ export async function recognizeScore(images, options = {}) {
       const expectedSuffix = `/${parts.length > 1 ? parts.length : 1}`;
       const knownFragment = Object.keys(checkpoint?.completed || {}).some((id) => id.startsWith(`${page}:`) && id.endsWith(expectedSuffix));
       if (parts.length < 4 && !knownFragment) {
+        plan([null]);
         try { pages.push(await read(images[i], undefined, previous)); continue; }
         catch (e) {
           if (e.kind !== 'truncated') throw e;
@@ -378,11 +400,13 @@ export async function recognizeScore(images, options = {}) {
         }
       }
       const chunks = parts.length > 1 ? parts : [images[i]];
+      const fragments = chunks.map((_, index) => ({ index: index + 1, count: chunks.length }));
+      plan(fragments);
       const results = new Array(chunks.length);
       let complete = 0;
       async function readChunk(j, context) {
         try {
-          results[j] = await read(chunks[j], { index: j + 1, count: chunks.length }, context);
+          results[j] = await read(chunks[j], fragments[j], context);
           complete++;
           onProgress(`Página ${page} de ${total} · ${complete} de ${chunks.length} sistemas listos.`);
         }

@@ -27,6 +27,7 @@ import { buildSummary } from "./summary.js";
 import { createAnnotateUI } from "./annotate-ui.js";
 import { createRecorder, recorderSupported, extFor, clock, MAX_RECORD_MS } from "./recorder.js";
 import { mountWelcome } from "./welcome.js";
+import { createPdfProgress } from "./pdf-progress.js";
 import { originKind, ORIGIN_NAMES, FILTERS, queryLibrary, filterCounts, draftsOf, isDraft, bestOf, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, libraryFileName } from "./mylib.js";
 import { createTxFlow } from "./txflow.js";
 import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
@@ -481,7 +482,8 @@ function handleIncomingShare() {
 }
 
 /* ---------- importación ---------- */
-const busy = { open(title) { $("busy-title").textContent = title; $("busy-log").textContent = ""; $("busy-err").hidden = true; $("busy-settings").hidden = true; $("busy-resume-pdf").hidden = true; $("busy-spinner").classList.remove("stop"); $("busy-close").textContent = "Cancelar"; $("busy").hidden = false; },
+const pdfProgress = createPdfProgress($("pdf-live"));
+const busy = { open(title) { pdfProgress.clear(); $("busy-title").textContent = title; $("busy-log").textContent = ""; $("busy-err").hidden = true; $("busy-settings").hidden = true; $("busy-resume-pdf").hidden = true; $("busy-spinner").classList.remove("stop"); $("busy-close").textContent = "Cancelar"; $("busy").hidden = false; },
   log(msg) { $("busy-log").textContent = msg; },
   error(msg, needSettings) { $("busy-log").textContent = ""; $("busy-spinner").classList.add("stop"); $("busy-err").textContent = msg; $("busy-err").hidden = false; $("busy-settings").hidden = !needSettings; $("busy-close").textContent = "Cerrar"; },
   close() { $("busy").hidden = true; } };
@@ -589,6 +591,11 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
       }
       if (!alive()) return;
       if (!blobs.length) throw new Error("No se obtuvieron imágenes para leer.");
+      if (job) {
+        busy.log("Leyendo el PDF. Cada parte se guarda al terminar.");
+        $("busy-spinner").classList.add("stop");
+        pdfProgress.start(blobs.pageNumbers, job.completed);
+      }
       const checkpoint = job && {
         completed: job.completed,
         async save(id, parsed) {
@@ -604,7 +611,9 @@ async function runImport(kind, files, ctxOverride, savedPdf) {
       score = await omr.recognizeScore(blobs, {
         provider: settings.provider || "anthropic", apiKey: settings.apiKey, model: settings.model,
         checkpoint, concurrency: job?.serial ? 1 : undefined,
-        signal: ctl.signal, onProgress: (m) => alive() && busy.log(m),
+        signal: ctl.signal,
+        onPart: (event) => { if (job && alive()) pdfProgress.update(event); },
+        onProgress: (m) => { if (alive() && (!job || m === "Armando la partitura…")) busy.log(m); },
       });
       if (!score.title || score.title === "Sin título") score.title = files[0].name.replace(/\.[^.]+$/, "");
     } else {

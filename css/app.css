@@ -307,6 +307,26 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 .busy-log:empty{display:none}
+#busy:has(.pdf-live:not([hidden])) .dialog{max-width:580px;max-height:calc(100dvh - 24px);overflow:auto}
+#busy:has(.pdf-live:not([hidden])) .busy-log{min-height:0}
+.pdf-live{margin:14px 0}
+.pdf-live-overview{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
+#pdf-live-active{border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--acc);font-size:.85rem;font-weight:650}
+#pdf-live-bar{display:block;width:100%;height:9px;margin:9px 0 12px;accent-color:var(--acc)}
+.pdf-live-pages{max-height:43dvh;overflow:auto;overscroll-behavior:contain;display:grid;gap:6px}
+.pdf-page{border:1px solid var(--line);background:var(--bg);border-radius:10px}
+.pdf-page summary{min-height:44px;display:list-item;padding:10px 12px;cursor:pointer}
+.pdf-page summary>span{font-weight:650;margin-right:6px}
+.pdf-page summary>small{float:right;color:var(--mut)}
+.pdf-page[data-state="saved"] summary>small{color:var(--ok)}
+.pdf-page ul{display:grid;list-style:none;margin:0;padding:0 8px 8px;gap:4px}
+.pdf-part{display:grid;grid-template-columns:16px 1fr auto;align-items:center;min-height:35px;gap:7px;padding:4px 7px;border-radius:6px;color:var(--mut);font-size:.9rem}
+.pdf-part b{color:var(--fg);font-weight:600}
+.pdf-part small{font-size:.82rem;text-align:right}
+.pdf-part[data-state="preparing"],.pdf-part[data-state="reading"],.pdf-part[data-state="saving"]{background:var(--bg3);color:var(--acc)}
+.pdf-part[data-state="saved"],.pdf-part[data-state="done"]{color:var(--ok)}
+.pdf-part[data-state="failed"]{color:var(--bad);background:var(--bg3)}
+.pdf-unplanned{color:var(--mut);padding:4px 7px;font-size:.86rem}
 
 
 /* ---- utilidades que vivían en bloques reemplazados ---- */
