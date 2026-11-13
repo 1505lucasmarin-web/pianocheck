@@ -342,7 +342,7 @@
       </div>
       <button class="input-pill" id="input-pill" aria-haspopup="dialog" aria-label="Entrada: sin conectar. Tocá para conectar"><span id="pill-dot" class="pill-dot" aria-hidden="true"></span><span id="pill-t">Conectar piano</span></button>
       <div class="pr-actions">
-        <button class="btn icon ghost wide-only" id="practice-restart" aria-label="Reiniciar" title="Reiniciar"><svg class="ic"><use href="#i-restart"/></svg></button>
+        <button class="btn ghost" id="practice-restart" aria-label="Reiniciar" title="Reiniciar. También: La0 y Do8 juntas"><svg class="ic"><use href="#i-restart"/></svg><span class="lbl">Reiniciar</span></button>
         <button class="btn wide-only" id="practice-stop" aria-label="Terminar sesión"><svg class="ic"><use href="#i-flag"/></svg><span class="lbl">Terminar</span></button>
       </div>
       <div class="pr-ctrls" id="pr-ctrls" role="group" aria-label="Controles de práctica">
@@ -364,11 +364,16 @@
       <div class="tb-t"><b id="task-banner-h">Tarea</b><span id="task-banner-t"></span></div>
       <button class="btn icon ghost" id="task-banner-x" aria-label="Ocultar la consigna"><svg class="ic"><use href="#i-x"/></svg></button>
     </div>
-    <div class="struct-wrap">
-      <div id="practice-struct" class="struct" hidden></div>
-      <div id="phrase-note" class="phrase-note" role="status" aria-live="polite" hidden></div>
+    <div class="pr-strip" id="pr-strip">
+      <div class="struct-wrap">
+        <div id="practice-struct" class="struct" hidden></div>
+        <div id="phrase-note" class="phrase-note" role="status" aria-live="polite" hidden></div>
+      </div>
+      <div id="lap-line" class="lap-line" hidden role="status"></div>
+      <div class="seg pr-hands" id="pr-hands" role="group" aria-label="Manos que practicás">
+        <button type="button" data-hands="both" aria-pressed="true">Ambas</button><button type="button" data-hands="rh" aria-pressed="false">Der.</button><button type="button" data-hands="lh" aria-pressed="false">Izq.</button>
+      </div>
     </div>
-    <div id="lap-line" class="lap-line" hidden role="status"></div>
     <div id="err-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="hold-live" class="sr" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="practice-anno" class="anno-host"></div>
@@ -436,7 +441,7 @@
 
       <div class="ps-sec" data-sec="input" hidden>
         <p class="hint" id="input-lead">Elegí cómo te escucha la app.</p>
-        <p class="hint" id="midi-transport-hint" hidden>En un piano de 88 teclas: La0 pausa · Do8 reproduce o continúa.</p>
+        <p class="hint" id="midi-transport-hint" hidden>En un piano de 88 teclas: La0 pausa · Do8 reproduce o continúa. Tocadas juntas (La0 y Do8 a la vez), reinician la práctica.</p>
         <div class="chips" role="group" aria-label="Conexión">
           <button class="chip" id="midi-usb"><span id="midi-dot" class="midi-dot" aria-hidden="true"></span><svg class="ic sm"><use href="#i-plug"/></svg>Piano USB</button>
           <button class="chip" id="midi-ble"><svg class="ic sm"><use href="#i-bt"/></svg>Bluetooth</button>
@@ -659,7 +664,7 @@
       <section class="group-card">
         <h2>Pantalla</h2>
         <label class="switch"><input id="set-kb" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Tocar en el teclado de pantalla</b><span>Con esto el piano de Práctica responde al toque, para practicar sin piano conectado. También se activa desde «Conectar piano».</span></span></label>
-        <label class="switch"><input id="set-midi-transport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Play y pausa desde el piano MIDI</b><span>En un piano de 88 teclas, La0 pausa y Do8 inicia o continúa. Si la partitura usa alguna de esas notas, se conserva como nota musical.</span></span></label>
+        <label class="switch"><input id="set-midi-transport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Play y pausa desde el piano MIDI</b><span>En un piano de 88 teclas, La0 pausa y Do8 inicia o continúa. Tocadas juntas, reinician la práctica como el botón Reiniciar. Si la partitura usa alguna de esas notas, se conserva como nota musical.</span></span></label>
         <label class="switch"><input id="set-phrases" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Marcar frases repetidas</b><span>Dibuja sobre la partitura las frases que se repiten (A, A′, B…) y avisa al llegar a una que ya tocaste.</span></span></label>
         <span class="field-t" id="lbl-view">Vista de la partitura</span>
         <div class="seg opts" role="group" aria-labelledby="lbl-view" id="set-view">
