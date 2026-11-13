@@ -110,6 +110,19 @@
         <div class="continue-t"><span class="continue-k" id="continue-h">Continuar práctica</span><b id="continue-title"></b><span id="continue-sub" class="continue-sub"></span></div>
         <button class="btn primary big" id="continue-go"><svg class="ic"><use href="#i-play"/></svg>Continuar</button>
       </section>
+      <section id="practice-card" class="practice-card" aria-labelledby="pc-h" hidden>
+        <div class="pc-top">
+          <h2 class="pc-k" id="pc-h">Tu práctica</h2>
+          <b class="pc-total" id="pc-total">—</b>
+          <span class="pc-total-l">tiempo total</span>
+        </div>
+        <dl class="pc-stats">
+          <div><dt>Hoy</dt><dd id="pc-today">—</dd></div>
+          <div><dt>Esta semana</dt><dd id="pc-week">—</dd></div>
+          <div><dt>Racha</dt><dd id="pc-streak">—</dd></div>
+        </dl>
+        <div class="pc-chart" id="pc-chart"></div>
+      </section>
       <section id="empty-state" class="welcome" aria-labelledby="welcome-title" hidden>
         <div class="welcome-hero">
           <div class="welcome-photo" aria-hidden="true"></div>
@@ -399,6 +412,7 @@
           <span class="next-sub" id="next-sub"></span>
         </div>
         <button class="btn pause-btn" id="practice-pause" aria-pressed="false"><svg class="ic sm"><use href="#i-pause"/></svg><span id="pause-t">Pausar</span></button>
+        <button class="btn rec-audio" id="practice-rec" type="button" aria-pressed="false" hidden><span class="rec-dot" aria-hidden="true"></span><span id="practice-rec-t">Grabar audio</span></button>
       </div>
       <div class="stats-row">
         <div class="streak" id="practice-streak" role="img" aria-label="Errores seguidos: 0 de 5"><span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="streak-n" aria-hidden="true">0/5</span></div>
@@ -588,6 +602,7 @@
         <p class="strip-legend" id="legend-pulso" aria-hidden="true" hidden><span class="lg clean">✓ A tiempo</span><span class="lg off">≈ Fuera de tiempo</span><span class="lg dirty">✕ Errado u omitido</span></p>
       </section>
       <p id="result-compare" class="result-compare" hidden></p>
+      <p id="take-line" class="result-compare take-line" hidden></p>
       <p id="result-holds" class="result-compare res-holds" hidden></p>
       <details id="res-errors" class="res-errors" hidden><summary id="res-errors-t">Errores de esta toma</summary><ul id="res-errors-list" aria-label="Lista de errores"></ul></details>
       <dl class="result-stats">
@@ -618,8 +633,22 @@
       </section>
       <div class="row center">
         <button class="btn big" id="result-retry"><svg class="ic"><use href="#i-restart"/></svg><span id="result-retry-t">Reintentar</span></button>
+        <button class="btn big" id="result-progress" hidden><svg class="ic" aria-hidden="true"><use href="#i-chevr"/></svg>Ver progreso</button>
         <button class="btn big" id="result-lib"><svg class="ic" aria-hidden="true"><use href="#i-library"/></svg>Mi biblioteca</button>
       </div>
+    </main>
+  </section>
+
+  <!-- 4b. Progreso: lista de tomas de una partitura -->
+  <section id="screen-progress" class="screen" hidden aria-label="Progreso">
+    <header class="bar">
+      <button class="btn icon ghost" id="progress-back" aria-label="Volver"><svg class="ic"><use href="#i-back"/></svg></button>
+      <div class="bar-title" id="progress-title">Progreso</div>
+    </header>
+    <main class="content">
+      <p class="hint" id="progress-sub"></p>
+      <ol class="take-list" id="progress-list" aria-label="Tomas guardadas"></ol>
+      <p class="hint" id="progress-empty" hidden>Todavía no hay tomas de esta partitura. Cada intento de práctica que llega al Resultado se guarda aquí.</p>
     </main>
   </section>
 
@@ -666,6 +695,8 @@
         <label class="switch"><input id="set-kb" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Tocar en el teclado de pantalla</b><span>Con esto el piano de Práctica responde al toque, para practicar sin piano conectado. También se activa desde «Conectar piano».</span></span></label>
         <label class="switch"><input id="set-midi-transport" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Play y pausa desde el piano MIDI</b><span>En un piano de 88 teclas, La0 pausa y Do8 inicia o continúa. Tocadas juntas, reinician la práctica como el botón Reiniciar. Si la partitura usa alguna de esas notas, se conserva como nota musical.</span></span></label>
         <label class="switch"><input id="set-phrases" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Marcar frases repetidas</b><span>Dibuja sobre la partitura las frases que se repiten (A, A′, B…) y avisa al llegar a una que ya tocaste.</span></span></label>
+        <label class="switch"><input id="set-takes" type="checkbox" checked><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Guardar mis tomas</b><span>Guarda cada intento de práctica (las notas y sus tiempos, sin audio) para comparar tu progreso más adelante. Queda sólo en este dispositivo.</span></span></label>
+        <div class="row wrap"><button class="btn" id="set-takes-clear" type="button">Borrar todas las tomas</button></div>
         <span class="field-t" id="lbl-view">Vista de la partitura</span>
         <div class="seg opts" role="group" aria-labelledby="lbl-view" id="set-view">
           <button data-view="continua">Continua (recomendada)</button><button data-view="pagina">Por página</button>
@@ -713,6 +744,7 @@
           <button class="btn" id="lib-import" type="button"><svg class="ic sm"><use href="#i-plus"/></svg>Importar biblioteca</button>
           <input id="lib-file" type="file" accept=".pianocheck-lib,.json,application/json" hidden>
         </div>
+        <label class="switch"><input id="lib-incl-audio" type="checkbox"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Incluir los audios de las tomas</b><span>Hace el archivo mucho más pesado. Apagado por defecto.</span></span></label>
         <p class="hint" id="lib-msg" role="status" aria-live="polite"></p>
       </section>
       <section class="group-card" id="share-card">
