@@ -2,6 +2,7 @@
 import { validateScore, buildSteps, midiName, midiToKey, keyToMidi } from "./model.js";
 import { createSession } from "./engine.js";
 import { createMidiInput } from "./midi.js";
+import { createMidiChord } from "./midi-chord.js";
 import { suggestFingering } from "./fingering.js";
 import { errorHand, handMarks } from "./step-feedback.js";
 import { createMetronome } from "./metronome.js";
@@ -1957,7 +1958,7 @@ const midi = createMidiInput({
   onPedal: (down, ts) => holdPedal(down, ts),
   onStatus: (s) => {
     midiConnected = !!s.connected;
-    if (!midiConnected) heldMidiCommands.clear();
+    if (!midiConnected) { heldMidiCommands.clear(); midiChord.cancel(); }
     if (mic && mic.running) onMicStatus({ connected: true });
     $("midi-dot").classList.toggle("on", !!s.connected);
     $("midi-usb").classList.toggle("on", !!s.connected && s.via !== "ble");
@@ -1973,6 +1974,21 @@ const midi = createMidiInput({
 });
 
 const heldMidiCommands = new Set();
+/* La0 + Do8 juntas (dentro de 400 ms) reinician la práctica, igual que el botón Reiniciar. */
+const midiChord = createMidiChord({
+  onChord: () => { if (screen === "practice" && current) { doRestart(); toast("Reiniciado", 2000); } },
+  onSingle: (m) => midiSingle(m),
+});
+/** Acción individual de La0 (pausa) o Do8 (continúa / escucha). */
+function midiSingle(m) {
+  if (screen !== "practice" || !current || annoP.isActive()) return;
+  if (m === 21) {
+    if (lcP.isOpen) lcP.pause();
+    else if (!paused && (isPulso() ? pulse && !pulse.finished : session?.state.status === "playing")) setPaused(true);
+  } else if (lcP.isOpen) { if (!lcP.playing) lcP.play(); }
+  else if (paused) setPaused(false);
+  else openListen();
+}
 const scoreUsesMidi = (score, midi) => score.measures.some((measure) =>
   ["rh", "lh"].some((hand) => measure[hand]?.some((ev) => ev.k.some((key) => keyToMidi(key) === midi))));
 function handleMidiCommand(m) {
@@ -1987,12 +2003,7 @@ function handleMidiCommand(m) {
   }
   if (screen !== "practice" || !current || annoP.isActive() || scoreUsesMidi(current, m)) return false;
   heldMidiCommands.add(m);
-  if (m === 21) {
-    if (lcP.isOpen) lcP.pause();
-    else if (!paused && (isPulso() ? pulse && !pulse.finished : session?.state.status === "playing")) setPaused(true);
-  } else if (lcP.isOpen) { if (!lcP.playing) lcP.play(); }
-  else if (paused) setPaused(false);
-  else openListen();
+  midiChord.down(m);   // la acción individual se decide al vencer la ventana (ver midiChord)
   return true;
 }
 function onMidiNoteOn(m, vel, ts) {
@@ -2000,6 +2011,7 @@ function onMidiNoteOn(m, vel, ts) {
   handleNoteOn(m, ts, "midi");
 }
 function onMidiNoteOff(m, ts) {
+  midiChord.up(m);
   if (heldMidiCommands.delete(m) || tx.midiNoteOff(m, ts)) return;
   handleNoteOff(m, ts);
 }
@@ -2143,7 +2155,7 @@ function startPractice(score, o = {}) {
   else if (r && r.loop && r.from != null) { const nr = normRange({ from: r.from, to: r.to }, n); if (nr) passage = { ...nr, loop: true }; }
   else if (r && r.measure > 0 && r.measure < n) passage = { from: r.measure, to: n - 1, loop: false };
   if (passage && !passage.loop && passage.from === 0) passage = null;
-  document.querySelectorAll("#hands-seg button").forEach((b) => b.classList.toggle("on", b.dataset.hands === hands));
+  syncHandsSeg();
   $("practice-title").textContent = score.title || "Práctica";
   let md = normMode(o.mode || (r && r.mode));
   if (md === "pulso" && mic && mic.running) { toast("A pulso todavía no funciona con micrófono. Seguís en «Te espero».", 4800); md = "espera"; }
@@ -2719,11 +2731,10 @@ function renderLapLine() {
   el.setAttribute("aria-label", `Vuelta ${laps.length + 1}. ${laps.length ? `${clean} de ${laps.length} vueltas limpias` : "Todavía no completaste ninguna vuelta"}`);
   el.innerHTML = `<b>Vuelta ${laps.length + 1}</b>${chips}${isPulso() ? `<span>a tiempo = ±${pulseWin()} ms</span>` : ""}`;
 }
-let draft = null, listenHands = "both", listenSlow = false;
+let draft = null, listenSlow = false;
 function initLoopSheet() {
   const n = N();
   draft = isLoop() ? { from: passage.from, to: passage.to } : currentPair(curMeasure(), n);
-  listenHands = hands;
   syncLoopSheet();
 }
 function syncLoopSheet() {
@@ -2736,7 +2747,7 @@ function syncLoopSheet() {
   $("lp-off").hidden = !isLoop();
   $("lp-apply-t").textContent = isLoop() ? "Aplicar este pasaje" : "Practicar este pasaje";
   $("lp-slow").setAttribute("aria-pressed", String(listenSlow));
-  document.querySelectorAll("#lp-hands button").forEach((b) => b.classList.toggle("on", b.dataset.hands === listenHands));
+  syncHandsSeg();
   $("lp-listen-t").textContent = listening ? "Detener" : "Escuchar";
   $("lp-listen").querySelector("use").setAttribute("href", listening ? "#i-stop" : "#i-ear");
   practiceR.setRange(draft);   // vista previa del rango en la partitura
@@ -2750,8 +2761,8 @@ $("lp-pair").addEventListener("click", () => { draft = currentPair(curMeasure(),
 $("lp-off").addEventListener("click", () => { closePSheet(true); stopListening(true); passage = null; resetSession(); rememberPractice(); });
 $("lp-apply").addEventListener("click", () => { const d = { ...draft }; closePSheet(true); startLoop(d); });
 $("lp-slow").addEventListener("click", () => { listenSlow = !listenSlow; if (listening) stopListening(); syncLoopSheet(); });
-document.querySelectorAll("#lp-hands button").forEach((b) => b.addEventListener("click", () => { listenHands = b.dataset.hands; syncLoopSheet(); }));
-$("lp-listen").addEventListener("click", () => { if (listening) stopListening(); else { startListening({ range: draft, hands: listenHands, slow: listenSlow }); syncLoopSheet(); } });
+document.querySelectorAll("#lp-hands button").forEach((b) => b.addEventListener("click", () => { setHands(b.dataset.hands); syncLoopSheet(); }));
+$("lp-listen").addEventListener("click", () => { if (listening) stopListening(); else { startListening({ range: draft, hands, slow: listenSlow }); syncLoopSheet(); } });
 /** Activa el bucle sobre un rango de compases y reinicia la sesión. */
 function startLoop(range) {
   const r = normRange(range, N()); if (!r || !current) return;
@@ -2855,7 +2866,7 @@ function syncListenSheet() {
   const o = lcP.options, bpm = lcP.bpm || (current && current.bpm) || 80;
   document.querySelectorAll("#ls-speed button").forEach((b) => { const v = +b.dataset.speed, on = v === o.speed; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); b.innerHTML = `${Math.round(v * 100)} %<small>♩ ${Math.round(bpm * v)}</small>`; });
   $("ls-bpm").textContent = `Tempo de la pieza: ♩ ${bpm} · ahora ♩ ${Math.round(bpm * o.speed)} BPM`;
-  document.querySelectorAll("#ls-hands button").forEach((b) => { const on = b.dataset.hands === o.hands; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  syncHandsSeg();
   const both = hands === "both";
   $("ls-mute").checked = !!o.muteMine && !both; $("ls-mute").disabled = both;
   $("ls-mute-sub").textContent = both ? "Para tocarla vos encima. Disponible cuando practicás con una sola mano." : `Deja de sonar la ${hands === "rh" ? "derecha" : "izquierda"} para que la toques vos encima.`;
@@ -2864,7 +2875,7 @@ function syncListenSheet() {
   $("ls-range").textContent = lcP.range ? `Suena: compases ${rangeText(lcP.range)}${o.repeat ? " (en bucle)" : ""}.` : `Suena: toda la pieza${o.repeat ? " (en bucle)" : ""}.`;
 }
 $("ls-speed").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { lcP.setSpeed(+b.dataset.speed); syncListenSheet(); } });
-$("ls-hands").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { lcP.setHands(b.dataset.hands); syncListenSheet(); } });
+$("ls-hands").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; setHands(b.dataset.hands); if (sheetName === "listen") closePSheet(true); });
 $("ls-mute").addEventListener("change", (e) => lcP.setMuteMine(e.target.checked));
 $("ls-metro").addEventListener("change", (e) => lcP.setMetro(e.target.checked));
 $("ls-count").addEventListener("change", (e) => lcP.setCountIn(e.target.checked));
@@ -2872,15 +2883,38 @@ $("ls-along").addEventListener("change", (e) => { lcP.setAlong(e.target.checked)
 $("ls-vol").addEventListener("input", (e) => lcP.setVolume(+e.target.value / 100));
 
 /* ----- cambiar de mano / reiniciar / terminar ----- */
+/* Todos los selectores de manos (barra, hoja Manos, hoja Bucle, hoja Escucha) muestran `hands`. */
+function syncHandsSeg() {
+  document.querySelectorAll("#hands-seg button, #lp-hands button, #ls-hands button, #pr-hands button").forEach((x) => {
+    const on = x.dataset.hands === hands; x.classList.toggle("on", on); x.setAttribute("aria-pressed", String(on));
+  });
+}
 function syncHandsUi() {
-  $("menu-whole").hidden = !(passage && !passage.loop); document.querySelectorAll("#hands-seg button").forEach((x) => x.classList.toggle("on", x.dataset.hands === hands)); }
+  $("menu-whole").hidden = !(passage && !passage.loop);
+  syncHandsSeg(); updateHeader();
+}
+/** Cambia la mano de la práctica: reconstruye los pasos del pasaje actual, reinicia la sesión y guarda la elección. */
 function setHands(h) {
+  if (!["both", "rh", "lh"].includes(h)) return;
+  if (h === hands) { syncHandsUi(); return; }
   hands = h; syncHandsUi();
-  clearTimeout(finishTimer); resetSession(); rememberPractice();
+  clearTimeout(finishTimer);
+  if (current) { resetSession(); rememberPractice(); }
   if (h !== "both") toast(h === "rh" ? "Probá con la mano derecha" : "Probá con la mano izquierda", 2000);
 }
-document.querySelectorAll("#hands-seg button").forEach((b) => b.addEventListener("click", () => { if (b.dataset.hands !== hands) setHands(b.dataset.hands); closePSheet(); }));
+document.querySelectorAll("#hands-seg button").forEach((b) => b.addEventListener("click", () => { setHands(b.dataset.hands); closePSheet(); }));
+document.querySelectorAll("#pr-hands button").forEach((b) => b.addEventListener("click", () => setHands(b.dataset.hands)));
 const doRestart = () => { clearTimeout(finishTimer); closePSheet(true); resetSession(); };
+/* Alturas de la barra, la franja y el panel de abajo: la hoja lateral de Práctica se apoya en ellas. */
+const prSyncVars = () => {
+  const st = document.documentElement.style;
+  st.setProperty("--pr-top-h", ($("pr-head").offsetHeight + $("pr-strip").offsetHeight) + "px");
+  st.setProperty("--pr-panel-h", $("practice-panel").offsetHeight + "px");
+};
+new ResizeObserver(prSyncVars).observe(document.getElementById("pr-head"));
+new ResizeObserver(prSyncVars).observe(document.getElementById("pr-strip"));
+new ResizeObserver(prSyncVars).observe(document.getElementById("practice-panel"));
+prSyncVars();
 const doStop = () => {
   clearTimeout(finishTimer); closePSheet(true); stopListening(true);
   if (isPulso()) {

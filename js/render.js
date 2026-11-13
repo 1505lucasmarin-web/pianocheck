@@ -16,7 +16,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 export const SIZES = ["chico", "mediano", "grande"];
 export const THEMES = ["hoja", "sepia", "oscuro"];
 const PAGE_SIZE_F = { chico: 0.82, mediano: 1, grande: 1.25 };   // factor sobre la escala de la vista por página
-const CONT_SIZE_F = { chico: 0.65, mediano: 0.85, grande: 1 };   // fracción del alto que ocupa el gran pentagrama
+const CONT_SIZE_F = { chico: 0.65, mediano: 0.98, grande: 1 };   // fracción del alto que ocupa el gran pentagrama
 const SNAP = 20, SEG_NAT = 1700, SCALE_STEP = 0.05;              // tramos: ancho múltiplo de 20 y escala múltiplo de 0,05 → sin costuras
 const H0 = 330, FLAG_Y = 240, NUM_Y = 48, TOP_Y = 18, BOT_Y = 128, X0 = 22;
 const SPACE = 10, STAFF_TOP = TOP_Y + 4 * SPACE, STAFF_BOT = BOT_Y + 8 * SPACE;   // primera línea del gran pentagrama y última línea del bajo (unidades del SVG)
@@ -337,7 +337,7 @@ export function createRenderer(container, opts = {}) {
     let scale = (availH / R0) * CONT_SIZE_F[size];
     // tope por ancho: en pantallas angostas y altas (celular vertical) tienen que verse ~2 compases
     scale = Math.min(scale, viewW / ({ chico: 640, mediano: 500, grande: 400 })[size]);
-    scale = clamp(Math.floor(Math.min(scale, 2.2) / SCALE_STEP) * SCALE_STEP, 0.3, 2.2);
+    scale = clamp(Math.floor(Math.min(scale, 2.6) / SCALE_STEP) * SCALE_STEP, 0.3, 2.6);
     const u = 1 / scale;
     const y0 = cmin - PH * u, Rn = R0 + PH * u;
     const svgH = Rn * scale;

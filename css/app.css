@@ -1374,3 +1374,42 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
   .card .card-acts > .btn.btn-sec .card-lbl { display: none; }
   .card .card-acts > .btn.btn-sec[data-act="del"] { margin-left: auto; }
 }
+
+/* ---- Práctica: barra de manos y reinicio siempre a mano; franja compacta; hojas laterales en tablet ---- */
+/* Reiniciar: en tablet con ícono y texto (48 px de alto); en celular, ícono de 44 x 44 en la segunda fila. */
+.pr-actions{display:contents}
+#practice-restart{min-width:44px;min-height:44px;background:var(--bg3);border:1px solid var(--line);color:var(--fg)}
+#practice-restart .lbl{display:none}
+@media (min-width:900px),(max-height:520px) and (min-width:600px){
+  .pr-actions{display:flex}
+  #practice-restart{min-width:48px;min-height:48px;padding:0 14px}
+  #practice-restart .lbl{display:inline}
+}
+@media (max-width:899px) and (min-height:521px){
+  .pr-head{grid-template-areas:"back title pill" ". sub restart" "ctrls ctrls ctrls";row-gap:2px;padding-top:4px;padding-bottom:6px}
+  #practice-restart{grid-area:restart;justify-self:end;padding:0}
+  .pr-sub{border:1px solid var(--line);border-radius:12px;padding:0 10px;min-height:44px;max-width:max-content;background:var(--bg3);color:var(--fg)}
+}
+/* Franja única bajo la barra: Estructura, Vuelta N y selector de manos (tablet). En celular no cambia. */
+.pr-strip{display:contents}
+.pr-hands{display:none}
+@media (min-width:601px){
+  .pr-strip{display:flex;align-items:center;gap:10px;min-height:46px;padding-right:8px;background:var(--bg2);border-bottom:1px solid var(--line)}
+  .pr-strip .struct-wrap{flex:1 1 auto;min-width:0;align-self:stretch;display:flex;align-items:center}
+  .pr-strip .struct{flex:1 1 auto;min-width:0;min-height:46px;border-bottom:0;background:none}
+  .pr-strip .lap-line{flex:none;flex-wrap:nowrap;white-space:nowrap;padding:0 2px 0 8px}
+  .pr-hands{display:flex;flex:none}
+  .pr-hands button{min-height:44px;min-width:60px;padding:0 12px;font-size:.92rem}
+}
+/* Panel de abajo más bajo en tablet: el carril de notas sostenidas y la fila de "Próxima nota" ocupan menos alto. */
+@media (min-width:900px) and (min-height:600px){
+  .pk{--strip:22px}
+  .pk.lane{--lane:64px}
+  .panel{padding-top:6px;padding-bottom:calc(6px + var(--safe-b));row-gap:4px}
+  .next-row{min-height:54px}
+}
+/* Tablet: las hojas de Práctica (Bucle, Tempo, Lectura, Escucha, Manos) van en un panel lateral derecho, entre la barra y el panel de abajo: no tapan la partitura. */
+@media (min-width:900px){
+  #app[data-screen=practice] .psheet{left:auto;right:0;top:var(--pr-top-h,0px);bottom:var(--pr-panel-h,0px);width:380px;align-items:stretch}
+  #app[data-screen=practice] .ps-box{width:100%;max-width:none;max-height:none;height:100%;border:0;border-left:1px solid #5a4a33;border-radius:0;padding:6px 16px 14px;box-shadow:-12px 0 32px rgba(0,0,0,.45);animation:none}
+}
