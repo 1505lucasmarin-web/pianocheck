@@ -135,10 +135,12 @@ export function createRenderer(container, opts = {}) {
       console.warn("compás", mi + 1, "no se pudo dibujar el pentagrama", err);
       return null;
     }
-    if (o.num) {
+    if (o.pickup || o.num) {
+      // primer compás con anacrusa: la etiqueta «Anacrusa» reemplaza al número; si no, el número del compás
       const t = document.createElementNS(SVGNS, "text");
-      t.setAttribute("class", "mnum"); t.setAttribute("x", x + 10); t.setAttribute("y", NUM_Y);
-      t.setAttribute("font-size", 10 * o.u); t.textContent = String(mi + 1);
+      t.setAttribute("class", o.pickup ? "mnum mpick" : "mnum"); t.setAttribute("y", NUM_Y);
+      if (o.pickup) { t.setAttribute("x", x + w / 2); t.setAttribute("text-anchor", "middle"); } else t.setAttribute("x", x + 10);
+      t.setAttribute("font-size", 10 * o.u); t.textContent = o.pickup ? "Anacrusa" : String(mi + 1);
       svg.appendChild(t);
     }
     try {
@@ -244,7 +246,7 @@ export function createRenderer(container, opts = {}) {
       let w = meta.widths[mi] * stretch + (isFirst ? decor : 0);
       if (x + w > effW - 6) w = effW - 6 - x;
       mx[mi] = { x, w };
-      drawMeasure(ctx, svg, sc, mi, x, w, { sysIdx: si, header: isFirst, time: isFirst && first === 0, num: isFirst && mi > 0, u: 1 / scale, entries });
+      drawMeasure(ctx, svg, sc, mi, x, w, { sysIdx: si, header: isFirst, time: isFirst && first === 0, num: isFirst && mi > 0, pickup: mi === 0 && sc.pickupBeats > 0, u: 1 / scale, entries });
       x += w;
     });
     systems[si] = { el, svg, ctx, entries, H, mx, from: sys.from, to: sys.to, scale, u: 1 / scale, x0: 0, bracketY: 20 / scale };
@@ -311,7 +313,7 @@ export function createRenderer(container, opts = {}) {
       try {
         sd.items.forEach((mi) => {
           mx[mi] = { x: gx[mi] - sd.x0, w: gw[mi] };
-          drawMeasure(ctx, svg, sc, mi, gx[mi] - sd.x0, gw[mi], { sysIdx: si, header: mi === 0, time: mi === 0, num: true, u: 1, entries, ext });
+          drawMeasure(ctx, svg, sc, mi, gx[mi] - sd.x0, gw[mi], { sysIdx: si, header: mi === 0, time: mi === 0, num: true, pickup: mi === 0 && sc.pickupBeats > 0, u: 1, entries, ext });
         });
       } catch (err) { console.error("tramo", si, err); }
       systems[si] = { el, svg, ctx, entries, H: H0, mx, from: sd.from, to: sd.to, sw, x0: sd.x0 };

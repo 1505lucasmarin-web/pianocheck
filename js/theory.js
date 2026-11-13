@@ -221,3 +221,10 @@ export function noteNameInKey(midi, keyId) {
   const nat = midi - n.accidental;
   return latinName(n.letter, n.accidental) + (Math.floor(nat / 12) - 1);
 }
+
+/** Etiqueta de una tecla del piano guía: con número de octava sólo en el Do natural («Do4»); el resto, sólo el nombre («Re», «Fa♯»). */
+export function keyboardLabel(midi, keyId) {
+  const full = noteNameInKey(midi, keyId);
+  const bare = full.replace(/-?\d+$/, '');
+  return bare === 'Do' ? full : bare;
+}

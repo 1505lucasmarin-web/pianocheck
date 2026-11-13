@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAJOR_PATTERN, KEYS, majorScale, scaleMidi, scaleSteps, diatonicTriads, checkTriad,
-  makeQualityQuiz, makeDegreeTasks, noteNameInKey,
+  makeQualityQuiz, makeDegreeTasks, noteNameInKey, keyboardLabel,
 } from '../js/theory.js';
 
 // Valores esperados escritos a mano (ortografía estándar).
@@ -143,4 +143,14 @@ test('noteNameInKey', () => {
   assert.equal(noteNameInKey(61, 'F'), 'Re♭4'); // tonalidad con bemoles: fuera de escala usa bemoles
   assert.equal(noteNameInKey(68, 'Eb'), 'La♭4');
   assert.equal(noteNameInKey(200, 'C'), '?');
+});
+
+test('keyboardLabel: número de octava sólo en el Do natural', () => {
+  assert.equal(keyboardLabel(60, 'C'), 'Do4');
+  assert.equal(keyboardLabel(72, 'C'), 'Do5');
+  assert.equal(keyboardLabel(62, 'C'), 'Re');
+  assert.equal(keyboardLabel(66, 'F#'), 'Fa♯');
+  assert.equal(keyboardLabel(70, 'Bb'), 'Si♭');
+  assert.equal(keyboardLabel(61, 'C'), 'Do♯');
+  assert.equal(keyboardLabel(48, 'Db'), 'Do3');
 });

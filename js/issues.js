@@ -20,11 +20,12 @@ export function detectIssues(score, { warnings = [] } = {}) {
   const bar = barLength(score || {});
   const hasNotes = { rh: false, lh: false };
   ms.forEach((m) => ["rh", "lh"].forEach((h) => { if ((m[h] || []).some((e) => !isRest(e))) hasNotes[h] = true; }));
+  const pickup = score && score.pickupBeats > 0;   // anacrusa declarada: el primer compás no suma el compás completo
   ms.forEach((m, mi) => {
     const withNotes = { rh: (m.rh || []).some((e) => !isRest(e)), lh: (m.lh || []).some((e) => !isRest(e)) };
     for (const h of ["rh", "lh"]) {
       const evs = m[h] || [];
-      if (evs.length) {
+      if (evs.length && !(pickup && mi === 0)) {
         const total = beatsOf(evs);
         if (Math.abs(total - bar) > EPS) out.push({ kind: "sum", measure: mi, hand: h, text: `Compás ${mi + 1}, ${HAND[h]}: suma ${tiempos(total)} y el compás indica ${tiempos(bar)}.` });
       }

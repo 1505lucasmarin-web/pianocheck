@@ -58,7 +58,8 @@ export function computeRange(minMidi, maxMidi) {
 }
 
 const SVGNS = "http://www.w3.org/2000/svg";
-const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$/, ""));
+/** Etiqueta de una tecla objetivo sin nombre propio: con octava sólo en el Do («Do4»); el resto, sólo el nombre («Mi»). */
+export const tagName = (m) => (m % 12 === 0 ? midiName(m) : midiName(m).replace(/-?\d+$/, ""));
 
 /**
  * createKeyboard(container, { onKey?(midi), minWhite? }) →

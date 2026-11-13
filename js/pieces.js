@@ -149,7 +149,7 @@ function piece(id, title, composer, aliases, meta, rh, lh, extra = {}) {
     id: vid,
     label,
     ...(meta.pickupBeats ? { pickupBeats: meta.pickupBeats } : {}),
-    score: { id: `${id}-${vid}`, title: `${title} (${label.toLowerCase()})`, ...base, measures: build(rh, withLh ? lh : null) },
+    score: { id: `${id}-${vid}`, title: `${title} (${label.toLowerCase()})`, ...base, ...(meta.pickupBeats ? { pickupBeats: meta.pickupBeats } : {}), measures: build(rh, withLh ? lh : null) },
   });
   const versions = [mk('melodia', 'Solo melodía', false)];
   if (lh) versions.push(mk('acompanamiento', 'Con acompañamiento', true));

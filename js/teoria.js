@@ -1,6 +1,6 @@
 // Sección "Teoría": dos lecciones de clase (escala mayor y grados/acordes) con ejercicios que usan la misma entrada que Práctica.
 // La lógica de los ejercicios vive en lessons.js y theory.js (puros); acá sólo hay estado de pantalla y HTML.
-import { KEYS, MAJOR_PATTERN, majorScale, scaleMidi, diatonicTriads, makeDegreeTasks, makeQualityQuiz, noteNameInKey } from './theory.js';
+import { KEYS, MAJOR_PATTERN, majorScale, scaleMidi, diatonicTriads, makeDegreeTasks, makeQualityQuiz, noteNameInKey, keyboardLabel } from './theory.js';
 import { createScaleRun, createTriadTask, scoreOf } from './lessons.js';
 import { semitonesText } from './keyboard.js';
 import { theorySummary, THEORY_PASS } from './store.js';
@@ -59,9 +59,9 @@ export function createTheory(env) {
   function clearPiano() { kb.setHint(null); kb.setSteps([]); kb.setTargets([]); }
   function scaleTargets(full) {
     const seq = scaleMidi(S.key);
-    return seq.map((m) => ({ midi: m, label: pcName(m, S.key), done: !!full }));
+    return seq.map((m) => ({ midi: m, label: keyboardLabel(m, S.key), done: !!full }));
   }
-  function triadTargets(t, done) { return t.midi.map((m) => ({ midi: m, label: pcName(m, S.key), done: !!done })); }
+  function triadTargets(t, done) { return t.midi.map((m) => ({ midi: m, label: keyboardLabel(m, S.key), done: !!done })); }
   function syncPiano(focus = true) {
     const M = S.mode;
     let list = [], steps = [], focusList = [];
@@ -71,7 +71,7 @@ export function createTheory(env) {
         const seq = scaleMidi(S.key);
         steps = MAJOR_PATTERN.map((tx, i) => ({ fromMidi: seq[i], toMidi: seq[i + 1], text: tx }));
       } else if (S.run) {
-        const r = S.run, seq = r.sequence, labelOf = (m) => pcName(m, S.key);
+        const r = S.run, seq = r.sequence, labelOf = (m) => keyboardLabel(m, S.key);
         const map = new Map();
         for (let i = 0; i < r.index; i++) map.set(seq[i], { midi: seq[i], label: labelOf(seq[i]), done: true });
         if (S.finished) {
@@ -86,7 +86,7 @@ export function createTheory(env) {
     } else if (M === 'ver') {
       list = triadTargets(diatonicTriads(S.key)[S.deg], false);
     } else if (M === 'grado' && S.task) {
-      list = S.task.accepted.map((m) => ({ midi: m, label: pcName(m, S.key), done: true }));
+      list = S.task.accepted.map((m) => ({ midi: m, label: keyboardLabel(m, S.key), done: true }));
     } else if (M === 'quiz' && S.quiz && S.quiz.answered) {
       list = triadTargets(diatonicTriads(S.key)[ROMAN.indexOf(S.quiz.items[S.quiz.i].degree)], false);
     }

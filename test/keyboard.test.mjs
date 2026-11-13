@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeMove, nearestMissing, computeRange, semitonesText } from '../js/keyboard.js';
+import { describeMove, nearestMissing, computeRange, semitonesText, tagName } from '../js/keyboard.js';
 
 test('describeMove: medio tono, 1 tono, 1 tono y medio, octava', () => {
   assert.deepEqual(describeMove(65, 67), { dir: 'derecha', semitones: 2, text: 'Movete 1 tono a la derecha → Sol4' });
@@ -44,4 +44,12 @@ test('computeRange: octavas completas, ≥ media octava de margen, mínimo 2 oct
     assert.ok(r.low <= Math.max(21, a - 6) && r.high >= Math.min(108, b + 6), `${a}-${b} margen`);
   }
   assert.deepEqual(computeRange(60, 60), { low: 48, high: 71 });
+});
+
+test('tagName: número de octava sólo en el Do, el resto sólo el nombre', () => {
+  assert.equal(tagName(60), 'Do4');
+  assert.equal(tagName(72), 'Do5');
+  assert.equal(tagName(62), 'Re');
+  assert.equal(tagName(66), 'Fa#');
+  assert.equal(tagName(69), 'La');
 });
