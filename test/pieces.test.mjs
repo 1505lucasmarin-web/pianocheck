@@ -109,3 +109,11 @@ test('normalizeText', () => {
   assert.equal(normalizeText('Cumpleaños'), 'cumpleanos');
   assert.equal(normalizeText(undefined), '');
 });
+
+test('las piezas con anacrusa conservan pickupBeats en el Score que se abre o guarda', () => {
+  const pe = getPieceScore('para-elisa', 'melodia');
+  assert.equal(pe.pickupBeats, 0.5);
+  assert.equal(validateScore(pe).score.pickupBeats, 0.5);
+  assert.equal(getPieceScore('cumpleanos-feliz', 'acompanamiento').pickupBeats, 1);
+  assert.equal('pickupBeats' in getPieceScore('oda-a-la-alegria'), false);
+});

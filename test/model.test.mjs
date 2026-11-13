@@ -174,3 +174,11 @@ test('sourceUrl: se conserva sólo si es http(s) válido', async () => {
   assert.equal(validateScore(base).score.sourceUrl, undefined);
   assert.equal('sourceUrl' in validateScore(base).score, false);
 });
+
+test('validateScore: pickupBeats (anacrusa) se conserva sólo si es > 0 y menor que el compás', () => {
+  const base = { timeSig: [3, 8], measures: [{ rh: [{ k: ['c/4'], d: '8' }], lh: [] }] };
+  assert.equal(validateScore({ ...base, pickupBeats: 0.5 }).score.pickupBeats, 0.5);
+  assert.equal(validateScore({ ...base, pickupBeats: 1.234 }).score.pickupBeats, 1.23);
+  assert.equal('pickupBeats' in validateScore(base).score, false);
+  for (const bad of [0, -1, 3, 4, '1', null, NaN]) assert.equal('pickupBeats' in validateScore({ ...base, pickupBeats: bad }).score, false, String(bad));
+});

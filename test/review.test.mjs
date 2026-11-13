@@ -201,3 +201,9 @@ test('avisos de importación: compás que no suma, compás vacío en una mano, s
   // 6/8: un compás de 3 negras
   assert.deepEqual(detectIssues({ timeSig: [6, 8], measures: [{ rh: [{ k: ['c/4'], d: 'h', dots: 1 }], lh: [] }] }), []);
 });
+
+test('detectIssues: con anacrusa, el primer compás no se marca como "no suma"', () => {
+  const ms = [{ rh: [{ k: ['c/4'], d: 'q' }], lh: [] }, { rh: [{ k: ['d/4'], d: 'w' }], lh: [] }];
+  assert.deepEqual(detectIssues({ timeSig: [4, 4], measures: ms, pickupBeats: 1 }).map((x) => x.kind), []);
+  assert.deepEqual(detectIssues({ timeSig: [4, 4], measures: ms }).map((x) => x.key), ['sum:0:rh']);
+});

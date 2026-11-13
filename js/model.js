@@ -127,7 +127,10 @@ export function validateScore(obj) {
       if (Number.isInteger(n) && n > 0 && n <= 32 && VALID_DEN.includes(dn)) score.timeSig = [n, dn];
     }
     score.keySig = normKeySig(obj.keySig);
-    const su = typeof obj.sourceUrl === 'string' ? obj.sourceUrl.trim() : '';
+    // anacrusa (opcional): el primer compás dura menos que el compás completo; en negras, > 0 y < compás
+    const pb = obj.pickupBeats;
+    if (typeof pb === 'number' && Number.isFinite(pb) && pb > 0 && pb < (score.timeSig[0] * 4) / score.timeSig[1]) score.pickupBeats = Math.round(pb * 100) / 100;
+    const su =typeof obj.sourceUrl === 'string' ? obj.sourceUrl.trim() : '';
     if (su && su.length <= 2000 && /^https?:\/\/\S+$/i.test(su)) score.sourceUrl = su;   // enlace de la canción original (sólo http/https)
     const art = typeof obj.artist === 'string' ? obj.artist.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
     if (art) score.artist = art;                                                          // artista de la canción (búsqueda)
