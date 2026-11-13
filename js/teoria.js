@@ -1,9 +1,9 @@
 // Sección "Teoría": dos lecciones de clase (escala mayor y grados/acordes) con ejercicios que usan la misma entrada que Práctica.
 // La lógica de los ejercicios vive en lessons.js y theory.js (puros); acá sólo hay estado de pantalla y HTML.
 import { KEYS, MAJOR_PATTERN, majorScale, scaleMidi, diatonicTriads, makeDegreeTasks, makeQualityQuiz, noteNameInKey, keyboardLabel } from './theory.js';
-import { createScaleRun, createTriadTask, scoreOf } from './lessons.js';
+import { createScaleRun, createTriadTask, scoreOf, streakDays } from './lessons.js';
 import { semitonesText } from './keyboard.js';
-import { theorySummary, THEORY_PASS } from './store.js';
+import { theorySummary, THEORY_PASS, masteredKeys, theoryDays, theoryDayKey } from './store.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
@@ -240,8 +240,13 @@ export function createTheory(env) {
   }
   function progressLine() {
     const s = summary();
-    const best = s.best == null ? 'Sin ejercicios todavía' : `Mejor puntaje ${s.best}%`;
-    return `<p class="th-prog" aria-label="Tu progreso en esta lección"><span>${best}</span><span aria-hidden="true"> · </span><span>Tonalidades <b>${s.keys.length}</b> de 12</span></p>`;
+    const n = masteredKeys(S.progress, S.lesson).length;
+    const days = streakDays(theoryDays(S.progress), theoryDayKey());
+    const sub = s.best == null ? 'Empezá por Do mayor' : `Mejor puntaje ${s.best}%`;
+    return `<section class="th-prog-box" aria-label="Tu progreso en esta lección">
+      <p class="th-prog"><span>Dominaste <b>${n}</b> de 12 tonalidades</span>${days ? `<span class="th-streak">Racha: <b>${days} ${days === 1 ? 'día' : 'días'}</b></span>` : ''}</p>
+      <div class="th-bar" role="progressbar" aria-label="Tonalidades dominadas" aria-valuemin="0" aria-valuemax="12" aria-valuenow="${n}"><i style="width:${Math.round((n / 12) * 100)}%"></i></div>
+      <p class="th-best">${sub}</p></section>`;
   }
   function modeTabs() {
     return `<div class="seg wide th-modes" role="group" aria-label="Modo">${MODES[S.lesson].map(([id, t]) => `<button data-act="mode" data-v="${id}" class="${id === S.mode ? 'on' : ''}" aria-pressed="${id === S.mode}">${esc(t)}</button>`).join('')}</div>`;
@@ -350,7 +355,7 @@ export function createTheory(env) {
   function render() {
     if (!active) return;
     keepUi((body) => {
-      body.innerHTML = lessonTabs() + (S.mode === 'ver' ? progressLine() : '') + modeTabs() + (S.mode === 'ver' ? introHtml() : '') + keySel() + `<div id="th-live" class="th-live">${liveHtml()}</div>`;
+      body.innerHTML = lessonTabs() + progressLine() + modeTabs() + (S.mode === 'ver' ? introHtml() : '') + keySel() + `<div id="th-live" class="th-live">${liveHtml()}</div>`;
       centerKey();
     });
   }

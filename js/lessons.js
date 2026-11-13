@@ -90,3 +90,25 @@ export function createTriadTask(triad) {
     },
   };
 }
+
+/** "AAAA-MM-DD" del día anterior (aritmética en UTC: no depende de la zona horaria). */
+function prevDayKey(k) {
+  const [y, m, d] = k.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
+/**
+ * Pura: racha de días seguidos con al menos un ejercicio completado.
+ * Si hoy hubo ejercicio, cuenta desde hoy hacia atrás; si todavía no, cuenta desde ayer (la racha no se corta hasta que termina el día).
+ * @param {string[]} days días con actividad, "AAAA-MM-DD" (pueden venir repetidos o desordenados)
+ * @param {string} todayKey día de referencia, "AAAA-MM-DD"
+ * @returns {number} cantidad de días seguidos
+ */
+export function streakDays(days, todayKey) {
+  if (typeof todayKey !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(todayKey)) return 0;
+  const set = new Set((days || []).filter((d) => typeof d === 'string'));
+  let k = set.has(todayKey) ? todayKey : prevDayKey(todayKey);
+  let n = 0;
+  while (set.has(k)) { n++; k = prevDayKey(k); }
+  return n;
+}

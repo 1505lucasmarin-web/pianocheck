@@ -224,7 +224,7 @@ export function createTxFlow(deps) {
     lastScore = score;
     showStage("result");
     $("tx-title").value = st.title || (ctx && ctx.title) || "Transcripción";
-    $("tx-polish").hidden = !(deps.getSettings().apiKey);
+    $("tx-polish").hidden = false;   // siempre visible: sin API key muestra la etiqueta y avisa al tocarlo
     $("tx-acc-wrap").hidden = !(st.origin === "grabada") || st.mode !== "melodia";
     renderResult(score, info);
     $("tx-open").focus({ preventScroll: true });

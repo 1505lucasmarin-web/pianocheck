@@ -182,37 +182,69 @@ export async function saveSettings(obj) {
 /** Porcentaje mínimo para dar por completada una tonalidad en una lección. */
 export const THEORY_PASS = 80;
 
-/** Normaliza lo guardado: { lessons: { [lessonId]: { best:{[ejercicio]:{correct,total,pct,key,at}}, keys:string[], runs:number } } }. */
+/** Porcentaje mínimo para dar por dominada una tonalidad (ejercicio completado en esa tonalidad). */
+export const MASTER_PCT = 90;
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_DAYS = 400;
+
+/** Día local "AAAA-MM-DD" de una marca de tiempo (para la racha). */
+export function theoryDayKey(ts = Date.now()) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Normaliza lo guardado: { lessons: { [lessonId]: { best:{[ejercicio]:{correct,total,pct,key,at}}, keys:string[], mastered:string[], runs:number } }, days?: string[] }.
+ *  `days` (días con algún ejercicio completado, "AAAA-MM-DD") sólo aparece si hay alguno. Lo viejo sin `mastered` se deriva de `best`. */
 export function normalizeTheory(raw) {
   const out = { lessons: {} };
   const src = raw && typeof raw === 'object' && raw.lessons && typeof raw.lessons === 'object' ? raw.lessons : {};
   for (const id of Object.keys(src)) {
     const l = src[id] || {};
+    const best = l.best && typeof l.best === 'object' ? { ...l.best } : {};
+    const mastered = Array.isArray(l.mastered) ? l.mastered.filter((k) => typeof k === 'string') : [];
+    for (const b of Object.values(best)) if (b && b.key && Number.isFinite(b.pct) && b.pct >= MASTER_PCT && !mastered.includes(b.key)) mastered.push(b.key);
     out.lessons[id] = {
-      best: l.best && typeof l.best === 'object' ? { ...l.best } : {},
+      best,
       keys: Array.isArray(l.keys) ? l.keys.filter((k) => typeof k === 'string') : [],
+      mastered,
       runs: Number.isFinite(l.runs) ? l.runs : 0,
     };
   }
+  const days = Array.isArray(raw && raw.days) ? [...new Set(raw.days.filter((d) => typeof d === 'string' && DAY_RE.test(d)))].sort().slice(-MAX_DAYS) : [];
+  if (days.length) out.days = days;
   return out;
 }
 
 /**
- * Pura: suma un resultado. Guarda el mejor puntaje por ejercicio y marca la tonalidad como completada si pct >= THEORY_PASS.
+ * Pura: suma un resultado. Guarda el mejor puntaje por ejercicio; marca la tonalidad como completada si pct >= THEORY_PASS
+ * y como dominada si pct >= MASTER_PCT; anota el día (racha).
  * @returns nuevo objeto de progreso (no muta el recibido)
  */
 export function recordTheory(progress, lessonId, exercise, keyId, correct, total, now = Date.now()) {
   const cur = normalizeTheory(progress);
-  const l = cur.lessons[lessonId] || { best: {}, keys: [], runs: 0 };
+  const l = cur.lessons[lessonId] || { best: {}, keys: [], mastered: [], runs: 0 };
   const t = Math.max(0, Math.floor(total) || 0);
   const c = Math.max(0, Math.min(t, Math.floor(correct) || 0));
   const pct = t ? Math.round((c / t) * 100) : 0;
   const prev = l.best[exercise];
   if (!prev || pct > prev.pct) l.best[exercise] = { correct: c, total: t, pct, key: keyId || null, at: now };
   if (keyId && pct >= THEORY_PASS && !l.keys.includes(keyId)) l.keys.push(keyId);
+  if (keyId && pct >= MASTER_PCT && !l.mastered.includes(keyId)) l.mastered.push(keyId);
   l.runs += 1;
   cur.lessons[lessonId] = l;
+  cur.days = [...new Set([...(cur.days || []), theoryDayKey(now)])].sort().slice(-MAX_DAYS);
   return cur;
+}
+
+/** Pura: tonalidades dominadas (pct >= MASTER_PCT) de una lección. */
+export function masteredKeys(progress, lessonId) {
+  const l = normalizeTheory(progress).lessons[lessonId];
+  return l ? l.mastered.slice() : [];
+}
+
+/** Pura: días con algún ejercicio de Teoría completado (ordenados). */
+export function theoryDays(progress) {
+  return normalizeTheory(progress).days || [];
 }
 
 /** Pura: { best (mejor % entre ejercicios o null), keys (tonalidades completadas), byExercise, runs } de una lección. */

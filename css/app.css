@@ -1288,3 +1288,25 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 #take-midi-btns{margin:6px 0 10px}
 #take-metro-row{margin:8px 0 12px}
 .take-src .seg.opts{margin-top:0}
+
+/* ---------- aviso «Necesita API key» (opciones que usan IA sin clave) ---------- */
+.tag.needs-key,.opt-t .tag.needs-key,.srch-h .tag.needs-key,.btn .tag.needs-key{display:inline-flex;align-items:center;gap:6px;margin:0;padding:3px 10px;font-size:.78rem;font-weight:700;line-height:1.2;white-space:nowrap;color:#ffd98a;background:#2c2216;border:1px solid #8a6a2c;border-radius:999px}
+.opt-t .tag.needs-key{margin:4px 0 2px}
+
+/* ---------- Mi biblioteca: copia y «Para empezar» ---------- */
+.backup-remind{display:flex;flex-direction:column;gap:10px;margin:0 0 14px;padding:12px 14px;border-radius:var(--r);background:var(--bg2);border:1px solid #7a5f2c}
+.backup-remind p{margin:0;color:var(--fg);line-height:1.4}
+.backup-remind .row{gap:8px}
+.ml-start{margin-top:22px}
+.ml-start h2{margin:0 0 4px;font:600 1.2rem var(--serif)}
+.ml-start .hint{margin:0 0 12px}
+.ml-start .card .t{font-size:1.05rem}
+.ml-start .card .row{gap:8px}
+
+/* ---------- Teoría: progreso por lección y racha ---------- */
+.th-prog{justify-content:space-between;align-items:baseline;color:var(--fg);font-size:.95rem}
+.th-streak b{color:var(--acc)}
+.th-bar{height:8px;margin:8px 2px 0;border-radius:999px;background:var(--bg3);overflow:hidden}
+.th-bar i{display:block;height:100%;background:var(--acc);border-radius:999px;transition:width .3s}
+.th-best{margin:6px 2px 0;color:var(--mut);font-size:.86rem}
+.th-prog-box{margin-top:8px}

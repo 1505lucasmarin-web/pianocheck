@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createScaleRun, createTriadTask, scoreOf } from '../js/lessons.js';
+import { createScaleRun, createTriadTask, scoreOf, streakDays } from '../js/lessons.js';
 import { diatonicTriads, scaleMidi } from '../js/theory.js';
-import { recordTheory, theorySummary, normalizeTheory, THEORY_PASS } from '../js/store.js';
+import { recordTheory, theorySummary, normalizeTheory, THEORY_PASS, masteredKeys, theoryDays, theoryDayKey, MASTER_PCT } from '../js/store.js';
 
 test('scoreOf acota y redondea', () => {
   assert.deepEqual(scoreOf(7, 8), { correct: 7, total: 8, pct: 88 });
@@ -112,4 +112,36 @@ test('progreso de teoría: mejor puntaje, tonalidades y pureza', () => {
   assert.deepEqual(theorySummary(p4, 'grados'), { best: null, keys: [], byExercise: {}, runs: 0 });
   assert.deepEqual(normalizeTheory(null), { lessons: {} });
   assert.deepEqual(normalizeTheory(JSON.parse(JSON.stringify(p4))), p4);
+});
+
+test('racha de días: hoy y ayer = 2; anteayer no corta antes; sin actividad = 0; sólo hoy = 1; un salto corta', () => {
+  const T = '2026-11-12';
+  assert.equal(streakDays(['2026-11-11', '2026-11-12'], T), 2);
+  assert.equal(streakDays(['2026-11-10', '2026-11-11', '2026-11-12'], T), 3);
+  assert.equal(streakDays([], T), 0);
+  assert.equal(streakDays(['2026-11-09'], T), 0);
+  assert.equal(streakDays([T], T), 1);
+  assert.equal(streakDays(['2026-11-10', T], T), 1);          // falta ayer: se corta
+  assert.equal(streakDays(['2026-11-11'], T), 1);             // hoy todavía no: la racha sigue desde ayer
+  assert.equal(streakDays(['2026-11-12', '2026-11-12', '2026-11-11'], T), 2);  // repetidos no suman
+  assert.equal(streakDays(['2026-03-01', '2026-02-28'], '2026-03-01'), 2);     // cruza el mes
+  assert.equal(streakDays(['x'], 'no-es-fecha'), 0);
+});
+
+test('tonalidades dominadas (>= 90 %) y días de actividad en el progreso de Teoría', () => {
+  assert.equal(MASTER_PCT, 90);
+  const day = Date.UTC(2026, 10, 12, 15);
+  let p = recordTheory({}, 'escala', 'tocala', 'D', 8, 8, day);       // 100%: dominada
+  p = recordTheory(p, 'escala', 'armala', 'G', 7, 8, day);            // 88%: completada, no dominada
+  assert.deepEqual(masteredKeys(p, 'escala'), ['D']);
+  assert.deepEqual(theoryDays(p), [theoryDayKey(day)]);
+  p = recordTheory(p, 'grados', 'grado', 'D', 5, 5, day + 86400000);   // otro día
+  assert.deepEqual(masteredKeys(p, 'grados'), ['D']);
+  assert.equal(theoryDays(p).length, 2);
+  assert.deepEqual(masteredKeys(p, 'escala'), ['D']);
+  // progreso viejo (sin mastered ni days) se deriva de best
+  const old = { lessons: { escala: { best: { tocala: { correct: 8, total: 8, pct: 100, key: 'C', at: 1 } }, keys: ['C'], runs: 1 } } };
+  assert.deepEqual(masteredKeys(old, 'escala'), ['C']);
+  assert.deepEqual(theoryDays(old), []);
+  assert.deepEqual(masteredKeys(null, 'escala'), []);
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { originKind, queryLibrary, filterCounts, draftsOf, isDraft, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, LIB_LIMITS, FILTERS } from "../js/mylib.js";
+import { originKind, queryLibrary, filterCounts, draftsOf, isDraft, buildLibraryExport, serializeLibrary, parseLibraryExport, planMerge, LIB_LIMITS, FILTERS, shouldRemindBackup } from "../js/mylib.js";
 import { validateScore } from "../js/model.js";
 
 const sc = (id, extra = {}) => ({ id, title: "Pieza " + id, bpm: 80, timeSig: [4, 4], keySig: "C", measures: [{ rh: [{ k: ["c/4"], d: "w" }], lh: [] }], ...extra });
@@ -97,4 +97,15 @@ test('orígenes nuevos: transcrita y grabada (etiqueta, filtro y conteo)', () =>
   assert.deepEqual(queryLibrary(list, { filter: 'grabada' }).map((s) => s.id), ['b']);
   assert.equal(filterCounts(list).transcrita, 1);
   assert.ok(FILTERS.some(([k, n]) => k === 'transcrita' && n === 'Transcritas') && FILTERS.some(([k]) => k === 'grabada'));
+});
+
+test('recordatorio de copia: sólo desde 3 partituras, sin exportar o hace más de 14 días, y no si está pospuesto', () => {
+  const DAY = 86400000, now = Date.UTC(2026, 10, 12);
+  assert.equal(shouldRemindBackup({ count: 3, lastExport: 0, now }), true);               // nunca exportó
+  assert.equal(shouldRemindBackup({ count: 5, lastExport: now - 15 * DAY, now }), true);  // exportó hace 15 días
+  assert.equal(shouldRemindBackup({ count: 5, lastExport: now - 5 * DAY, now }), false);  // exportó hace 5 días
+  assert.equal(shouldRemindBackup({ count: 5, lastExport: 0, snoozeUntil: now + DAY, now }), false); // pospuesto
+  assert.equal(shouldRemindBackup({ count: 5, lastExport: 0, snoozeUntil: now - DAY, now }), true);  // venció la posposición
+  assert.equal(shouldRemindBackup({ count: 2, lastExport: 0, now }), false);              // menos de 3 partituras
+  assert.equal(shouldRemindBackup({ count: 0, now }), false);
 });

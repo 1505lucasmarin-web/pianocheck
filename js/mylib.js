@@ -34,6 +34,17 @@ export const bestOf = (sum) => (sum && sum.count && Number.isFinite(sum.best) ? 
 const norm = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 const when = (s) => s.updatedAt || s.createdAt || 0;
 
+/** Recordatorio de copia: desde 3 partituras, si nunca se exportó o pasaron más de 14 días desde la última exportación (y no está pospuesto). */
+export const BACKUP_MIN_SCORES = 3;
+export const BACKUP_EVERY_DAYS = 14;
+/** Pura. lastExport / snoozeUntil: marcas de tiempo (0 o ausentes = nunca / sin posponer). */
+export function shouldRemindBackup({ count = 0, lastExport = 0, snoozeUntil = 0, now = Date.now() } = {}) {
+  if (!(count >= BACKUP_MIN_SCORES)) return false;
+  if (snoozeUntil && now < snoozeUntil) return false;
+  if (!lastExport) return true;
+  return now - lastExport > BACKUP_EVERY_DAYS * 86400000;
+}
+
 /** Cuántas partituras hay por filtro (para los contadores de los chips). */
 export function filterCounts(list, opts = {}) {
   const out = { todas: list.length, borrador: 0 };
