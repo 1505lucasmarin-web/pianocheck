@@ -442,6 +442,16 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .result-action{width:100%;max-width:480px;margin:6px 0 14px;padding:14px 16px;border-radius:16px;background:linear-gradient(160deg,#33281a,#251d13);border:1px solid #8a6a2c;display:flex;flex-direction:column;gap:10px}
 .ra-title{margin:0;font:700 1.15rem/1.3 var(--serif)}
 .result-action .btn{width:100%}
+.res-mistakes{width:100%;max-width:480px;margin:0 0 14px;padding:14px 16px;border-radius:16px;background:var(--bg2);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.res-mistakes[hidden]{display:none}
+.res-mistakes-t{margin:0;font:700 1.05rem/1.3 var(--serif)}
+.res-mistakes-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.res-mistakes-list li{display:flex;flex-direction:column;gap:2px;color:var(--fg);font-size:.95rem;overflow-wrap:anywhere}
+.res-mistakes-list .rm-hint{color:var(--mut);font-size:.88rem}
+.res-mistakes .btn{width:100%;min-height:44px}
+.res-mistakes-more{display:flex;flex-wrap:wrap;gap:8px}
+.res-mistakes-more[hidden]{display:none}
+.res-mistakes-more .btn{flex:1 1 130px;min-height:44px}
 .result-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;max-width:480px}
 .metric{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;background:var(--bg2);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
 .m-lbl{color:var(--mut);font-size:.8rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase}

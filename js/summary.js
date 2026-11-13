@@ -42,6 +42,7 @@ export function buildSummary({ title, n, att, attempts = [], task = null }) {
     if (t) lines.push(`Tendencia: ${t}`);
   } else lines.push(`Precisión: ${att.accuracy}%${att.status && att.status !== "finished" ? " (sesión sin terminar)" : ""}`);
   lines.push(weakText(att.weak, mode));
+  if (Array.isArray(att.mistakes) && att.mistakes.length) { lines.push("Errores que se repiten:"); att.mistakes.forEach((t) => lines.push(`- ${t}`)); }
   const c = compareAttempts(attempts, att, n);
   lines.push(c.count <= 1 ? "Es el primer intento de este tipo." : `${c.count} intentos de este tipo; mejor ${c.best == null ? "—" : c.best + "%"}, último ${c.last}%`);
   if (task && task.text) lines.push(`Consigna: ${task.text}`);
