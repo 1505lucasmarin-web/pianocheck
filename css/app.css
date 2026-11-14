@@ -1684,3 +1684,14 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .pg-seg button,#pg-metric button{flex:1 1 auto}
 @media (max-width:600px){.pg-diffs,.pg-pick{grid-template-columns:minmax(0,1fr)}.pg-range{min-width:0;flex:1 1 100%;max-width:none}}
 @media (prefers-reduced-motion:reduce){.pg *{transition:none!important;animation:none!important}}
+
+/* Moverse entre compases mientras se practica (⏪ compás ⏩) */
+.mnav{display:flex;align-items:center;justify-content:center;gap:10px;margin:2px 0 6px}
+.mnav .btn.icon{min-width:48px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+.mn-now{flex:0 1 auto;min-width:150px;min-height:44px;padding:8px 14px;border-radius:12px;border:1px solid var(--line,#3a3a3a);background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer}
+.mn-pick{display:flex;align-items:center;gap:8px}
+.mn-pick[hidden]{display:none}
+.mn-pick input{width:84px;min-height:44px;padding:6px 10px;border-radius:12px;border:1px solid var(--line,#3a3a3a);background:transparent;color:inherit;font:inherit;text-align:center}
+.mnav.picking .mn-now{display:none}
+.listening .mnav,.mnav[hidden]{display:none}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}

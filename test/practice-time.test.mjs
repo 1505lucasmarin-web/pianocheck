@@ -156,3 +156,14 @@ test("checkpoint acredita lo contado sin pausar ni duplicar", () => {
   assert.equal(t.stop(), 11);
   assert.deepEqual(spans, [5, 5, 1]);
 });
+
+test('piano libre: el id propio suma al total junto con las partituras y la Teoría', async () => {
+  const { LIBRE_ID } = await import('../js/practice-time.js');
+  assert.equal(typeof LIBRE_ID, 'string');
+  assert.notEqual(LIBRE_ID, TEORIA_ID);
+  let log = addSession(null, { day: '2026-11-14', scoreId: 'a', seconds: 60 });
+  log = addSession(log, { day: '2026-11-14', scoreId: LIBRE_ID, seconds: 90 });
+  const t = totals(log, { now: new Date(2026, 10, 14, 12).getTime() });
+  assert.equal(t.today, 150);
+  assert.ok(t.byScore.some((x) => x.scoreId === LIBRE_ID && x.seconds === 90));
+});

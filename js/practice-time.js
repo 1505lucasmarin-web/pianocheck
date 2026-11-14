@@ -6,6 +6,8 @@
 export const DEFAULT_IDLE_MS = 30000;
 /** Identificador de la práctica de Teoría dentro del registro. */
 export const TEORIA_ID = "_teoria";
+/** Identificador del tiempo de piano libre (tocar sin una partitura abierta) dentro del registro. */
+export const LIBRE_ID = "_libre";
 
 /** Día local "AAAA-MM-DD" de una marca de tiempo (ms). */
 export function dayKey(ms = Date.now()) {

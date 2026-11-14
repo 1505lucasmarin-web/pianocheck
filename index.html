@@ -53,6 +53,8 @@
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
     <symbol id="i-ear" viewBox="0 0 24 24"><path d="M4 10v4h3.5l5 4V6l-5 4zM16 9a4.2 4.2 0 010 6M18.6 6.5a7.6 7.6 0 010 11"/></symbol>
     <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V11M11 10V5a1.5 1.5 0 013 0v6M14 10.5V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4-2L4.5 14.5a1.5 1.5 0 012.2-2L8 14"/></symbol>
+    <symbol id="i-rew" viewBox="0 0 24 24"><path d="M11 6L3 12l8 6zM21 6l-8 6 8 6z"/></symbol>
+    <symbol id="i-ffw" viewBox="0 0 24 24"><path d="M13 6l8 6-8 6zM3 6l8 6-8 6z"/></symbol>
     <symbol id="i-skip" viewBox="0 0 24 24"><path d="M6 6l9 6-9 6zM18 6v12"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 6l-9 6 9 6zM6 6v12"/></symbol>
     <symbol id="i-library" viewBox="0 0 24 24"><path d="M4 4h4v16H4zM10 4h4v16h-4zM16.4 5.2l3.8 1-3.6 13.6-3.8-1z"/></symbol>
@@ -405,6 +407,17 @@
           <button class="btn" id="st-measure"><svg class="ic sm"><use href="#i-restart"/></svg>Volver al inicio del compás</button>
           <button class="btn primary" id="st-go"><svg class="ic sm"><use href="#i-skip"/></svg>Seguir</button>
         </div>
+      </div>
+      <div class="mnav" id="measure-nav" role="group" aria-label="Moverse entre compases">
+        <button class="btn icon" id="mn-prev" type="button" aria-label="Volver un compás" title="Volver un compás"><svg class="ic"><use href="#i-rew"/></svg></button>
+        <button class="mn-now" id="mn-now" type="button" aria-label="Elegir compás">Compás 1 de 1</button>
+        <form class="mn-pick" id="mn-pick" hidden>
+          <label class="sr-only" for="mn-input">Ir al compás</label>
+          <input id="mn-input" type="number" inputmode="numeric" min="1" step="1" autocomplete="off">
+          <button class="btn primary" type="submit">Ir</button>
+          <button class="btn ghost" id="mn-cancel" type="button" aria-label="Cancelar">✕</button>
+        </form>
+        <button class="btn icon" id="mn-next" type="button" aria-label="Adelantar un compás" title="Adelantar un compás"><svg class="ic"><use href="#i-ffw"/></svg></button>
       </div>
       <div class="next-row">
         <div class="next-info" id="next-info" role="status" aria-live="polite">

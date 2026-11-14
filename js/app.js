@@ -28,7 +28,7 @@ import { detectIssues, needsImportCheck } from "./issues.js";
 import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
 import { buildSummary } from "./summary.js";
 import { summarizeMistakes, measuresToPractice, groupRanges } from "./mistakes.js";
-import { createTimeTracker, splitByDay, formatDuration, totals as ptTotals, TEORIA_ID, DEFAULT_IDLE_MS, normalizeLog } from "./practice-time.js";
+import { createTimeTracker, splitByDay, formatDuration, totals as ptTotals, TEORIA_ID, LIBRE_ID, DEFAULT_IDLE_MS, normalizeLog } from "./practice-time.js";
 import { buildTake, takeMetrics, MAX_TAKE_MS, MAX_TAKE_EVENTS } from "./takes.js";
 import { createProgressScreen } from "./progress-screen.js";
 import { createSynth } from "./synth.js";
@@ -2758,6 +2758,7 @@ function updateHeader() {
   const m = curMeasure();
   $("hands-t").textContent = handsText();
   $("measure-now").textContent = `Compás ${Math.min(n, m + 1)} de ${n}`;
+  syncMeasureNav();
   $("hands-link").setAttribute("aria-label", `${handsText()}, compás ${Math.min(n, m + 1)} de ${n}. Tocá para cambiar la mano, reiniciar o terminar`);
 }
 function updatePracticeUi() {
@@ -2850,13 +2851,11 @@ function hideStuck() { $("stuck-help").hidden = true; }
 $("st-go").addEventListener("click", hideStuck);
 $("st-listen").addEventListener("click", () => { hideStuck(); listenSlow = true; startListening({ range: isLoop() ? passage : currentPair(curMeasure(), N()), hands, slow: true }); });
 $("st-hand").addEventListener("click", () => { const h = $("st-hand").dataset.hand || "rh"; hideStuck(); setHands(h); });
-$("st-measure").addEventListener("click", () => {
-  hideStuck();
-  const s = curStep(); if (!s || !session) return;
-  const k0 = steps.findIndex((x) => x.measure === s.measure);
-  if (k0 < 0) return;
+/** Vuelve dentro de la sesión al primer paso `k0` (descuenta lo contado desde ahí y limpia las marcas). */
+function rewindTo(k0) {
+  if (!session || k0 < 0 || k0 >= steps.length) return false;
   const from = session.state.index;
-  if (!session.jumpTo(k0)) return;
+  if (!session.jumpTo(k0)) return false;
   for (let k = k0; k <= from && k < steps.length; k++) {
     practiceR.markStep(steps[k].i, null);
     practiceR.clearStepErrors(steps[k].i);
@@ -2864,7 +2863,58 @@ $("st-measure").addEventListener("click", () => {
   }
   missView = null; kb.setHint(null);
   practiceR.setCursor(steps[k0].i); updatePracticeUi(); syncKeyboard(true); refreshNext(); trackPhrase();
+  return true;
+}
+$("st-measure").addEventListener("click", () => {
+  hideStuck();
+  const s = curStep(); if (!s || !session) return;
+  rewindTo(steps.findIndex((x) => x.measure === s.measure));
 });
+
+/* ----- moverse entre compases: ⏪ compás anterior · ⏩ compás siguiente · tocar «Compás N» para elegir uno ----- */
+function gotoMeasure(m) {
+  const n = N(); if (!current || !n) return;
+  m = Math.max(0, Math.min(n - 1, Math.floor(m)));
+  if (isLoop()) { toast("Con el bucle activo, los compases se cambian desde «Bucle».", 3200); return; }
+  if (listening) stopListening(true);
+  hideStuck(); closePSheet(true); clearTimeout(finishTimer);
+  const cur = curMeasure();
+  if (!isPulso() && session && session.state.status === "playing" && m <= cur) {
+    const k0 = steps.findIndex((x) => x.measure === m);
+    if (k0 >= 0 && rewindTo(k0)) { toast(`Compás ${m + 1}`, 1200); return; }
+  }
+  passage = m > 0 ? { from: m, to: n - 1, loop: false } : null;
+  resetSession(); rememberPractice();
+  toast(`Compás ${m + 1}`, 1200);
+}
+function mnStep(d) {
+  if (!current) return;
+  const m = curMeasure() + d;
+  if (m < 0 || m > N() - 1) { toast(d < 0 ? "Ya estás en el primer compás." : "Es el último compás.", 1600); return; }
+  gotoMeasure(m);
+}
+function mnPicking(on) {
+  $("measure-nav").classList.toggle("picking", on);
+  $("mn-pick").hidden = !on;
+  if (on) { const i = $("mn-input"); i.max = String(N()); i.value = String(curMeasure() + 1); i.focus(); i.select(); }
+}
+$("mn-prev").addEventListener("click", () => mnStep(-1));
+$("mn-next").addEventListener("click", () => mnStep(1));
+$("mn-now").addEventListener("click", () => mnPicking(true));
+$("mn-cancel").addEventListener("click", () => mnPicking(false));
+$("mn-pick").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = parseInt($("mn-input").value, 10);
+  if (!Number.isFinite(v) || v < 1 || v > N()) { toast(`Elegí un compás entre 1 y ${N()}.`, 2200); return; }
+  mnPicking(false); gotoMeasure(v - 1);
+});
+function syncMeasureNav() {
+  const n = N(), m = Math.min(n, curMeasure() + 1);
+  $("mn-now").textContent = `Compás ${m} de ${n}`;
+  $("mn-now").setAttribute("aria-label", `Compás ${m} de ${n}. Tocá para elegir otro`);
+  $("mn-prev").disabled = m <= 1; $("mn-next").disabled = m >= n;
+  $("measure-nav").hidden = !current || isLoop();
+}
 
 /* ----- modo escucha en Práctica (Play, "Escuchar pasaje" de la ayuda y del bucle): la evaluación queda en pausa mientras dura ----- */
 let micPaused = false;
@@ -3000,6 +3050,7 @@ $("practice-back").addEventListener("click", () => goLibrary());
 
 /* ----- entrada de notas ----- */
 function handleNoteOn(m, ts, src) {
+  ptTracker.activity();   // tocar cuenta siempre: práctica, pausa, escucha, teoría o piano libre
   if (screen === "theory") { theory.noteOn(m); ptTracker.activity(); return; }
   if (screen === "practice" && annoP.isActive()) return;   // anotando: la evaluación está en pausa
   if (screen === "practice" && listening) { if (lcP.along && lcP.isOpen) { kb.flash(m, "ok"); ptTracker.activity(); } return; }   // escuchando: no se evalúa; con «Tocar encima» se ve en el piano guía
@@ -3509,19 +3560,12 @@ async function loadPracticeLog() {
   await ptWrite;
   try { return await (await lazy("store")).getPracticeLog(); } catch (e) { return normalizeLog(null); }
 }
-/** ¿Debe contar el tiempo ahora? Práctica con sesión en curso (no en pausa, no anotando, no escuchando salvo «Tocar encima») o Teoría. */
-function ptWanted() {
-  if (document.hidden) return false;
-  if (screen === "theory") return true;
-  if (screen !== "practice" || !current) return false;
-  if (lcP.isOpen) return !!lcP.along;
-  if (listening) return false;
-  return !paused && !annoP.isActive();
-}
+/** ¿Puede contar el tiempo ahora? Sólo con la app a la vista. El contador suma únicamente mientras se tocan notas (actividad en los últimos segundos): practicando, en pausa, tocando encima de la escucha, en Teoría o con el piano libre fuera de una partitura. */
+function ptWanted() { return !document.hidden; }
 /** Pone el contador en el estado que corresponde (llamarla al cambiar de pantalla, pausa, escucha, etc.). */
 function ptSync() {
   const want = ptWanted();
-  const id = screen === "theory" ? TEORIA_ID : (current && current.id) || null;
+  const id = screen === "theory" ? TEORIA_ID : screen === "practice" && current && current.id ? current.id : LIBRE_ID;
   if (ptTracker.running && (!want || id !== ptScoreId)) { ptTracker.pause(); ptFlush(); }
   ptScoreId = id;
   if (want && id && !ptTracker.running) ptTracker.start();
