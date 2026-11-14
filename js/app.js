@@ -560,6 +560,8 @@ $("pdf-resume-discard").addEventListener("click", async () => {
 });
 async function runImport(kind, files, ctxOverride, savedPdf) {
   files = Array.from(files || []); if (!files.length) return;
+  // varias imágenes de una misma partitura: se leen en orden de nombre (P1, P2, … P10), no en el orden en que el selector las devuelva
+  if (kind === "images" && files.length > 1) files.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { numeric: true, sensitivity: "base" }));
   if (kind === "task") { await runImportTask(files[0]); return; }
   let ctx = ctxOverride || importCtx; importCtx = null;   // datos de la búsqueda que originó la importación (título, artista, enlace)
   lastImportKind = kind;
