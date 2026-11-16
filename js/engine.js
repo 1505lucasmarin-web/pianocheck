@@ -1,12 +1,12 @@
 // Sesión de práctica "te espero". Sin DOM.
 
 export function createSession(steps, opts = {}) {
-  const maxStreak = Number.isFinite(opts.maxStreak) ? opts.maxStreak : 5;
+  let maxStreak = Number.isFinite(opts.maxStreak) ? opts.maxStreak : 5;
   const list = Array.isArray(steps) ? steps : [];
   const total = list.length;
   const stepResults = new Array(total).fill(null);
   const stepErrors = new Array(total).fill(0);   // notas erradas por paso
-  let index = 0;
+  let index = Number.isInteger(opts.startIndex) ? Math.max(0, Math.min(Math.max(0, list.length - 1), opts.startIndex)) : 0;   // arrancar a mitad de la partitura: lo anterior no cuenta
   let pressed = [];
   let cleanSteps = 0;
   let dirtySteps = 0;
@@ -71,6 +71,7 @@ export function createSession(steps, opts = {}) {
     get stepErrors() { return stepErrors.slice(); },
     /** Reinicia el contador de errores seguidos (la ayuda del bucle ya se mostró). */
     resetStreak() { streak = 0; },
+    setMaxStreak(n) { if (Number.isFinite(n)) maxStreak = n; },
     /** Vuelve a un paso anterior (p. ej. al inicio del compás): descuenta lo que se había contado desde ahí. */
     jumpTo(i) {
       if (status !== 'playing') return false;

@@ -1695,3 +1695,5 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .mnav.picking .mn-now{display:none}
 .listening .mnav,.mnav[hidden]{display:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+#bpm-down,#bpm-up,#mn-prev,#mn-next{touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+#measure-nav #mn-first{flex:none}

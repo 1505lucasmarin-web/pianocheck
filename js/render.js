@@ -1083,7 +1083,7 @@ export function createRenderer(container, opts = {}) {
     const s = systems[+sysEl.dataset.sys]; if (!s || !s.mx) return;
     let p;
     try { const pt = s.svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY; p = pt.matrixTransform(s.svg.getScreenCTM().inverse()); } catch (e) { return; }
-    for (let mi = s.from; mi <= s.to; mi++) { const m = s.mx[mi]; if (m && p.x >= m.x && p.x <= m.x + m.w) { measureCb(mi); return; } }
+    for (let mi = s.from; mi <= s.to; mi++) { const m = s.mx[mi]; if (m && p.x >= m.x && p.x <= m.x + m.w) { measureCb(mi, m.w > 0 ? (p.x - m.x) / m.w : 0); return; } }
   });
 
   // toque: nota más cercana al punto tocado

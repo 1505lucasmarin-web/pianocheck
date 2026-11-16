@@ -23,7 +23,7 @@ const wrapText = (t, n = 22) => {
   return out;
 };
 
-export function createAnnotateUI({ renderer, host, area, persist, toast = () => {}, hint = "", onActive = () => {}, getHidden = () => false, setHidden = () => {} }) {
+export function createAnnotateUI({ renderer, host, area, persist, toast = () => {}, hint = "", onActive = () => {}, getHidden = () => false, setHidden = () => {}, getScale = () => 1, setScale = () => {} }) {
   let store = createStore(), unsub = null, scoreId = null, saveT = 0;
   let active = false, tool = "pen", color = 0, pending = null, stamp = "", nMeasures = 0;
   let scoreLoad = 0;
@@ -54,6 +54,10 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
     </div>
     <div class="grp anno-quick" role="group" aria-label="Marcas rápidas">
       ${QUICK_MARKS.map(([mark, label]) => `<button type="button" class="tb" data-stamp="${mark}" aria-label="${mark} · ${label}" aria-pressed="false">${mark}</button>`).join("")}
+    </div>
+    <div class="grp anno-size" role="group" aria-label="Tamaño de las notas y marcas">
+      <button type="button" class="tb" data-act="size-dn" aria-label="Notas más chicas" title="Más chico">A&minus;</button>
+      <button type="button" class="tb" data-act="size-up" aria-label="Notas más grandes" title="Más grande">A+</button>
     </div>
     <div class="anno-text" hidden>
       <button type="button" class="tb" data-act="text-open">Escribir texto</button>
@@ -117,7 +121,7 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
     const g = el("g", { class: "an-mark", "data-id": m.id, "data-group": m.groupId, "data-measure": m.measure, "data-type": m.type });
     const slot = slotOf(m);
     if (m.type === "text") {
-      const fs = Math.max(11, (m.size || 1.4) * ss * 1.15), lines = wrapText(m.text);
+      const fs = Math.max(11, (m.size || 1.4) * ss * 1.15 * (getScale() || 1)), lines = wrapText(m.text);
       const t = el("text", { class: "an-text", x: pts[0].x, y: pts[0].y, "font-size": fs.toFixed(1), "stroke-width": (fs * 0.28).toFixed(1) }, g);
       if (slot >= 0) t.setAttribute("class", `an-text an-c${slot}`); else t.setAttribute("fill", m.color || "#7b1fa2");
       lines.forEach((ln, i) => { const s = el("tspan", { x: pts[0].x, dy: i ? (fs * 1.15).toFixed(1) : 0 }, t); s.textContent = ln; });
@@ -189,6 +193,12 @@ export function createAnnotateUI({ renderer, host, area, persist, toast = () => 
         pending.editing = true; syncUi(); q(".anno-text input").focus({ preventScroll: true });
       } else if (act === "text-ok") commitText();
       else if (act === "text-no") { pending = null; syncUi(); draw(); }
+      else if (act === "size-up" || act === "size-dn") {
+        const L = [1, 1.5, 2, 2.75, 3.5], cur = getScale() || 1;
+        let i = L.findIndex((x) => x >= cur - 1e-6); if (i < 0) i = L.length - 1;
+        i = Math.max(0, Math.min(L.length - 1, i + (act === "size-up" ? 1 : -1)));
+        setScale(L[i]); draw(); toast(i === 0 ? "Tamaño normal" : `Tamaño ${i + 1} de ${L.length}`, 1100);
+      }
     }
   });
   q(".anno-text input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commitText(); } if (e.key === "Escape") { e.stopPropagation(); pending = null; syncUi(); draw(); } });

@@ -43,6 +43,7 @@ import { createTxFlow } from "./txflow.js";
 import { holdInfo, createHoldTracker, summarizeHolds, holdLine, holdWeakText, beatsText, normHoldMode, HOLD_MODE_NAMES, endRefOf } from "./hold.js";
 
 const MAX_STREAK = 5;
+const stopOnMiss = () => settings.stopOnMiss === true;   // «Detener tras 5 errores seguidos»: opcional, apagado de fábrica
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -62,7 +63,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar", showPaid: false, saveTakes: true };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar", showPaid: false, saveTakes: true, stopOnMiss: false, lastBpm: 0, annoScale: 1 };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -152,8 +153,9 @@ const practiceR = createRenderer($("practice-score"));                          
 /* Anotar: marcas a mano ancladas al compás, una capa por pantalla (Práctica y Revisión); el ojo las oculta/muestra en las dos. */
 const annoPersist = { get: async (id) => (await lazy("store")).getAnnotations(id), save: async (id, d) => (await lazy("store")).saveAnnotations(id, d) };
 const annoHidden = { getHidden: () => !!settings.hideMarks, setHidden: (v) => { settings.hideMarks = !!v; store.saveSettings({ hideMarks: !!v }).catch(() => {}); annoP.refresh(); annoR.refresh(); } };
-const annoP = createAnnotateUI({ renderer: practiceR, host: $("practice-anno"), area: $("practice-area"), persist: annoPersist, toast, ...annoHidden, hint: "Dibujá sobre la partitura. Con dos dedos o con los botones de desplazamiento te movés. La evaluación queda en pausa mientras anotás.", onActive: (on, silent) => practiceAnnoMode(on, silent) });
-const annoR = createAnnotateUI({ renderer: reviewR, host: $("review-anno"), area: $("review-area"), persist: annoPersist, toast, ...annoHidden, onActive: (on) => { $("review-annotate").setAttribute("aria-pressed", String(on)); if (on) { editState && (editState.selected = null); updateEditUi(); } } });
+const annoScaleOpt = { getScale: () => settings.annoScale || 1, setScale: (v) => { settings.annoScale = v; store.saveSettings({ annoScale: v }).catch(() => {}); annoP.refresh && annoP.refresh(); annoR.refresh && annoR.refresh(); } };
+const annoP = createAnnotateUI({ renderer: practiceR, host: $("practice-anno"), area: $("practice-area"), persist: annoPersist, toast, ...annoHidden, ...annoScaleOpt, hint: "Dibujá sobre la partitura. Con dos dedos o con los botones de desplazamiento te movés. La evaluación queda en pausa mientras anotás.", onActive: (on, silent) => practiceAnnoMode(on, silent) });
+const annoR = createAnnotateUI({ renderer: reviewR, host: $("review-anno"), area: $("review-area"), persist: annoPersist, toast, ...annoHidden, ...annoScaleOpt, onActive: (on) => { $("review-annotate").setAttribute("aria-pressed", String(on)); if (on) { editState && (editState.selected = null); updateEditUi(); } } });
 $("review-annotate").addEventListener("click", () => { if (annoR.isActive()) annoR.exit(); else annoR.enter(); });
 /* ---------- reproductor (Play): motor compartido + barra de transporte en Práctica y en Revisión ---------- */
 const player = createPlayer({ timbre: "piano" });
@@ -1968,17 +1970,34 @@ function syncMetroUi() {
   $("btn-tempo").classList.toggle("metro-on", metro.isRunning);
   updateMicNote();
 }
+let bpmSaveT = 0;
 function setMetroBpm(n, silent) {
   metroBpm = Math.max(10, Math.min(240, Math.round(n))); syncMetroRate(); holds.setBpm(metroBpm, performance.now());
   $("bpm-val").textContent = metroBpm; $("tempo-t").textContent = `♩ ${metroBpm} BPM`;
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${isPulso() ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
   if (!silent) {
+    settings.lastBpm = metroBpm; clearTimeout(bpmSaveT); bpmSaveT = setTimeout(() => store.saveSettings({ lastBpm: metroBpm }).catch(() => {}), 500);
     rememberPractice();
     if (isPulso() && pulse && screen === "practice") { clearTimeout(pulseRestartT); pulseRestartT = setTimeout(() => { if (screen === "practice" && isPulso()) resetSession(); }, 600); }   // otro tempo = otra toma
   }
 }
-$("bpm-down").addEventListener("click", () => setMetroBpm(metroBpm - 4));
-$("bpm-up").addEventListener("click", () => setMetroBpm(metroBpm + 4));
+/** Mantener apretado repite (y acelera). onTap: un toque suelto; onTick(n): cada repetición; onEnd: al soltar. */
+function holdRepeat(el, { onTap, onTick, onEnd }) {
+  let t = 0, n = 0, fired = false, skipClick = false;
+  const stop = () => { clearTimeout(t); t = 0; if (fired) { skipClick = true; setTimeout(() => { skipClick = false; }, 350); onEnd && onEnd(); } fired = false; n = 0; };
+  const tick = () => { fired = true; n++; onTick(n); t = setTimeout(tick, n < 4 ? 220 : n < 10 ? 110 : 55); };
+  el.addEventListener("pointerdown", (e) => { if (e.button > 0 || el.disabled) return; fired = false; n = 0; clearTimeout(t); t = setTimeout(tick, 420); });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => el.addEventListener(ev, stop));
+  el.addEventListener("contextmenu", (e) => e.preventDefault());
+  el.addEventListener("click", () => { if (skipClick) return; onTap(); });
+}
+holdRepeat($("bpm-down"), { onTap: () => setMetroBpm(metroBpm - 4), onTick: (n) => setMetroBpm(metroBpm - (n < 10 ? 2 : 5)) , onEnd: () => {} });
+holdRepeat($("bpm-up"), { onTap: () => setMetroBpm(metroBpm + 4), onTick: (n) => setMetroBpm(metroBpm + (n < 10 ? 2 : 5)), onEnd: () => {} });
+$("stop-miss").addEventListener("change", (e) => {
+  settings.stopOnMiss = e.target.checked; store.saveSettings({ stopOnMiss: settings.stopOnMiss }).catch(() => {});
+  if (session && session.setMaxStreak) session.setMaxStreak(isLoop() || !stopOnMiss() ? 999 : MAX_STREAK);
+  updatePracticeUi();
+});
 $("metro-toggle").addEventListener("change", (e) => { if (e.target.checked) metro.start(); else metro.stop(); syncMetroUi(); });
 const startMode = () => settings.practiceStart || ((settings.countIn || isPulso()) ? "count" : "first");
 const entryUnit = () => clickUnit(current?.timeSig);
@@ -2219,7 +2238,7 @@ function startPractice(score, o = {}) {
   if (md === "pulso" && mic && mic.running) { toast("A pulso todavía no funciona con micrófono. Seguís en «Te espero».", 4800); md = "espera"; }
   practiceMode = md;
   activeTask = o.task || null; taskBannerOff = false;
-  setMetroBpm(o.bpm || (r && r.bpm) || score.bpm || 80, true);
+  setMetroBpm(o.bpm || (r && r.bpm) || settings.lastBpm || score.bpm || 80, true);
   metro.setBeats(entryBeats());
   buildPips(entryBeats());
   kb.setRange(...Object.values(scoreRange(score)));
@@ -2255,19 +2274,23 @@ function resetSession() {
   syncLoopButton(); renderLapLine();
   if (!steps.length) { session = null; refreshNext(); updatePracticeUi(); syncKeyboard(); return; }
   if (isPulso()) { startPulseTake(); return; }
-  newSession(true);
-  trackPhrase(); trackMeasureNote(steps[0].measure);
+  let k0 = 0;
+  if (pendingStartT != null) { const k = steps.findIndex((x) => x.t >= pendingStartT - 1e-6); if (k > 0) k0 = k; }
+  pendingStartT = null;
+  newSession(true, k0);
+  trackPhrase(); trackMeasureNote(steps[k0].measure);
   beginCountIn();
 }
+let pendingStartT = null;   // tiempo (en negras) del paso elegido tocando la partitura: la próxima sesión arranca ahí
 /** Sesión nueva sobre los mismos pasos (arranque o nueva vuelta del bucle). */
-function newSession(first) {
+function newSession(first, k0 = 0) {
   if (!first) takeBegin();   // nueva vuelta del bucle: toma nueva
-  session = createSession(steps, { maxStreak: isLoop() ? 999 : MAX_STREAK });
+  session = createSession(steps, { maxStreak: isLoop() || !stopOnMiss() ? 999 : MAX_STREAK, startIndex: k0 });
   missView = null;
   if (!first) practiceR.clearMarks();
   practiceHandMarks.clear();
-  practiceR.setCursor(steps[0].i);
-  lastNoteMeasure = -1; trackMeasureNote(steps[0].measure);
+  practiceR.setCursor(steps[k0].i);
+  lastNoteMeasure = -1; trackMeasureNote(steps[k0].measure);
   updatePracticeUi(); syncKeyboard(true); refreshNext();
 }
 function leavePractice() {
@@ -2321,7 +2344,8 @@ function syncModeUi() {
   $("countin-sub").textContent = startMode() === "first"
     ? "Tocá la primera nota indicada para arrancar."
     : "Escuchá un compás de clics y empezá en el siguiente tiempo fuerte.";
-  $("practice-streak").hidden = p;
+  $("practice-streak").hidden = p || !stopOnMiss() || isLoop();
+  $("stop-miss").checked = stopOnMiss();
   syncMetroUi();
 }
 function setMode(m) {
@@ -2898,8 +2922,17 @@ function mnPicking(on) {
   $("mn-pick").hidden = !on;
   if (on) { const i = $("mn-input"); i.max = String(N()); i.value = String(curMeasure() + 1); i.focus(); i.select(); }
 }
-$("mn-prev").addEventListener("click", () => mnStep(-1));
-$("mn-next").addEventListener("click", () => mnStep(1));
+$("mn-first").addEventListener("click", () => gotoMeasure(0));
+holdRepeat($("mn-prev"), { onTap: () => mnStep(-1), onTick: (n) => mnHold(n, -1), onEnd: () => mnHoldEnd() });
+holdRepeat($("mn-next"), { onTap: () => mnStep(1), onTick: (n) => mnHold(n, 1), onEnd: () => mnHoldEnd() });
+let mnTarget = null;
+function mnHold(n, d) {
+  if (!current || isLoop()) return;
+  if (mnTarget == null) mnTarget = curMeasure();
+  mnTarget = Math.max(0, Math.min(N() - 1, mnTarget + d * (n < 8 ? 1 : n < 16 ? 2 : 4)));
+  $("mn-now").textContent = `Compás ${mnTarget + 1} de ${N()}`;
+}
+function mnHoldEnd() { const t = mnTarget; mnTarget = null; if (t != null && t !== curMeasure()) gotoMeasure(t); else syncMeasureNav(); }
 $("mn-now").addEventListener("click", () => mnPicking(true));
 $("mn-cancel").addEventListener("click", () => mnPicking(false));
 $("mn-pick").addEventListener("submit", (e) => {
@@ -2912,7 +2945,7 @@ function syncMeasureNav() {
   const n = N(), m = Math.min(n, curMeasure() + 1);
   $("mn-now").textContent = `Compás ${m} de ${n}`;
   $("mn-now").setAttribute("aria-label", `Compás ${m} de ${n}. Tocá para elegir otro`);
-  $("mn-prev").disabled = m <= 1; $("mn-next").disabled = m >= n;
+  $("mn-prev").disabled = m <= 1; $("mn-next").disabled = m >= n; $("mn-first").disabled = m <= 1;
   $("measure-nav").hidden = !current || isLoop();
 }
 
@@ -2975,7 +3008,29 @@ $("btn-listen").addEventListener("click", () => {
   if (annoP.isActive()) annoP.exit();
   openListen();
 });
-practiceR.onMeasureTap((m) => { if (lcP.isOpen) lcP.seekMeasure(m); });
+practiceR.onMeasureTap((m, frac) => {
+  if (lcP.isOpen) { lcP.seekMeasure(m); return; }
+  if (screen !== "practice" || !current || isLoop() || countingIn || annoP.isActive()) return;
+  if (isPulso()) { gotoMeasure(m); return; }
+  startFromTap(m, frac);
+});
+/** Tocar la partitura: la práctica arranca en el paso más cercano al punto tocado (dentro del compás). */
+function startFromTap(m, frac) {
+  const all = allSteps && allSteps.length ? allSteps : buildSteps(current, hands);
+  const inM = all.filter((x) => x.measure === m);
+  if (!inM.length) { toast("Ese compás no tiene notas para tocar.", 1800); return; }
+  const t0 = inM[0].t, nxt = all.find((x) => x.measure > m), t1 = nxt ? nxt.t : inM[inM.length - 1].t + 1, span = Math.max(1e-6, t1 - t0);
+  let best = inM[0], bd = Infinity;
+  for (const x of inM) { const d = Math.abs((x.t - t0) / span - (frac || 0)); if (d < bd) { bd = d; best = x; } }
+  if (listening) stopListening(true);
+  hideStuck(); closePSheet(true); clearTimeout(finishTimer);
+  const n = N();
+  passage = m > 0 ? { from: m, to: n - 1, loop: false } : null;
+  pendingStartT = best.t;
+  resetSession(); rememberPractice();
+  const k = inM.indexOf(best);
+  toast(k === 0 ? `Compás ${m + 1}` : `Compás ${m + 1}, nota ${k + 1}`, 1400);
+}
 /* opciones de escucha (hoja «Escucha») */
 function syncListenSheet() {
   const o = lcP.options, bpm = lcP.bpm || (current && current.bpm) || 80;
@@ -3106,7 +3161,7 @@ function handleNoteOn(m, ts, src) {
       announceError(msg, meas);
       if (hand) handMiss[hand]++;
       else if (!split) handMiss[target.rh.length ? "rh" : "lh"]++;
-      if (isLoop() && ev.type === "miss" && ev.streak > MAX_STREAK) { session.resetStreak(); showStuck(); }
+      if (isLoop() && stopOnMiss() && ev.type === "miss" && ev.streak > MAX_STREAK) { session.resetStreak(); showStuck(); }
       break;
     }
     case "finished":

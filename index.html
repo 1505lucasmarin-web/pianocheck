@@ -54,6 +54,7 @@
     <symbol id="i-ear" viewBox="0 0 24 24"><path d="M4 10v4h3.5l5 4V6l-5 4zM16 9a4.2 4.2 0 010 6M18.6 6.5a7.6 7.6 0 010 11"/></symbol>
     <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 013 0V11M11 10V5a1.5 1.5 0 013 0v6M14 10.5V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4-2L4.5 14.5a1.5 1.5 0 012.2-2L8 14"/></symbol>
     <symbol id="i-rew" viewBox="0 0 24 24"><path d="M11 6L3 12l8 6zM21 6l-8 6 8 6z"/></symbol>
+    <symbol id="i-first" viewBox="0 0 24 24"><path d="M5 5h2.4v14H5zM20 6l-10 6 10 6z"/></symbol>
     <symbol id="i-ffw" viewBox="0 0 24 24"><path d="M13 6l8 6-8 6zM3 6l8 6-8 6z"/></symbol>
     <symbol id="i-skip" viewBox="0 0 24 24"><path d="M6 6l9 6-9 6zM18 6v12"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="M18 6l-9 6 9 6zM6 6v12"/></symbol>
@@ -409,6 +410,7 @@
         </div>
       </div>
       <div class="mnav" id="measure-nav" role="group" aria-label="Moverse entre compases">
+        <button class="btn icon" id="mn-first" type="button" aria-label="Ir al primer compás" title="Ir al primer compás"><svg class="ic"><use href="#i-first"/></svg></button>
         <button class="btn icon" id="mn-prev" type="button" aria-label="Volver un compás" title="Volver un compás"><svg class="ic"><use href="#i-rew"/></svg></button>
         <button class="mn-now" id="mn-now" type="button" aria-label="Elegir compás">Compás 1 de 1</button>
         <form class="mn-pick" id="mn-pick" hidden>
@@ -508,6 +510,7 @@
           <button type="button" data-start="count" aria-pressed="false">Cuenta de entrada</button>
         </div>
         <p class="hint" id="countin-sub"></p>
+        <label class="switch"><input id="stop-miss" type="checkbox" role="switch"><span class="track" aria-hidden="true"></span><span class="sw-t"><b>Detener tras 5 errores seguidos</b><span>Opcional. Apagado, la práctica sigue aunque te equivoques varias veces seguidas.</span></span></label>
       </div>
 
       <div class="ps-sec" data-sec="loop" hidden>
