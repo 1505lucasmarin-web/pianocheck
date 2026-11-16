@@ -1,5 +1,5 @@
 // PianoCheck — UI y cableado de pantallas.
-import { validateScore, buildSteps, midiName, midiToKey, keyToMidi } from "./model.js";
+import { validateScore, buildSteps, midiName, midiToKey, keyToMidi, isTied } from "./model.js";
 import { createSession } from "./engine.js";
 import { createMidiInput } from "./midi.js";
 import { createMidiChord } from "./midi-chord.js";
@@ -23,7 +23,7 @@ import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from 
 import { PIECES, getPieceScore } from "./pieces.js";
 import { analyzeScore, melodyOnly, addAccompaniment } from "./arrange.js";
 import { windowFor, DEFAULT_WINDOW, measureStarts, measureStates, createPulse, beatMs, normMode, TIMING_ES, devText, trendText, timingAction, MODE_NAMES } from "./timing.js";
-import { setDuration, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
+import { setDuration, toggleTie, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
 import { detectIssues, needsImportCheck } from "./issues.js";
 import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
 import { buildSummary } from "./summary.js";
@@ -1241,6 +1241,7 @@ function updateEditUi() {
     $("review-sel").innerHTML = `Seleccionada: <b>${midi == null ? sel.key : midiName(midi)}</b> — compás ${s.measure + 1}, ${HANDS_ES[s.hand]} · ${durText(sel.ev)}${sel.ev.f && sel.ev.f[s.keyIdx] ? ` · dedo ${sel.ev.f[s.keyIdx]}` : ""}`;
     document.querySelectorAll("#ed-dur button").forEach((b) => { const on = b.dataset.d === sel.ev.d; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
     $("ed-dot").setAttribute("aria-pressed", String(!!sel.ev.dots));
+    $("ed-tie").setAttribute("aria-pressed", String(isTied(sel.ev, sel.key)));
     const f = (sel.ev.f && sel.ev.f[s.keyIdx]) || 0;
     document.querySelectorAll("#ed-fing button").forEach((b) => { const on = +b.dataset.f === f; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
     $("ed-hand-t").textContent = s.hand === "rh" ? "Pasar a la mano izquierda" : "Pasar a la mano derecha";
@@ -1285,6 +1286,7 @@ $("ed-del").addEventListener("click", () => doEdit(deleteNote));
 $("ed-tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b || !editState) return; editState.tab = b.dataset.tab; updateEditUi(); });
 $("ed-dur").addEventListener("click", (e) => { const b = e.target.closest("button"); const s = selNote(); if (!b || !s) return; doEdit(setDuration, b.dataset.d, s.ev.dots || 0); });
 $("ed-dot").addEventListener("click", () => { const s = selNote(); if (s) doEdit(setDuration, s.ev.d, s.ev.dots ? 0 : 1); });
+$("ed-tie").addEventListener("click", () => doEdit(toggleTie));
 $("ed-hand").addEventListener("click", () => doEdit(moveHand));
 $("ed-fing").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) doEdit(setFinger, +b.dataset.f); });
 $("ed-fing-0").addEventListener("click", () => doEdit(setFinger, 0));

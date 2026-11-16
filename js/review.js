@@ -1,7 +1,7 @@
 // Edición de partituras para el profesor (pura, sin DOM). Cada operación recibe la partitura y la referencia a una nota
 // { measure, hand, idx, keyIdx } y devuelve { ok, score (copia nueva), ref (selección resultante), warn? } o { ok:false, error }.
 // "warn" = { over: tiempos que se pasa el compás }.
-import { keyToMidi, midiToKey, durBeats, MAX_COMMENT } from "./model.js";
+import { keyToMidi, midiToKey, durBeats, isTied, MAX_COMMENT } from "./model.js";
 
 const EPS = 1e-6;
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -150,6 +150,33 @@ function unlinkPitch(event, key) {
   else if (event.ties) event.ties = event.ties.filter((k) => k !== key);
   delete event.tie;
   if (!event.ties?.length) delete event.ties;
+}
+
+/** ¿La nota (ref) puede ligarse con el evento anterior de su mano? Devuelve el evento anterior (puede ser del compás anterior) o null. */
+function prevEventOf(score, ref) {
+  const get = (m) => ((score.measures[m] || {})[ref.hand] || []);
+  let m = ref.measure, i = ref.idx - 1;
+  while (i < 0) { m--; if (m < 0) return null; i = get(m).length - 1; }
+  return get(m)[i] || null;
+}
+/**
+ * Liga (o desliga) la nota con la misma altura del evento anterior de la mano: la nota anterior se sostiene en vez de
+ * volver a tocarse. Marca la ligadura de esa nota (ev.ties) y, si quedan ligadas todas las del evento, ev.tie = true.
+ */
+export function toggleTie(score, ref) {
+  if (!valid(score, ref)) return { ok: false, error: "No hay nota seleccionada." };
+  const sc = clone(score), ev = evsOf(sc, ref)[ref.idx], key = ev.k[ref.keyIdx];
+  const prev = prevEventOf(sc, ref);
+  if (isTied(ev, key)) {
+    const keep = ev.tie === true ? ev.k.filter((k) => k !== key) : (ev.ties || []).filter((k) => k !== key);
+    delete ev.tie;
+    if (keep.length) ev.ties = keep; else delete ev.ties;
+    return { ok: true, score: sc, ref: { ...ref } };
+  }
+  if (!prev || !Array.isArray(prev.k) || !prev.k.includes(key)) return { ok: false, error: "La nota anterior de esta mano no tiene esa altura: no hay con qué ligarla." };
+  const ties = [...new Set([...(ev.ties || []), key])];
+  if (ev.k.every((k) => ties.includes(k))) { ev.tie = true; delete ev.ties; } else { delete ev.tie; ev.ties = ties; }
+  return { ok: true, score: sc, ref: { ...ref } };
 }
 
 /** Sube/baja la altura en semitonos. */

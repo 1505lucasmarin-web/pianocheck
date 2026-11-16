@@ -207,3 +207,17 @@ test('detectIssues: con anacrusa, el primer compás no se marca como "no suma"',
   assert.deepEqual(detectIssues({ timeSig: [4, 4], measures: ms, pickupBeats: 1 }).map((x) => x.kind), []);
   assert.deepEqual(detectIssues({ timeSig: [4, 4], measures: ms }).map((x) => x.key), ['sum:0:rh']);
 });
+
+import { toggleTie } from "../js/review.js";
+test("toggleTie: liga la nota con la anterior y la desliga", () => {
+  const sc = { timeSig: [4, 4], measures: [{ rh: [], lh: [{ k: ["c/4", "e/4"], d: "q" }, { k: ["c/4", "e/4"], d: "q" }, { k: ["g/4"], d: "h" }] }] };
+  const ref = { measure: 0, hand: "lh", idx: 1, keyIdx: 1 };
+  const a = toggleTie(sc, ref);
+  assert.equal(a.ok, true);
+  assert.deepEqual(a.score.measures[0].lh[1].ties, ["e/4"]);
+  const b = toggleTie(a.score, { ...ref, keyIdx: 0 });
+  assert.equal(b.score.measures[0].lh[1].tie, true);
+  const c = toggleTie(b.score, ref);
+  assert.deepEqual(c.score.measures[0].lh[1].ties, ["c/4"]);
+  assert.equal(toggleTie(sc, { measure: 0, hand: "lh", idx: 2, keyIdx: 0 }).ok, false);
+});
