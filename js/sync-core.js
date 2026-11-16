@@ -3,7 +3,7 @@ export const MAX_DOC_CHARS = 900000;          // Firestore limita cada documento
 export const PULL_OVERLAP_MS = 5 * 60000;      // se re-lee un margen por si los relojes de los dispositivos difieren
 export const COLLECTIONS = { score: 'scores', anno: 'annos', attempt: 'attempts', take: 'takes', audio: 'audio', theory: 'meta', settings: 'meta', practice: 'practice' };
 /** Ajustes que viajan entre dispositivos (el resto es de cada aparato: teclado en pantalla, micrófono, etc.). La API key va aparte, sólo si se activa. */
-export const SYNC_SETTINGS = ['scoreView', 'scoreTheme', 'scoreSize', 'showPhrases', 'guide', 'countIn', 'pulseWindow', 'hideMarks', 'timbre', 'listenSpeed', 'listenRepeat', 'listenHands', 'listenMetro', 'listenCountIn', 'listenMuteMine', 'listenAlong', 'listenVolume', 'holdMode', 'showPaid', 'saveTakes', 'lastPractice', 'tasks', 'stopOnMiss', 'lastBpm', 'annoScale'];
+export const SYNC_SETTINGS = ['scoreView', 'scoreTheme', 'scoreSize', 'showPhrases', 'guide', 'countIn', 'pulseWindow', 'hideMarks', 'timbre', 'listenSpeed', 'listenRepeat', 'listenHands', 'listenMetro', 'listenCountIn', 'listenMuteMine', 'listenAlong', 'listenVolume', 'holdMode', 'showPaid', 'saveTakes', 'lastPractice', 'tasks', 'stopOnMiss', 'lastBpm', 'annoScale', 'proMode'];
 export const AUDIO_CHUNK = 700000;            // caracteres base64 por documento (< 1 MiB)
 export const MAX_AUDIO_CHARS = 9000000;       // ~6,5 MB de audio por toma; más grande no se sube
 /** Parte el audio (base64) en documentos; null si es demasiado grande. */

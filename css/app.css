@@ -1711,3 +1711,8 @@ input[type=range]{display:block;width:100%;min-height:44px;accent-color:var(--ac
 .dd-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .dd-list li{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;background:var(--bg3);border-radius:10px}
 .dd-t{color:var(--mut);white-space:nowrap}
+/* Práctica pro: sin piano guía, sin contadores ni vueltas mientras se toca */
+body.pro-blind #screen-practice .kb-box,
+body.pro-blind #screen-practice .stats-row,
+body.pro-blind #screen-practice .progress,
+body.pro-blind #screen-practice #lap-line{display:none!important}

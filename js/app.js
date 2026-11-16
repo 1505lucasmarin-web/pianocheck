@@ -63,7 +63,7 @@ const store = {
   saveTheory: async (...a) => (await lazy("store")).saveTheoryResult(...a),
 };
 
-const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar", showPaid: false, saveTakes: true, stopOnMiss: false, lastBpm: 0, annoScale: 1 };
+const DEFAULT_SETTINGS = { provider: "anthropic", apiKey: "", model: "", onscreenKeyboard: false, micSensitivity: 0.5, seenConnectHint: false, guide: true, showPhrases: true, scoreView: "continua", scoreTheme: "hoja", scoreSize: "mediano", countIn: false, lastPractice: {}, pulseWindow: 120, tasks: {}, hideMarks: false, lastSearch: null, timbre: "piano", listenSpeed: 1, listenRepeat: false, listenHands: "both", listenMetro: false, listenCountIn: false, listenMuteMine: false, listenAlong: false, listenVolume: 0.8, holdMode: "mostrar", showPaid: false, saveTakes: true, stopOnMiss: false, lastBpm: 0, annoScale: 1, proMode: false };
 let settings = { ...DEFAULT_SETTINGS };
 let current = null;      // partitura en práctica / revisión
 let hands = "both";
@@ -148,7 +148,11 @@ let prevBeforeSettings = "library";
 
 /* ---------- renderers ---------- */
 const reviewR = createRenderer($("review-score"), { mode: "page", lockMode: true });   // Revisión siempre por página
-const practiceR = createRenderer($("practice-score"));                               // Práctica: continua o por página (Ajustes)
+const practiceR = createRenderer($("practice-score"));
+/* Práctica pro: la partitura no recibe marcas de acierto/error ni rótulos mientras se toca (isPro se define más abajo). */
+for (const k of ["markStep", "markError", "setTag", "resolveError"]) { const f = practiceR[k]; practiceR[k] = (...a) => (isPro() && a[1] !== null && a[1] !== undefined ? undefined : f(...a)); }
+{ const f = practiceR.setHolds; practiceR.setHolds = (v) => f(isPro() ? [] : v); }
+{ const f = practiceR.hasError; practiceR.hasError = (...a) => (isPro() ? false : f(...a)); }                               // Práctica: continua o por página (Ajustes)
 
 /* Anotar: marcas a mano ancladas al compás, una capa por pantalla (Práctica y Revisión); el ojo las oculta/muestra en las dos. */
 const annoPersist = { get: async (id) => (await lazy("store")).getAnnotations(id), save: async (id, d) => (await lazy("store")).saveAnnotations(id, d) };
@@ -2320,6 +2324,8 @@ let pulse = null, pulseRun = null, pulseTimer = 0, pulseRestartT = 0, pulseInfo 
 let pulsePausedAt = null;
 const pulseWin = () => windowFor(metroBpm, settings.pulseWindow || DEFAULT_WINDOW);
 const isPulso = () => practiceMode === "pulso";
+/** «Práctica pro»: A pulso sin ver aciertos ni errores; el resultado aparece recién al final. */
+const isPro = () => practiceMode === "pulso" && settings.proMode === true;
 metro.onBeat((i, info) => {   // la primera pulsación fija el instante de la toma: cuenta de entrada de un compás y arranca
   if (!pulseRun || !info) return;
   if (pulseRun.phase === "count" && pulseRun.take0 == null && info.n === 0) pulseRun.take0 = info.perf + pulseRun.nBeats * entryUnit() * beatMs(metroBpm);
@@ -2328,12 +2334,14 @@ metro.onBeat((i, info) => {   // la primera pulsación fija el instante de la to
 const MODE_HINT = {
   espera: "Aprendé las notas: la app espera a que toques cada una.",
   pulso: "Tocá con el metrónomo: el cursor avanza solo y te marca si vas adelantado o atrasado.",
+  pro: "Como A pulso, pero sin ver aciertos ni errores mientras tocás: el resultado y los errores aparecen recién al terminar.",
 };
 function syncModeUi() {
   const p = isPulso();
-  document.querySelectorAll("#mode-seg button").forEach((b) => { const on = b.dataset.mode === practiceMode; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
-  $("mode-hint").textContent = MODE_HINT[practiceMode] + (mic && mic.running && !p ? " A pulso todavía no funciona con micrófono." : "");
+  document.querySelectorAll("#mode-seg button").forEach((b) => { const on = b.dataset.mode === (isPro() ? "pro" : practiceMode); b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
+  $("mode-hint").textContent = MODE_HINT[isPro() ? "pro" : practiceMode] + (mic && mic.running && !p ? " A pulso todavía no funciona con micrófono." : "");
   $("btn-tempo").classList.toggle("pulso", p);
+  document.body.classList.toggle("pro-blind", isPro());
   $("btn-tempo").setAttribute("aria-label", `Tempo: ${metroBpm} negras por minuto${p ? ", modo A pulso" : ""}. Tocá para cambiarlo o elegir el modo`);
   $("metro-toggle").disabled = p;
   $("metro-toggle").closest(".switch").classList.toggle("locked", p);
@@ -2349,9 +2357,12 @@ function syncModeUi() {
   syncMetroUi();
 }
 function setMode(m) {
+  const pro = m === "pro";
+  if (pro) m = "pulso";
   m = normMode(m);
   if (m === "pulso" && mic && mic.running) { toast("A pulso todavía no funciona con micrófono. Seguís en «Te espero».", 4800); syncModeUi(); return false; }
-  if (m === practiceMode) { syncModeUi(); return true; }
+  if (m === practiceMode && pro === (settings.proMode === true)) { syncModeUi(); return true; }
+  settings.proMode = pro; store.saveSettings({ proMode: pro }).catch(() => {});
   practiceMode = m;
   if (current && screen === "practice") { clearTimeout(finishTimer); closePSheet(true); resetSession(); rememberPractice(); }
   syncModeUi();
@@ -2510,6 +2521,7 @@ function pulseNote(m, ts, src) {
 function pulseNext() {
   if (!pulseRun) { setNext("Sin notas", "No hay notas para esta selección de manos", "", ""); return; }
   if (paused) { setNext("En pausa", "Tocá Continuar", "", ""); return; }
+  if (isPro() && pulseRun.phase !== "count") { setNext("Práctica pro", pulseRun.phase === "armed" ? "Tocá la primera nota para arrancar" : "Sin ayudas hasta el final", "", pulseRun.phase === "armed" ? "El resultado aparece al terminar" : ""); return; }
   if (pulseRun.phase === "armed") { setNext("Primera nota", settings.guide === false ? "Tocá para arrancar" : names(steps[0].midi), "", "La primera nota correcta activa el pulso"); return; }
   if (pulseRun.phase === "count") { setNext("Cuenta de entrada", String(Math.max(1, pulseRun.countN || 1)), "", "Empezá en el primer tiempo fuerte"); return; }
   const guide = settings.guide !== false, st = steps[pulseRun.k];
@@ -2524,7 +2536,7 @@ const holdMeta = new Map();             // midi → info de la nota que se está
 let holdSrc = "practice", holdRaf = 0, holdWait = null, durSteps = new Set();
 let listenSnap = null, listenSig = "";
 const endRefCache = new Map();
-const say = (t) => { const el = $("hold-live"); el.textContent = ""; requestAnimationFrame(() => { el.textContent = t; }); };
+const say = (t) => { if (isPro()) return; const el = $("hold-live"); el.textContent = ""; requestAnimationFrame(() => { el.textContent = t; }); };
 const timeNow = (ts) => { const n = performance.now(); return Number.isFinite(ts) && Math.abs(ts - n) < 2000 ? ts : n; };
 function resetHolds() {
   holds.reset(); holdMeta.clear(); durSteps = new Set(); holdWait = null;
@@ -2551,6 +2563,7 @@ function handleNoteOff(m, ts) {
 }
 function holdPedal(down, ts) { if (screen !== "practice") return; holds.pedal(down, timeNow(ts)); holdKick(); }
 function onHoldResult(v) {
+  if (isPro() && v.state === "done") return;
   if (v.state === "done") {
     if (v.total >= 2) kb.setHoldMsg("¡Bien!", "ok", 900);
     say(`Completaste los ${Math.round(v.total * 2) / 2} ${v.total <= 1 ? "tiempo" : "tiempos"}`.replace("Completaste los 1 tiempo", "Completaste el tiempo"));
@@ -2696,6 +2709,7 @@ function recordMistake(measure, expected, played) {
 const errMsg = (played, expected) => `Tocaste ${played == null ? "otra nota" : midiName(played)} · Se esperaba ${names(expected)}`;
 /** Anuncia (aria-live polite) y muestra el detalle de un error. */
 function announceError(text, measure) {
+  if (isPro()) return;
   const el = $("err-live"); el.textContent = "";
   requestAnimationFrame(() => { el.textContent = `${text}. Compás ${measure + 1}.`; });
 }
