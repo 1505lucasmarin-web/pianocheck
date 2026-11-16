@@ -3653,8 +3653,44 @@ function renderPracticeCard(log, nScores) {
     return `<rect class="${d.day === todayKey ? "today" : d.seconds > 0 ? "" : "zero"}" x="${(k + 0.16).toFixed(2)}" y="${(1 - h).toFixed(3)}" width="0.68" height="${h.toFixed(3)}" role="img" aria-label="${esc(label)}: ${esc(txt)}"><title>${esc(label)}: ${esc(txt)}</title></rect>`;
   }).join("");
   const nums = days.map((d) => `<span>${Number(d.day.slice(8))}</span>`).join("");
-  $("pc-chart").innerHTML = `<svg viewBox="0 0 14 1" preserveAspectRatio="none" role="group" aria-label="Tiempo de práctica por día, últimos 14 días">${bars}</svg><div class="pc-days" aria-hidden="true">${nums}</div>`;
+  const hits = days.map((d) => { const [yy, mm, dd] = d.day.split("-").map(Number); const lb = new Date(yy, mm - 1, dd).toLocaleDateString("es-AR", { day: "numeric", month: "long" }); return `<button type="button" data-day="${d.day}" data-secs="${d.seconds}" aria-label="${esc(lb)}: ${esc(d.seconds > 0 ? formatDuration(d.seconds) : "sin práctica")}. Tocá para ver el tiempo, otra vez para ver el detalle"></button>`; }).join("");
+  pcLog = log;
+  $("pc-chart").innerHTML = `<output class="pc-read" id="pc-read" aria-live="polite"></output><div class="pc-plot"><svg viewBox="0 0 14 1" preserveAspectRatio="none" role="group" aria-label="Tiempo de práctica por día, últimos 14 días">${bars}</svg><div class="pc-hit">${hits}</div></div><div class="pc-days" aria-hidden="true">${nums}</div>`;
+  pcSel = null;
 }
+let pcLog = null, pcSel = null;
+const dayLabel = (day, long) => { const [yy, mm, dd] = day.split("-").map(Number); return new Date(yy, mm - 1, dd).toLocaleDateString("es-AR", long ? { weekday: "long", day: "numeric", month: "long" } : { day: "numeric", month: "short" }).replace(".", ""); };
+/** Un toque en una barra: muestra cuánto practicaste ese día. Otro toque en la misma: abre el detalle del día. */
+$("pc-chart").addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("button[data-day]"); if (!b) return;
+  const day = b.dataset.day, secs = Number(b.dataset.secs);
+  if (pcSel === day) { openDayDetail(day); return; }
+  pcSel = day;
+  $("pc-chart").querySelectorAll(".pc-hit button").forEach((x) => x.classList.toggle("sel", x === b));
+  $("pc-read").textContent = `${dayLabel(day)}: ${secs > 0 ? formatDuration(secs) : "sin práctica"}${secs > 0 ? " · tocá otra vez para el detalle" : ""}`;
+});
+async function openDayDetail(day) {
+  const dlg = $("day-detail"), body = $("dd-body");
+  $("dd-title").textContent = dayLabel(day, true);
+  body.innerHTML = '<p class="hint">Cargando…</p>';
+  if (!dlg.open) dlg.showModal();
+  const L = normalizeLog(pcLog), row = L.days[day] || {};
+  let scores = [], takes = [];
+  try {
+    const st = await lazy("store"); scores = await st.listScores();
+    for (const id of Object.keys(row)) if (id !== TEORIA_ID && id !== LIBRE_ID) takes.push(...(await st.listTakes(id)).filter((t) => t.day === day).map((t) => ({ ...t, scoreId: id })));
+  } catch (e) { /* sin detalle de tomas */ }
+  const name = (id) => id === TEORIA_ID ? "Teoría" : id === LIBRE_ID ? "Piano libre" : (scores.find((x) => x.id === id) || {}).title || "Partitura borrada";
+  const ids = Object.keys(row).sort((a, b) => row[b] - row[a]);
+  const total = ids.reduce((a, id) => a + row[id], 0);
+  if (!ids.length) { body.innerHTML = '<p class="hint">Ese día no registraste práctica.</p>'; return; }
+  body.innerHTML = `<p class="dd-total"><b>${esc(formatDuration(total))}</b> en total</p><ul class="dd-list">${ids.map((id) => {
+    const tk = takes.filter((t) => t.scoreId === id);
+    return `<li><span class="dd-n">${esc(name(id))}</span><span class="dd-t">${esc(formatDuration(row[id]))}${tk.length ? ` · ${tk.length} ${tk.length === 1 ? "toma" : "tomas"}` : ""}</span></li>`;
+  }).join("")}</ul>`;
+}
+$("dd-close").addEventListener("click", () => $("day-detail").close());
+$("day-detail").addEventListener("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 
 /* ---- tomas: se arman durante la práctica y se guardan al llegar al Resultado ---- */
 const MAX_AUDIO_MS = 5 * 60 * 1000;

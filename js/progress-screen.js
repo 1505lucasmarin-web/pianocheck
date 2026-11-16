@@ -29,7 +29,7 @@ export function createProgressScreen({ loadStore, resolveScore, startPractice, p
   const stepsOf = (hands) => (S.stepsBy[hands] ||= buildSteps(S.score, hands));
   const mOf = (t) => { let m = S.mCache.get(t.id); if (!m) { m = takeMetrics(t, stepsOf(t.hands)); S.mCache.set(t.id, m); } return m; };
   const accOf = (t) => mOf(t).accuracy;
-  const byId = (id) => S.takes.find((t) => t.id === id) || null;
+  const byId = (id) => S.takes.find((t) => t.id === id) || (S.groups || []).flatMap((g) => g.takes).find((t) => t.id === id) || null;
   const groupTakes = () => (S.g ? S.g.takes : []);
   const main = $("progress-main");
 
@@ -67,7 +67,7 @@ export function createProgressScreen({ loadStore, resolveScore, startPractice, p
     const prevKey = S.g ? S.g.key : null;
     Object.assign(S, { score, takes, practiceSec, days, stepsBy: {}, mCache: new Map() });
     $("progress-title").textContent = score.title || "Progreso";
-    S.groups = P.groupsOf(takes);
+    S.groups = P.withContained(P.groupsOf(takes));
     const keep = prevKey ? S.groups.find((g) => g.key === prevKey) : null;
     setGroup(keep || P.resolveGroup(S.groups), !keep);
     renderAll();

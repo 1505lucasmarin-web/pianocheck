@@ -237,3 +237,23 @@ test("evolución: con varios días la línea une los puntos y el valor queda en 
   assert.match(ev.svg, /class="pg-line"/);
   assert.ok(ev.pts[0].y > ev.pts[2].y, "más precisión queda más arriba");
 });
+
+test("withContained: las tomas de pieza entera se recortan y se suman al grupo del pasaje", () => {
+  const full = P.groupsOf([take({ day: "2026-11-10", id: "f1", wrongAt: { 1: 1, 5: 1 } }), take({ day: "2026-11-11", id: "f2" })]);
+  const part = P.groupsOf([take({ day: "2026-11-12", id: "p1", range: { from: 0, to: 0 }, sub: [0, 1, 2, 3], wrongAt: { 3: 1 } })]);
+  const groups = P.withContained([...full, ...part]);
+  const g = groups.find((x) => x.rangeKey === "0-0");
+  assert.equal(g.count, 2);   // p1 + f1 recortada (f2 queda con 4 notas en el pasaje: muy corta)
+  const d = g.takes.find((t) => t.derived === "f1");
+  assert.ok(d);
+  assert.deepEqual(d.range, { from: 0, to: 0 });
+  assert.equal(d.steps.length, 4);
+  assert.equal(d.summary.accuracy, 75);   // el error del paso 5 (compás 2) queda afuera; el del paso 1 cuenta
+  assert.equal(d.hasAudio, false);
+  assert.equal(takesComparable(d, g.takes.find((t) => t.id === "p1")).ok, true);
+  assert.equal(groups.find((x) => x.rangeKey === "pieza").count, 2);   // pieza entera no cambia
+});
+test("withContained: sin pasaje contenido no suma nada", () => {
+  const groups = P.withContained(P.groupsOf([take({ day: "2026-11-10", id: "a", range: { from: 1, to: 1 }, sub: [4, 5, 6, 7], wrongAt: { 5: 1 } }), take({ day: "2026-11-10", id: "b", range: { from: 0, to: 0 }, sub: [0, 1, 2, 3], wrongAt: { 3: 1 } })]));
+  assert.deepEqual(groups.map((g) => g.count), [1, 1]);
+});

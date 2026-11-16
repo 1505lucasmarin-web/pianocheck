@@ -1,7 +1,7 @@
 // Progreso por partitura: lógica pura de la pantalla de progreso (sin DOM ni IndexedDB).
 // Las métricas y las comparaciones salen de takes.js; acá se eligen las tomas, se alinean por paso,
 // se arman los veredictos y los SVG (gráfico de evolución y piano-roll comparativo) como cadenas.
-import { takeMetrics, compareTakes, trend, rangeKey } from "./takes.js";
+import { takeMetrics, compareTakes, trend, rangeKey, restrictTake } from "./takes.js";
 import { dayKey, shiftDay, normalizeLog } from "./practice-time.js";
 import { midiName } from "./model.js";
 
@@ -50,7 +50,7 @@ export const plural = (n, one, many) => (n === 1 ? one : many);
 /** Etiqueta de una toma para los selectores: "Ayer 21:10 · 90 % · ♩ 58". */
 export function takeLabel(take, m, now = Date.now()) {
   const tempo = m && m.tempoBpm != null ? `♩ ${m.tempoBpm}` : "♩ —";
-  return `${relDay(take.day, now)} ${hhmm(take.at)} · ${m ? m.accuracy : "—"} % · ${tempo}`;
+  return `${relDay(take.day, now)} ${hhmm(take.at)} · ${m ? m.accuracy : "—"} % · ${tempo}${take.derived ? " · de la pieza" : ""}`;
 }
 
 /** "Compases 5–8" o "Pieza entera" (base 0 en la toma). */
@@ -80,6 +80,25 @@ export function groupsOf(takes) {
   }
   const out = [...map.values()];
   for (const g of out) { g.takes.sort(byAt); g.count = g.takes.length; g.lastAt = g.takes[g.takes.length - 1].at; }
+  return out.sort((a, b) => b.count - a.count || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0));
+}
+
+/**
+ * Suma a cada grupo de un pasaje las tomas de pieza entera (o de un pasaje más largo) de la misma mano y modo,
+ * recortadas a esos compases, para poder compararlas con las que se hicieron sólo de ese pasaje. Los grupos de
+ * pieza entera quedan igual. Devuelve grupos nuevos (reordenados) y no toca las tomas originales.
+ */
+export function withContained(groups) {
+  const out = (groups || []).map((g) => ({ ...g, takes: g.takes.slice() }));
+  for (const g of out) {
+    if (!g.range) continue;
+    for (const o of groups) {
+      if (o.key === g.key || o.hands !== g.hands || o.mode !== g.mode) continue;
+      if (o.range && (o.range.from > g.range.from || o.range.to < g.range.to)) continue;
+      for (const t of o.takes) { const d = restrictTake(t, g.range); if (d) g.takes.push(d); }
+    }
+    g.takes.sort(byAt); g.count = g.takes.length; g.lastAt = g.takes[g.takes.length - 1].at;
+  }
   return out.sort((a, b) => b.count - a.count || (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : 0));
 }
 

@@ -89,6 +89,33 @@ export function buildTake(raw) {
   };
 }
 
+/**
+ * Pura: recorta una toma a un rango de compases {from,to} (base 0) para compararla con tomas de ese pasaje.
+ * Sirve para usar una toma de pieza entera (o de un pasaje más largo) dentro de un pasaje más corto: se conservan los
+ * pasos de esos compases y las notas tocadas entre el paso anterior y el último de ellos, con los tiempos desplazados.
+ * Devuelve null si la toma no cubre el rango o no completó pasos ahí. La toma recortada lleva `derived` (id de la original).
+ */
+export function restrictTake(take, range) {
+  if (!take || !range) return null;
+  if (take.range && (take.range.from > range.from || take.range.to < range.to)) return null;
+  const inR = take.steps.filter((s) => s.measure >= range.from && s.measure <= range.to);
+  if (!inR.length) return null;
+  const t0 = Math.min(...inR.map((s) => s.tOn)), t1 = Math.max(...inR.map((s) => s.tOn));
+  const before = take.steps.filter((s) => s.tOn < t0 && (s.measure < range.from || s.measure > range.to));
+  const tStart = before.length ? Math.max(...before.map((s) => s.tOn)) : 0;
+  const events = take.events.filter((e) => e[0] > tStart && e[0] <= t1 + 30).map((e) => [e[0] - tStart, e[1], e[2], e[3]]);
+  if (events.length < MIN_TAKE_NOTES) return null;
+  const steps = inR.map((s) => ({ ...s, tOn: Math.max(0, s.tOn - tStart) })).sort((a, b) => a.tOn - b.tOn);
+  const clean = steps.filter((s) => s.clean).length;
+  const wrong = steps.reduce((a, s) => a + (s.wrong || 0), 0);
+  return {
+    ...take, id: `${take.id}~${range.from}-${range.to}`, range: { from: range.from, to: range.to },
+    events, steps, hasAudio: false, keep: false, derived: take.id,
+    durationSec: round1((t1 + 30 - tStart) / 1000),
+    summary: { accuracy: steps.length ? Math.round((clean / steps.length) * 100) : 0, clean, dirty: steps.length - clean, wrong, status: "partial" },
+  };
+}
+
 /** Pura: { ok:true } si dos tomas se pueden comparar; si no, { ok:false, reason }. */
 export function takesComparable(a, b) {
   if (!a || !b) return { ok: false, reason: "Falta una de las tomas." };
