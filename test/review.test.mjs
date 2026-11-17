@@ -221,3 +221,14 @@ test("toggleTie: liga la nota con la anterior y la desliga", () => {
   assert.deepEqual(c.score.measures[0].lh[1].ties, ["c/4"]);
   assert.equal(toggleTie(sc, { measure: 0, hand: "lh", idx: 2, keyIdx: 0 }).ok, false);
 });
+
+import { suggestTies, applySuggestedTies } from "../js/review.js";
+test("suggestTies: corchea con puntillo + negra sin ligar se sugiere y se aplica", () => {
+  const e = (k, d, x = {}) => ({ k, d, ...x });
+  const sc = { timeSig: [4, 4], measures: [{ rh: [e([], "16"), e(["e/4"], "8", { dots: 1 }), e(["e/4"], "q"), e([], "8"), e(["g/4"], "16"), e(["g/4"], "16")], lh: [e(["c/3"], "w")] }] };
+  const l = suggestTies(sc);
+  assert.deepEqual(l.map((t) => [t.hand, t.idx, t.key]), [["rh", 2, "e/4"]]);
+  const r = applySuggestedTies(sc, l);
+  assert.equal(r.score.measures[0].rh[2].tie, true);
+  assert.equal(suggestTies(r.score).length, 0);
+});

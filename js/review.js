@@ -179,6 +179,39 @@ export function toggleTie(score, ref) {
   return { ok: true, score: sc, ref: { ...ref } };
 }
 
+/**
+ * Ligaduras que probablemente faltan: dentro de un compás y de una mano, una nota de al menos ¾ de tiempo seguida
+ * (sin nada en el medio) por un evento de al menos ¾ de tiempo con la misma altura y sin ligar. Es el caso de la corchea
+ * con puntillo + negra ligada de las voces internas (Preludio en Do mayor). Devuelve [{ measure, hand, idx, keyIdx, key }].
+ */
+export function suggestTies(score) {
+  const out = [], ms = (score && score.measures) || [];
+  ms.forEach((m, mi) => {
+    for (const hand of ["rh", "lh"]) {
+      const evs = (m && m[hand]) || [];
+      for (let i = 1; i < evs.length; i++) {
+        const a = evs[i - 1], b = evs[i];
+        if (isRest(a) || isRest(b) || durBeats(a) < 0.75 - EPS || durBeats(b) < 0.75 - EPS) continue;
+        b.k.forEach((key, keyIdx) => { if (!isTied(b, key) && a.k.includes(key)) out.push({ measure: mi, hand, idx: i, keyIdx, key }); });
+      }
+    }
+  });
+  return out;
+}
+/** Aplica todas las ligaduras sugeridas (o las de `list`). */
+export function applySuggestedTies(score, list) {
+  const todo = list || suggestTies(score);
+  if (!todo.length) return { ok: false, error: "No encontré ligaduras que falten." };
+  const sc = clone(score);
+  for (const t of todo) {
+    const ev = ((sc.measures[t.measure] || {})[t.hand] || [])[t.idx];
+    if (!ev || !ev.k.includes(t.key) || isTied(ev, t.key)) continue;
+    const ties = [...new Set([...(ev.ties || []), t.key])];
+    if (ev.k.every((k) => ties.includes(k))) { ev.tie = true; delete ev.ties; } else { delete ev.tie; ev.ties = ties; }
+  }
+  return { ok: true, score: sc, ref: null, count: todo.length };
+}
+
 /** Sube/baja la altura en semitonos. */
 export function shiftPitch(score, ref, semi) {
   if (!valid(score, ref)) return { ok: false, error: "No hay nota seleccionada." };

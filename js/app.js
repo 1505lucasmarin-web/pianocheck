@@ -23,7 +23,7 @@ import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from 
 import { PIECES, getPieceScore } from "./pieces.js";
 import { analyzeScore, melodyOnly, addAccompaniment } from "./arrange.js";
 import { windowFor, DEFAULT_WINDOW, measureStarts, measureStates, createPulse, beatMs, normMode, TIMING_ES, devText, trendText, timingAction, MODE_NAMES } from "./timing.js";
-import { setDuration, toggleTie, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
+import { setDuration, toggleTie, suggestTies, applySuggestedTies, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
 import { detectIssues, needsImportCheck } from "./issues.js";
 import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
 import { buildSummary } from "./summary.js";
@@ -1233,6 +1233,7 @@ function updateEditUi() {
   $("ed-bar").hidden = !has;
   $("ed-del").disabled = !has;
   $("ed-comment").disabled = !has && editState.cmMeasure == null;
+  { const n = suggestTies(editState.score).length; $("ed-ties-all").hidden = !n; $("ed-ties-all-t").textContent = `Ligar notas repetidas (${n})`; }
   $("ed-undo").disabled = !editState.hist.canUndo; $("ed-redo").disabled = !editState.hist.canRedo;
   document.querySelectorAll("#ed-tabs button").forEach((b) => { const on = b.dataset.tab === editState.tab; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
   document.querySelectorAll("#ed-bar .ed-tools").forEach((t) => (t.hidden = t.dataset.tab !== editState.tab));
@@ -1287,6 +1288,12 @@ $("ed-tabs").addEventListener("click", (e) => { const b = e.target.closest("butt
 $("ed-dur").addEventListener("click", (e) => { const b = e.target.closest("button"); const s = selNote(); if (!b || !s) return; doEdit(setDuration, b.dataset.d, s.ev.dots || 0); });
 $("ed-dot").addEventListener("click", () => { const s = selNote(); if (s) doEdit(setDuration, s.ev.d, s.ev.dots ? 0 : 1); });
 $("ed-tie").addEventListener("click", () => doEdit(toggleTie));
+$("ed-ties-all").addEventListener("click", () => {
+  if (!editState) return;
+  const list = suggestTies(editState.score), n = list.length;
+  if (!n) { toast("No encontré ligaduras que falten."); return; }
+  if (commit(applySuggestedTies(editState.score, list), { keepSel: true })) toast(`Listo: ${n} ${n === 1 ? "nota ligada" : "notas ligadas"}. Con «Deshacer» volvés atrás.`, 4200);
+});
 $("ed-hand").addEventListener("click", () => doEdit(moveHand));
 $("ed-fing").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) doEdit(setFinger, +b.dataset.f); });
 $("ed-fing-0").addEventListener("click", () => doEdit(setFinger, 0));
