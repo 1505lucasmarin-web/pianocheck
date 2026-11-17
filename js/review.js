@@ -212,6 +212,53 @@ export function applySuggestedTies(score, list) {
   return { ok: true, score: sc, ref: null, count: todo.length };
 }
 
+/**
+ * Notas que suenan, con las ligaduras ya sumadas (da igual en qué mano estén escritas): [{ measure, t (negras desde el
+ * inicio del compás), midi, beats }]. Una nota ligada a la anterior no cuenta como nota nueva.
+ */
+export function soundingNotes(score) {
+  const out = [], bar = barLength(score);
+  for (const hand of ["rh", "lh"]) {
+    const open = new Map();   // altura → nota que puede seguir ligándose
+    let start = 0;
+    (score.measures || []).forEach((m, mi) => {
+      let t = 0;
+      for (const ev of (m && m[hand]) || []) {
+        const b = durBeats(ev);
+        if (!isRest(ev)) for (const key of ev.k) {
+          const prev = open.get(key), at = start + t;
+          if (isTied(ev, key) && prev && Math.abs(prev.end - at) < 1e-4) { prev.beats += b; prev.end += b; }
+          else { const n = { measure: mi, t, midi: keyToMidi(key), beats: b, end: at + b }; out.push(n); open.set(key, n); }
+        }
+        t += b;
+      }
+      start += bar;
+    });
+  }
+  return out;
+}
+const r4 = (x) => Math.round(x * 1e4) / 1e4;
+/** Compases (base 0) donde lo que suena difiere de la referencia, y qué difiere. Sólo se comparan los compases que tiene la referencia. */
+export function diffAgainst(score, ref) {
+  const a = soundingNotes(score), b = soundingNotes(ref), n = Math.min((score.measures || []).length, (ref.measures || []).length);
+  const sig = (list, mi) => { const m = new Map(); for (const x of list) if (x.measure === mi) { const k = `${r4(x.t)}|${x.midi}`; if (!m.has(k) || m.get(k) < x.beats) m.set(k, x.beats); } return m; };
+  const bad = [];
+  for (let mi = 0; mi < n; mi++) {
+    const A = sig(a, mi), B = sig(b, mi), why = [];
+    for (const [k, v] of B) { if (!A.has(k)) why.push(`falta ${k}`); else if (Math.abs(A.get(k) - v) > 1e-3) why.push(`dura ${r4(A.get(k))} y debería ${r4(v)} (${k})`); }
+    for (const k of A.keys()) if (!B.has(k)) why.push(`sobra ${k}`);
+    if (why.length) bad.push({ measure: mi, why });
+  }
+  return { compared: n, bad };
+}
+/** Copia de la partitura con los compases `measures` tomados de la referencia (se pierden las digitaciones de esos compases). */
+export function repairFromReference(score, ref, measures) {
+  if (!measures.length) return { ok: false, error: "No hay compases para corregir." };
+  const sc = clone(score);
+  for (const mi of measures) sc.measures[mi] = clone(ref.measures[mi]);
+  return { ok: true, score: sc, ref: null };
+}
+
 /** Sube/baja la altura en semitonos. */
 export function shiftPitch(score, ref, semi) {
   if (!valid(score, ref)) return { ok: false, error: "No hay nota seleccionada." };

@@ -232,3 +232,19 @@ test("suggestTies: corchea con puntillo + negra sin ligar se sugiere y se aplica
   assert.equal(r.score.measures[0].rh[2].tie, true);
   assert.equal(suggestTies(r.score).length, 0);
 });
+
+import { soundingNotes, diffAgainst, repairFromReference } from "../js/review.js";
+import { bachPrelude } from "../js/bach-prelude.js";
+test("referencia: el mi del compás 1 del Preludio suena 7/4 y una copia sin ligadura se detecta y se repara", () => {
+  const ref = bachPrelude.versions[0].score;
+  const bar1 = soundingNotes(ref).filter((n) => n.measure === 0);
+  const e = bar1.filter((n) => n.midi === 64).sort((a, b) => a.t - b.t);
+  assert.ok(e.some((n) => Math.abs(n.t - 0.25) < 1e-6 && Math.abs(n.beats - 1.75) < 1e-6), JSON.stringify(e));
+  assert.equal(diffAgainst(ref, ref).bad.length, 0);
+  const copy = JSON.parse(JSON.stringify(ref));
+  for (const h of ["rh", "lh"]) for (const ev of copy.measures[0][h]) { delete ev.tie; delete ev.ties; }   // se pierden todas las ligaduras del compás 1
+  const d = diffAgainst(copy, ref);
+  assert.deepEqual(d.bad.map((b) => b.measure), [0]);
+  const fixed = repairFromReference(copy, ref, [0]);
+  assert.equal(diffAgainst(fixed.score, ref).bad.length, 0);
+});

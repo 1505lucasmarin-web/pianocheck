@@ -23,7 +23,7 @@ import { searchSong, fetchEditionFile, classifyFailure, buildSearchLinks } from 
 import { PIECES, getPieceScore } from "./pieces.js";
 import { analyzeScore, melodyOnly, addAccompaniment } from "./arrange.js";
 import { windowFor, DEFAULT_WINDOW, measureStarts, measureStates, createPulse, beatMs, normMode, TIMING_ES, devText, trendText, timingAction, MODE_NAMES } from "./timing.js";
-import { setDuration, toggleTie, suggestTies, applySuggestedTies, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
+import { setDuration, toggleTie, suggestTies, applySuggestedTies, diffAgainst, repairFromReference, moveHand, setFinger, shiftPitch, deleteNote, insertEvent, setComment, setReviewed, createHistory } from "./review.js";
 import { detectIssues, needsImportCheck } from "./issues.js";
 import { buildTaskFile, serializeTask, parseTaskFile, taskFileName, describeTask, MAX_TASK_BYTES, MAX_TASK_TEXT } from "./task.js";
 import { buildSummary } from "./summary.js";
@@ -1233,6 +1233,7 @@ function updateEditUi() {
   $("ed-bar").hidden = !has;
   $("ed-del").disabled = !has;
   $("ed-comment").disabled = !has && editState.cmMeasure == null;
+  $("ed-ref").hidden = !referenceFor(editState.score);
   { const n = suggestTies(editState.score).length; $("ed-ties-all").hidden = !n; $("ed-ties-all-t").textContent = `Ligar notas repetidas (${n})`; }
   $("ed-undo").disabled = !editState.hist.canUndo; $("ed-redo").disabled = !editState.hist.canRedo;
   document.querySelectorAll("#ed-tabs button").forEach((b) => { const on = b.dataset.tab === editState.tab; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
@@ -1288,6 +1289,22 @@ $("ed-tabs").addEventListener("click", (e) => { const b = e.target.closest("butt
 $("ed-dur").addEventListener("click", (e) => { const b = e.target.closest("button"); const s = selNote(); if (!b || !s) return; doEdit(setDuration, b.dataset.d, s.ev.dots || 0); });
 $("ed-dot").addEventListener("click", () => { const s = selNote(); if (s) doEdit(setDuration, s.ev.d, s.ev.dots ? 0 : 1); });
 $("ed-tie").addEventListener("click", () => doEdit(toggleTie));
+/** Partituras con una versión incluida con la que se pueden comparar (por ahora, el Preludio en Do mayor de Bach). */
+function referenceFor(score) {
+  const t = String((score && score.title) || "").toLowerCase();
+  if (!/prel(udio|ude)|bwv ?846/.test(t) || ((score && score.measures) || []).length < 20) return null;
+  return getPieceScore("bach-preludio-bwv846", "preludio");
+}
+$("ed-ref").addEventListener("click", () => {
+  if (!editState) return;
+  const ref = referenceFor(editState.score); if (!ref) return;
+  const d = diffAgainst(editState.score, ref), n = editState.score.measures.length;
+  const extra = n > d.compared ? ` Los compases ${d.compared + 1} en adelante no se pueden comparar (la versión incluida tiene ${d.compared}).` : "";
+  if (!d.bad.length) { toast(`Los ${d.compared} compases coinciden con la versión incluida.${extra}`, 5200); return; }
+  const list = d.bad.map((b) => b.measure + 1), shown = list.length > 12 ? list.slice(0, 12).join(", ") + "…" : list.join(", ");
+  if (!window.confirm(`Difieren de la versión incluida ${list.length} de ${d.compared} compases: ${shown}.\n\n¿Reemplazarlos por los de la versión incluida? Se pierden las digitaciones de esos compases. Podés deshacerlo.${extra}`)) return;
+  if (commit(repairFromReference(editState.score, ref, d.bad.map((b) => b.measure)), { keepSel: true })) toast(`Corregidos ${list.length} compases. Con «Deshacer» volvés atrás.`, 5200);
+});
 $("ed-ties-all").addEventListener("click", () => {
   if (!editState) return;
   const list = suggestTies(editState.score), n = list.length;
