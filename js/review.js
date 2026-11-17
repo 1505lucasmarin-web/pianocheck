@@ -251,11 +251,40 @@ export function diffAgainst(score, ref) {
   }
   return { compared: n, bad };
 }
-/** Copia de la partitura con los compases `measures` tomados de la referencia (se pierden las digitaciones de esos compases). */
+/** Dedos escritos en un compás: Map "t|midi" → dedo (sin importar la mano en la que estaban). */
+function fingersOf(measure) {
+  const map = new Map();
+  for (const hand of ["rh", "lh"]) {
+    let t = 0;
+    for (const ev of (measure && measure[hand]) || []) {
+      if (!isRest(ev) && Array.isArray(ev.f)) ev.k.forEach((key, i) => { if (ev.f[i]) map.set(`${r4(t)}|${keyToMidi(key)}`, ev.f[i]); });
+      t += durBeats(ev);
+    }
+  }
+  return map;
+}
+/**
+ * Copia de la partitura con los compases `measures` tomados de la referencia. Los dedos que ya estaban escritos se
+ * conservan en las notas que siguen sonando en el mismo instante (aunque hayan cambiado de mano).
+ */
 export function repairFromReference(score, ref, measures) {
   if (!measures.length) return { ok: false, error: "No hay compases para corregir." };
   const sc = clone(score);
-  for (const mi of measures) sc.measures[mi] = clone(ref.measures[mi]);
+  for (const mi of measures) {
+    const fin = fingersOf(score.measures[mi]);
+    const fresh = clone(ref.measures[mi]);
+    for (const hand of ["rh", "lh"]) {
+      let t = 0;
+      for (const ev of fresh[hand] || []) {
+        if (!isRest(ev) && fin.size) {
+          const f = ev.k.map((key) => (isTied(ev, key) ? 0 : fin.get(`${r4(t)}|${keyToMidi(key)}`) || 0));
+          if (f.some(Boolean)) ev.f = f;
+        }
+        t += durBeats(ev);
+      }
+    }
+    sc.measures[mi] = fresh;
+  }
   return { ok: true, score: sc, ref: null };
 }
 

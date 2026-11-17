@@ -1302,7 +1302,7 @@ $("ed-ref").addEventListener("click", () => {
   const extra = n > d.compared ? ` Los compases ${d.compared + 1} en adelante no se pueden comparar (la versión incluida tiene ${d.compared}).` : "";
   if (!d.bad.length) { toast(`Los ${d.compared} compases coinciden con la versión incluida.${extra}`, 5200); return; }
   const list = d.bad.map((b) => b.measure + 1), shown = list.length > 12 ? list.slice(0, 12).join(", ") + "…" : list.join(", ");
-  if (!window.confirm(`Difieren de la versión incluida ${list.length} de ${d.compared} compases: ${shown}.\n\n¿Reemplazarlos por los de la versión incluida? Se pierden las digitaciones de esos compases. Podés deshacerlo.${extra}`)) return;
+  if (!window.confirm(`Difieren de la versión incluida ${list.length} de ${d.compared} compases: ${shown}.\n\n¿Reemplazarlos por los de la versión incluida? Los dedos que ya tengas escritos se conservan. Podés deshacerlo.${extra}`)) return;
   if (commit(repairFromReference(editState.score, ref, d.bad.map((b) => b.measure)), { keepSel: true })) toast(`Corregidos ${list.length} compases. Con «Deshacer» volvés atrás.`, 5200);
 });
 $("ed-ties-all").addEventListener("click", () => {

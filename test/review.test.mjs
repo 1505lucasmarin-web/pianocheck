@@ -248,3 +248,15 @@ test("referencia: el mi del compás 1 del Preludio suena 7/4 y una copia sin lig
   const fixed = repairFromReference(copy, ref, [0]);
   assert.equal(diffAgainst(fixed.score, ref).bad.length, 0);
 });
+
+test("repairFromReference conserva los dedos aunque la nota haya cambiado de mano", () => {
+  const ref = bachPrelude.versions[0].score;
+  const copy = JSON.parse(JSON.stringify(ref));
+  for (const h of ["rh", "lh"]) for (const ev of copy.measures[0][h]) { delete ev.tie; delete ev.ties; }
+  const first = copy.measures[0].rh.find((e) => e.k.length);
+  first.f = first.k.map(() => 3);
+  const fixed = repairFromReference(copy, ref, [0]).score;
+  const flat = [...fixed.measures[0].rh, ...fixed.measures[0].lh].filter((e) => Array.isArray(e.f));
+  assert.ok(flat.length >= 1);
+  assert.ok(flat[0].f.includes(3));
+});
